@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI) {
       const args = ["-p", params.task, "--no-extensions", "--provider", "openrouter", "--model", model, "--tools", "read,grep,glob,ls"];
 
       return new Promise((resolve) => {
-        const child = spawn("pi", args, { signal });
+        const child = spawn("pi", args, { signal, stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
         let stderr = "";
 

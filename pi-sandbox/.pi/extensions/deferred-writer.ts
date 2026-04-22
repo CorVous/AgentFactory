@@ -26,7 +26,9 @@ export default function(pi: ExtensionAPI) {
   ): Promise<ChildResult> {
     return new Promise((resolve) => {
       const fullArgs = ["--mode", "json", ...args];
-      const child = spawn("pi", fullArgs);
+      // Pi blocks reading stdin when it's a pipe, even with -p. Use "ignore"
+      // so the child proceeds straight to the prompt from argv.
+      const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
       let buffer = "";
       let stderr = "";
       let assistantText = "";
@@ -119,11 +121,20 @@ export default function(pi: ExtensionAPI) {
 
       ctx.ui.notify(`Planning target and content (model=${MODEL}, up to ${PHASE_TIMEOUT_MS / 1000}s)…`, "info");
 
-      const plannerPrompt = `You are a PLANNER. Task: ${args}. Use ls and read to survey the repo, pick ONE destination file path (relative, inside cwd, no '..', must not exist), and draft the FULL content for that file. Reply with EXACTLY one line: <plan>{"path":"...","content":"..."}</plan>. Escape newlines in content as \\n.`;
+      const plannerPrompt = `You are a PLANNER. Task: ${args}.
+
+Call \`ls\` on the current directory AT MOST ONCE to see what names are taken. Do not call any other tool. Do not explore subdirectories. Do not read files — the destination path only needs to be a new name, not based on file contents.
+
+Then pick a relative destination path (inside cwd, no '..', must not already exist) and draft the FULL content for that file.
+
+Reply with EXACTLY one line and nothing else:
+===PLAN=== {"path":"...","content":"..."} ===ENDPLAN===
+
+Escape newlines in the content field as \\n. No prose before or after the PLAN markers.`;
 
       const res1 = await runChild(
         "Planner",
-        ["-p", plannerPrompt, "--no-extensions", "--tools", "ls,read", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
+        ["-p", plannerPrompt, "--no-extensions", "--tools", "ls", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
         ctx,
       );
       reportChild("Planner", res1, ctx);
@@ -137,9 +148,9 @@ export default function(pi: ExtensionAPI) {
         return;
       }
 
-      const match = res1.assistantText.match(/<plan>([\s\S]*?)<\/plan>/);
+      const match = res1.assistantText.match(/===PLAN===\s*([\s\S]*?)\s*===ENDPLAN===/);
       if (!match) {
-        ctx.ui.notify("Planner did not produce <plan>...</plan> in its final message.", "error");
+        ctx.ui.notify("Planner did not produce ===PLAN=== markers in its final message.", "error");
         return;
       }
 
