@@ -17,7 +17,6 @@ type ChildResult = {
 };
 
 export default function(pi: ExtensionAPI) {
-  const MODEL = process.env.TASK_MODEL ?? "openrouter/anthropic/claude-haiku-4-5";
 
   async function runChild(
     phaseLabel: string,
@@ -112,13 +111,19 @@ export default function(pi: ExtensionAPI) {
         return;
       }
 
+      const MODEL = process.env.TASK_MODEL;
+      if (!MODEL) {
+        ctx.ui.notify("TASK_MODEL env var not set. Source models.env before launching pi.", "error");
+        return;
+      }
+
       ctx.ui.notify(`Planning target and content (model=${MODEL}, up to ${PHASE_TIMEOUT_MS / 1000}s)…`, "info");
 
       const plannerPrompt = `You are a PLANNER. Task: ${args}. Use ls and read to survey the repo, pick ONE destination file path (relative, inside cwd, no '..', must not exist), and draft the FULL content for that file. Reply with EXACTLY one line: <plan>{"path":"...","content":"..."}</plan>. Escape newlines in content as \\n.`;
 
       const res1 = await runChild(
         "Planner",
-        ["-p", plannerPrompt, "--no-extensions", "--tools", "ls,read", "--model", MODEL, "--no-session"],
+        ["-p", plannerPrompt, "--no-extensions", "--tools", "ls,read", "--provider", "openrouter", "--model", MODEL, "--no-session"],
         ctx,
       );
       reportChild("Planner", res1, ctx);
@@ -180,7 +185,7 @@ export default function(pi: ExtensionAPI) {
 
       const res2 = await runChild(
         "Writer",
-        ["-p", writerPrompt, "--no-extensions", "--tools", "write", "--model", MODEL, "--no-session"],
+        ["-p", writerPrompt, "--no-extensions", "--tools", "write", "--provider", "openrouter", "--model", MODEL, "--no-session"],
         ctx,
       );
       reportChild("Writer", res2, ctx);

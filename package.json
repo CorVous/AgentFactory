@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Workspace for building and testing pi agents.",
   "scripts": {
-    "pi": "cd pi-sandbox && pi --no-context-files"
+    "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.68.1"

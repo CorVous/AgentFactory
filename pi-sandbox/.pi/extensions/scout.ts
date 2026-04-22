@@ -11,8 +11,14 @@ export default function (pi: ExtensionAPI) {
       task: Type.String({ description: "The discovery task to perform" }),
     }),
     async execute(toolCallId, params, onUpdate, ctx, signal) {
-      const model = process.env.TASK_MODEL || ctx.model;
-      const args = ["-p", params.task, "--no-extensions", "--model", model, "--tools", "read,grep,glob,ls"];
+      const model = process.env.TASK_MODEL;
+      if (!model) {
+        return {
+          content: [{ type: "text", text: "TASK_MODEL env var not set. Source models.env before launching pi." }],
+          isError: true,
+        };
+      }
+      const args = ["-p", params.task, "--no-extensions", "--provider", "openrouter", "--model", model, "--tools", "read,grep,glob,ls"];
 
       return new Promise((resolve) => {
         const child = spawn("pi", args, { signal });
