@@ -96,7 +96,7 @@ handler: async (_args, ctx) => {
   const confirmed = await ctx.ui.confirm("Deploy?", `Deploy to ${choice}?`);
   if (!confirmed) return;
   await deploy(choice);
-  ctx.ui.notify(`Deployed to ${choice}`, "success");
+  ctx.ui.notify(`Deployed to ${choice}`, "info");
 },
 ```
 

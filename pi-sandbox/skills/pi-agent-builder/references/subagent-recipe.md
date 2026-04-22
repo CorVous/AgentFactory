@@ -34,7 +34,7 @@ The cleanest implementation shells out to `pi` as a subprocess. This sidesteps t
 
 ```ts
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { spawn } from "node:child_process";
 
 export default function (pi: ExtensionAPI) {

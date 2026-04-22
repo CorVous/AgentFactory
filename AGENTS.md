@@ -7,14 +7,22 @@ installed as a regular npm dependency so the `pi` CLI is available via
 
 ## Launching pi
 
-- `npx pi` — interactive session
-- `npm run pi` — same, via the script in `package.json`
-- `npx pi --help` — full flag reference (`-e` for extensions, `--skill` for
-  skills, `-p` for non-interactive mode, `--model` / `--provider` to target a
-  specific model, etc.)
+Pi always runs from `pi-sandbox/` — its extensions, sessions, and scratch
+files live there. The `npm run pi` script handles the `cd` for you and
+also passes `--no-context-files` so the outer `AGENTS.md`/`CLAUDE.md`
+(which are *human* docs about this repo) don't leak into pi's context.
 
-Dependencies live in `node_modules/` (gitignored); run `npm install` after
-cloning.
+- `npm run pi` — interactive pi session in the sandbox.
+- `npm run pi -- -p "..."` — non-interactive. Forward any extra pi
+  flags after the `--`.
+- `npx pi --help` — full flag reference (`-e` for extensions, `--skill`
+  for skills, `-p` for non-interactive, `--mode json` for streaming
+  events, `-nc` / `--no-context-files` to suppress AGENTS.md/CLAUDE.md).
+
+Dependencies live in `node_modules/` at the repo root; run `npm install`
+after cloning. Invoking pi directly (`npx pi`) from the repo root is not
+recommended — it runs outside the sandbox and will pick up the outer
+docs as context.
 
 ## Model tiers
 
@@ -32,26 +40,135 @@ Source the file before launching pi so the tier vars are in scope:
 
 ```sh
 set -a; source models.env; set +a
-npx pi --model "$TASK_MODEL"    # or $LEAD_MODEL / $PLAN_MODEL
+npm run pi -- --model "$TASK_MODEL"    # or $LEAD_MODEL / $PLAN_MODEL
 ```
 
 `models.env` is committed because the IDs are not secrets. Put API keys in a
 gitignored `.env` instead.
 
+## Creating pi agents
+
+Pi ships no sub-agent feature by default. Use pi itself with the bundled
+`pi-agent-builder` skill — pi reads the skill on demand and generates
+extensions that follow its recipes.
+
+### Invoking the skill
+
+```sh
+set -a; source models.env; set +a
+npm run pi -- --provider openrouter --model "$LEAD_MODEL" \
+  --skill skills/pi-agent-builder \
+  -p "Use the pi-agent-builder skill to <describe the agent>."
+```
+
+Paths (`skills/pi-agent-builder`, `.pi/extensions/…`, `@prompt.md`) resolve
+from `pi-sandbox/` cwd, since `npm run pi` cds in.
+
+For prompts with lots of nested quotes, put the prompt in a file under
+`.pi/scratch/` and pass `@.pi/scratch/prompt.md` — cleaner than escaping
+inline `-p "..."`.
+
+### Where agent code lives
+
+| Location (from `pi-sandbox/` cwd) | Behavior |
+| --- | --- |
+| `.pi/extensions/<name>.ts` | Project-local, auto-discovered by pi |
+| `.pi/child-tools/<name>.ts` | Child-only; loaded via `pi -e <abs path>` from a parent extension. NOT auto-discovered by the parent pi session, so safe to register tools that shadow built-ins (e.g. a stub `stage_write` in place of the real `write`). |
+| `~/.pi/agent/extensions/<name>.ts` | Global, hot-reloadable via `/reload` |
+| `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
+
+### Mandatory safety rails for sub-agents
+
+When an extension delegates to a child `pi` process:
+
+- Pass `--no-extensions` to the child — prevents recursive sub-agents.
+- Whitelist the child's tools (`--tools read,grep,...`) to match its role.
+- Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
+- Match the tier to the child's role: `$TASK_MODEL` for workers,
+  `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
+
+See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
+
+### Worked example
+
+`pi-sandbox/.pi/extensions/deferred-writer.ts` (paired with its
+child-only tool at `pi-sandbox/.pi/child-tools/stage-write.ts`) is the
+live reference implementation — a `/deferred-writer <task>` slash
+command that spawns a drafter child whose only write channel is a stub
+`stage_write` tool. The stub's inputs are harvested from the parent's
+NDJSON event stream, buffered purely in the parent's memory, previewed
+via `ctx.ui.confirm`, and `fs.writeFileSync`'d into `pi-sandbox/` only
+on approval. Every always-on rail from
+`pi-sandbox/skills/pi-agent-builder/references/defaults.md` is applied.
+
+## Scripted (non-interactive) pi invocations
+
+Gotchas we've hit when calling `pi -p` from scripts:
+
+- **Text mode buffers stdout.** The default `--mode text` emits nothing until
+  the run completes, so progress (and hangs) are invisible. Use
+  `--mode json` — it streams NDJSON events line by line (`turn_start`,
+  `tool_execution_start`/`_end`, `message_update`, `agent_end`, etc.).
+- **Idle tools invite exploration loops.** With the default tool set and a
+  coding-agent system prompt, many models spontaneously run `bash`/`read`
+  even for trivial prompts, burning turns and minutes. Always either
+  `--no-tools` (pure completion) or `--tools <allowlist>` sized to the job.
+- **`timeout` doesn't reach pi through `npm exec`.** SIGTERM kills the
+  wrapper but the grandchild `pi` keeps running. If you need a hard ceiling,
+  also kill the surviving `pi` PID explicitly.
+
+Recommended scripted pattern:
+
+```sh
+npm run pi -- --mode json --no-tools \
+  --provider openrouter --model "$TASK_MODEL" \
+  --no-session --no-skills --no-extensions \
+  -p "$prompt" \
+  | jq -c 'select(.type | IN("tool_execution_start","turn_end","agent_end"))'
+```
+
 ## Repo layout
 
-- `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`.
+- `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`. The
+  `pi` script cds into `pi-sandbox/` and passes `--no-context-files`.
 - `models.env` — tier → model-ID mapping (see above).
-- `CLAUDE.md` — this file.
+- `AGENTS.md` / `CLAUDE.md` — human docs about this repo. **Not** loaded
+  into pi sessions (`npm run pi` passes `-nc`).
+- `pi-sandbox/` — pi's cwd. Every pi invocation should run from here so
+  auto-discovery stays scoped.
+  - `pi-sandbox/.pi/extensions/` — project-local pi extensions
+    (auto-discovered when cwd = `pi-sandbox/`, tracked in git).
+  - `pi-sandbox/.pi/child-tools/` — tools meant to be loaded into
+    child pi processes via `pi -e <abs path>`, not auto-discovered by
+    the parent. See `stage-write.ts` for the pattern.
+  - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
+    anything you don't want to check in. Gitignored.
+  - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how
+    to build agents.
 
-Agent definitions, extensions, and skills can be added under directories like
-`agents/`, `extensions/`, or `skills/` and loaded via `-e <path>` /
-`--skill <path>` when launching pi.
+Additional agent definitions, extensions, skills, or prompt templates can be
+added under `pi-sandbox/` and loaded via `-e <path>` / `--skill <path>`.
+
+## Workflow
+
+- **Build pi extensions by having pi build them.** The preferred path is
+  `npm run pi -- --skill skills/pi-agent-builder -p "<short description>"`
+  (or via `@.pi/scratch/prompt.md` for longer asks). The `pi-agent-builder`
+  skill is written for pi to consume, not for Claude or any other harness
+  to read on its behalf.
+- **Short natural-language prompts are the norm.** If a short prompt
+  produces an incorrect or unsafe extension, the fix is to refine the
+  skill — add the missing signal to
+  `pi-sandbox/skills/pi-agent-builder/references/reading-short-prompts.md`
+  or the missing rail to `.../references/defaults.md` — rather than
+  padding every prompt with a full technical spec.
+- **Scratch artifacts live in `pi-sandbox/.pi/scratch/`** (gitignored).
+  Raw pi output, throwaway prompt files, and experiments go there and
+  stay out of the tracked tree.
 
 ## Conventions
 
-- Develop on the designated feature branch
-  (`claude/setup-pi-agent-project-fegzL` for the current setup task); do not
+- Develop on the designated feature branch for the current task; do not
   push to other branches without explicit approval.
 - Commit messages should explain the *why* concisely.
 - Don't commit secrets — `.env`, `.env.local`, and `node_modules/` are already
