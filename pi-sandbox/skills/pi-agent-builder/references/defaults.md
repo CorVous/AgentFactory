@@ -98,6 +98,40 @@ absence caused a real failure in a real session.
   approved path ("write to EXACTLY this absolute path: …") so the child
   can't accidentally write somewhere else based on its own notion of cwd.
 
+## Deferred / approval-gated side effects
+
+When the user wants a "try it first, show me, then commit" flow, prefer
+**staging-dir buffering** over a two-agent planner-writer handshake:
+
+- `fs.mkdtempSync(path.join(os.tmpdir(), "<feature>-"))` at handler entry
+  gives you a throwaway dir; `fs.rmSync(dir, { recursive: true, force: true })`
+  in a `finally` block cleans up on any exit path.
+- Spawn **one** agent child with `cwd: stagingDir` and the real `write`
+  tool (plus whatever reads it needs). Relative writes land inside the
+  staging dir; the project is untouched until approval.
+- Tell the agent in its prompt: (a) cwd is staging, (b) use relative
+  paths for writes, (c) read the real project via absolute paths under
+  `sandboxRoot`, (d) absolute writes won't be promoted.
+- After the child exits, walk `stagingDir` recursively. For each file:
+  resolve to `destAbs = path.resolve(sandboxRoot, relPath)`, run the
+  sandbox-root check, skip if `fs.existsSync(destAbs)` (unless overwrite
+  is explicit in the prompt).
+- Build a preview that shows **absolute destination paths** (users can
+  verify where each file will land), bytes/sha per file, and the first
+  N lines of text content. Call `ctx.ui.confirm`.
+- On approval: `fs.copyFileSync(stagingAbs, destAbs)`, re-sha to verify,
+  notify success. On refusal: notify "Cancelled" and let the `finally`
+  block delete the staging dir.
+- Binary files (`buffer.includes(0)`): preview as `<binary; N bytes>`
+  instead of dumping bytes into the TUI.
+- Cap `MAX_FILES_PROMOTABLE` (e.g. 50) and abort if the agent produced
+  more — defensive against runaway drafts.
+
+This pattern is strictly better than a two-agent planner-writer pipeline
+for free-form creative drafting, because the drafter uses its native
+`write` tool (no structured-output contract to get right), and supports
+multi-file tasks naturally.
+
 ## Structured output between parent and sub-agent
 
 - **Avoid `<`/`>`-delimited tags** for the payload (`<plan>…</plan>`, etc.).
