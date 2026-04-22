@@ -113,7 +113,7 @@ The LLM sees `content`. `details` is for your own bookkeeping and for custom ren
 
 Inside `execute`, `ctx` gives you:
 
-- `ctx.ui.notify(message, level)` — `"info" | "warn" | "error" | "success"`
+- `ctx.ui.notify(message, level)` — `"info" | "warning" | "error"` (not `"warn"`, not `"success"`)
 - `ctx.ui.confirm(title, message)` — returns `Promise<boolean>`
 - `ctx.ui.select(title, options)` — single-choice picker
 - `ctx.ui.input(title, prompt)` — text input

@@ -81,16 +81,32 @@ Read only the reference files you need. Each one is self-contained.
 
 Do these steps in order. Skipping any of them produces extensions that look fine but misbehave in real sessions.
 
-### 1. Clarify the job before writing code
+### 1. Read the prompt; apply defaults and signal inferences
 
-Extensions fail most often because the spec was vague. Before touching TypeScript, get clear answers to:
+Short, natural-language prompts are the norm, not the exception. The user
+rarely hands you a full spec — they describe the *behaviour* they want and
+expect you to translate. Do it in this order:
 
-- **What exactly triggers this?** A user typing `/cmd`? The LLM calling a tool? A lifecycle event? Something else?
-- **What is the LLM supposed to see?** Tool output goes into context — keep it small, structured, and truncated. The built-in budget is ~50KB / 2000 lines per tool result, and you should be well under that.
-- **What failure modes exist?** Network error, user cancels, bad input, tool not available. Each needs a defined behavior.
-- **Does this interact with other extensions?** If yes, use events for coordination, not direct imports — extensions are isolated.
+1. **Match the prompt against `references/reading-short-prompts.md`.**
+   Every phrase in its signal table implies a specific rail. Include each
+   matched rail in what you build, whether or not the user spelled it out.
+2. **Apply every rail in `references/defaults.md`.** These are the
+   safety rails that apply to every extension of their kind —
+   `--no-extensions` on child processes, confirmation gates on
+   side-effectful commands, sha256 verification on writers, etc. Skip a
+   rail only if the user *explicitly* told you to.
+3. **Then** check for residual ambiguity the above can't resolve. Ask
+   narrowly, with the default you'd pick if the user shrugs, about:
+   - **What exactly triggers this?** (Command vs tool vs event handler —
+     usually the signal table decides.)
+   - **What failure modes beyond the defaults matter here?** Most are
+     already covered; ask only if something task-specific isn't.
+   - **Does this interact with other extensions?** Extensions are isolated
+     by design; if coordination is needed, use events, not imports.
 
-If the user hasn't thought through these, ask. Don't guess.
+If nothing is residually ambiguous, build without asking. Round-trips are
+expensive; the signal table + defaults exist so short prompts produce
+correct, safe code on the first pass.
 
 ### 2. Pick the right primitive
 
@@ -181,6 +197,8 @@ This is often faster than writing the extension by hand, and the result is groun
 
 Load these as needed based on the decision tree above.
 
+- `references/reading-short-prompts.md` — Signal → rail table for inferring implementation shape from a short user prompt (load this *first* when the user's ask is natural-language rather than a spec).
+- `references/defaults.md` — Safety rails to apply on every build unless the user explicitly opts out.
 - `references/tool-recipe.md` — Full `registerTool` spec, TypeBox schemas, streaming updates, error handling.
 - `references/command-recipe.md` — `registerCommand`, argument parsing, side effects.
 - `references/events-recipe.md` — All lifecycle events, blocking vs observing, return-value semantics.
