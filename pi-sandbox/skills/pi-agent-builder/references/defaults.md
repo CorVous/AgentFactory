@@ -101,36 +101,58 @@ absence caused a real failure in a real session.
 ## Deferred / approval-gated side effects
 
 When the user wants a "try it first, show me, then commit" flow, prefer
-**staging-dir buffering** over a two-agent planner-writer handshake:
+**in-memory staging via a custom tool** over a two-agent planner-writer
+handshake *or* a filesystem tmpdir. The in-memory variant keeps every
+draft in the parent process's heap until approval — process crash leaves
+zero artifacts on disk.
 
-- `fs.mkdtempSync(path.join(os.tmpdir(), "<feature>-"))` at handler entry
-  gives you a throwaway dir; `fs.rmSync(dir, { recursive: true, force: true })`
-  in a `finally` block cleans up on any exit path.
-- Spawn **one** agent child with `cwd: stagingDir` and the real `write`
-  tool (plus whatever reads it needs). Relative writes land inside the
-  staging dir; the project is untouched until approval.
-- Tell the agent in its prompt: (a) cwd is staging, (b) use relative
-  paths for writes, (c) read the real project via absolute paths under
-  `sandboxRoot`, (d) absolute writes won't be promoted.
-- After the child exits, walk `stagingDir` recursively. For each file:
-  resolve to `destAbs = path.resolve(sandboxRoot, relPath)`, run the
-  sandbox-root check, skip if `fs.existsSync(destAbs)` (unless overwrite
-  is explicit in the prompt).
-- Build a preview that shows **absolute destination paths** (users can
-  verify where each file will land), bytes/sha per file, and the first
-  N lines of text content. Call `ctx.ui.confirm`.
-- On approval: `fs.copyFileSync(stagingAbs, destAbs)`, re-sha to verify,
-  notify success. On refusal: notify "Cancelled" and let the `finally`
-  block delete the staging dir.
-- Binary files (`buffer.includes(0)`): preview as `<binary; N bytes>`
-  instead of dumping bytes into the TUI.
-- Cap `MAX_FILES_PROMOTABLE` (e.g. 50) and abort if the agent produced
-  more — defensive against runaway drafts.
+### In-memory variant (preferred)
 
-This pattern is strictly better than a two-agent planner-writer pipeline
-for free-form creative drafting, because the drafter uses its native
-`write` tool (no structured-output contract to get right), and supports
-multi-file tasks naturally.
+- Write a small "stub" tool (e.g. `stage_write({ path, content })`) in
+  its own file *outside* the auto-discovered extensions path (e.g.
+  `.pi/child-tools/stage-write.ts`). Its `execute` body is a no-op that
+  just returns `{ content: [{ type: "text", text: "Drafted …" }], details: {} }`.
+- Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls,read`.
+  The child can read the real project (via `ls`/`read` on absolute paths
+  under `sandboxRoot`) but has no `write` tool — `stage_write` is its
+  only channel for producing files.
+- In `--mode json` the child emits `{"type":"tool_execution_start",
+  "toolName":"stage_write", "args": {"path": "...", "content": "..."}}`
+  for every call. The parent harvests `e.args.path` and `e.args.content`
+  from those events and accumulates them in its own memory. Nothing
+  touches disk.
+- After the child exits, validate each staged entry (type checks on
+  path/content, no absolute, no `..`, sandbox-root check, no pre-existing
+  destination, byte-size cap per file) and build a preview.
+- `ctx.ui.confirm` with absolute destinations + byte counts + sha prefix
+  + first N lines of each draft.
+- On approval: `fs.writeFileSync(destAbs, content, "utf8")`, re-sha to
+  verify, notify. On refusal: notify "Cancelled"; drafts are simply
+  unused memory that GC reaps.
+- Cap `MAX_FILES_PROMOTABLE` (50 is reasonable) and a per-file
+  `MAX_CONTENT_BYTES` (2 MB is reasonable) for blast-radius control.
+- **Field name gotcha:** `tool_execution_start` events put the arguments
+  at `e.args`, **not** `e.toolCall.input`. Don't assume; inspect a real
+  event once before writing the parser.
+
+### Filesystem variant (fallback)
+
+If the agent genuinely needs to read back its own previous drafts during
+the session (iteration), in-memory isn't enough without a `stage_read`
+companion. Fall back to a tmpdir:
+
+- `fs.mkdtempSync(path.join(os.tmpdir(), "<feature>-"))` at handler
+  entry; `fs.rmSync(dir, { recursive: true, force: true })` in a
+  `finally` block.
+- Spawn the agent child with `cwd: stagingDir` and the real `write`
+  tool. Relative writes land in staging; absolute writes bypass and
+  won't be promoted.
+- After the child exits, walk `stagingDir` recursively, sandbox-check
+  each relative path against `sandboxRoot`, preview, promote on
+  approval via `fs.copyFileSync`.
+
+Prefer the in-memory variant unless you have a concrete reason to spill
+to disk.
 
 ## Structured output between parent and sub-agent
 

@@ -1,31 +1,41 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const PHASE_TIMEOUT_MS = 120_000;
 const NOTIFY_TEXT_MAX = 400;
 const PREVIEW_LINES_PER_FILE = 20;
 const MAX_FILES_PROMOTABLE = 50;
+const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
+
+// Path to the child-only stage_write tool we load via -e. Computed relative
+// to THIS extension file so the layout is self-contained.
+const STAGE_WRITE_TOOL = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "child-tools",
+  "stage-write.ts",
+);
+
+type StagedWrite = {
+  relPath: string;
+  destAbs: string;
+  content: string;
+  sha: string;
+  byteLength: number;
+};
 
 type ChildResult = {
   assistantText: string;
   assistantThinking: string;
   toolCalls: number;
+  stagedWrites: Array<{ path: unknown; content: unknown }>;
   stderr: string;
   code: number;
   timedOut: boolean;
-};
-
-type StagedFile = {
-  relPath: string;       // relative to stagingDir
-  stagingAbs: string;    // absolute path inside stagingDir
-  destAbs: string;       // absolute path inside sandboxRoot
-  content: Buffer;
-  sha: string;
-  isText: boolean;
 };
 
 export default function (pi: ExtensionAPI) {
@@ -40,14 +50,14 @@ export default function (pi: ExtensionAPI) {
     return new Promise((resolve) => {
       const fullArgs = ["--mode", "json", ...args];
       // Pi blocks reading stdin when it's a pipe, even with -p. Use "ignore"
-      // so the child proceeds straight to the prompt from argv. Pin cwd so
-      // relative writes land in the staging directory.
+      // so the child proceeds straight to the prompt from argv.
       const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"], cwd });
       let buffer = "";
       let stderr = "";
       let assistantText = "";
       let assistantThinking = "";
       let toolCalls = 0;
+      const stagedWrites: Array<{ path: unknown; content: unknown }> = [];
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
@@ -70,9 +80,16 @@ export default function (pi: ExtensionAPI) {
           if (type === "tool_execution_start") {
             toolCalls++;
             const name = (e.toolName as string | undefined) ?? "?";
-            const inputObj = (e.toolCall as { input?: unknown } | undefined)?.input;
-            const inputPreview = inputObj ? JSON.stringify(inputObj).slice(0, 120) : "";
-            ctx.ui.notify(`${phaseLabel} → ${name}${inputPreview ? " " + inputPreview : ""}`, "info");
+            const inputObj = e.args as Record<string, unknown> | undefined;
+            if (name === "stage_write" && inputObj) {
+              stagedWrites.push({ path: inputObj.path, content: inputObj.content });
+              const p = typeof inputObj.path === "string" ? inputObj.path : "<?>";
+              const len = typeof inputObj.content === "string" ? inputObj.content.length : 0;
+              ctx.ui.notify(`${phaseLabel} → stage_write ${p} (${len} chars buffered)`, "info");
+            } else {
+              const inputPreview = inputObj ? JSON.stringify(inputObj).slice(0, 120) : "";
+              ctx.ui.notify(`${phaseLabel} → ${name}${inputPreview ? " " + inputPreview : ""}`, "info");
+            }
           } else if (type === "message_end") {
             const msg = e.message as { role?: string; content?: unknown } | undefined;
             if (msg?.role === "assistant" && Array.isArray(msg.content)) {
@@ -91,16 +108,16 @@ export default function (pi: ExtensionAPI) {
       child.stderr.on("data", (d) => { stderr += d.toString(); });
       child.on("close", (code) => {
         clearTimeout(timer);
-        resolve({ assistantText, assistantThinking, toolCalls, stderr, code: code ?? 0, timedOut });
+        resolve({ assistantText, assistantThinking, toolCalls, stagedWrites, stderr, code: code ?? 0, timedOut });
       });
       child.on("error", () => {
         clearTimeout(timer);
-        resolve({ assistantText, assistantThinking, toolCalls, stderr, code: -1, timedOut });
+        resolve({ assistantText, assistantThinking, toolCalls, stagedWrites, stderr, code: -1, timedOut });
       });
     });
   }
 
-  const sha256 = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
+  const sha256 = (data: string) => createHash("sha256").update(data, "utf8").digest("hex");
 
   const trunc = (s: string, n = NOTIFY_TEXT_MAX) =>
     s.length > n ? s.slice(0, n) + `… (+${s.length - n} chars)` : s;
@@ -116,25 +133,11 @@ export default function (pi: ExtensionAPI) {
     if (res.assistantText) {
       ctx.ui.notify(`${phaseLabel} text: ${trunc(res.assistantText)}`, "info");
     }
-    ctx.ui.notify(`${phaseLabel} finished: ${res.toolCalls} tool call(s), exit ${res.code}`, "info");
+    ctx.ui.notify(`${phaseLabel} finished: ${res.toolCalls} tool call(s), ${res.stagedWrites.length} drafted file(s), exit ${res.code}`, "info");
   };
 
-  function walkStaging(dir: string, relBase = ""): { relPath: string; abs: string }[] {
-    const out: { relPath: string; abs: string }[] = [];
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-      const abs = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        out.push(...walkStaging(abs, rel));
-      } else if (entry.isFile()) {
-        out.push({ relPath: rel, abs });
-      }
-    }
-    return out;
-  }
-
   pi.registerCommand("deferred-writer", {
-    description: "Drafter agent writes into a staging area; user reviews and approves before promotion",
+    description: "Drafter agent stages writes in memory; user reviews and approves before anything hits disk",
     handler: async (args, ctx) => {
       if (!args.trim()) {
         ctx.ui.notify("Usage: /deferred-writer <task description>", "warning");
@@ -147,142 +150,154 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (!fs.existsSync(STAGE_WRITE_TOOL)) {
+        ctx.ui.notify(`stage_write tool missing at ${STAGE_WRITE_TOOL}`, "error");
+        return;
+      }
+
       const sandboxRoot = path.resolve(process.cwd());
-      const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "deferred-writer-"));
 
-      try {
-        ctx.ui.notify(`Drafting (model=${MODEL}, sandbox=${sandboxRoot}, staging=${stagingDir}, up to ${PHASE_TIMEOUT_MS / 1000}s)…`, "info");
+      ctx.ui.notify(`Drafting (model=${MODEL}, sandbox=${sandboxRoot}, buffer=memory, up to ${PHASE_TIMEOUT_MS / 1000}s)…`, "info");
 
-        const agentPrompt = `You are a DRAFTER. Task: ${args}.
+      const agentPrompt = `You are a DRAFTER. Task: ${args}.
 
-Your current working directory is a STAGING area. Any file you create with the \`write\` tool will be drafted there and shown to the user for approval before being promoted into the real project.
+Nothing you do will touch disk until the user approves. To create a file, call the \`stage_write\` tool with a relative \`path\` (inside the project at ${sandboxRoot}) and the full \`content\`. The content stays buffered in the parent's memory; the user will see every draft and only then decide whether to persist them.
 
 Rules:
-- Create files using relative paths. They'll land in the staging dir and later be promoted to the same relative path under the project root ${sandboxRoot}.
-- To inspect the existing project, use ABSOLUTE paths rooted at ${sandboxRoot} (e.g. \`read ${sandboxRoot}/package.json\`, \`ls ${sandboxRoot}\`).
-- Do NOT write to absolute paths — absolute writes won't be promoted.
-- Do not call the same tool in a loop. Do the minimum work needed, then stop.
-- When every needed file is drafted, reply DONE and stop.`;
+- Do NOT call any \`write\` tool — only \`stage_write\`.
+- Paths must be relative, inside ${sandboxRoot}, no \`..\` segments.
+- To inspect the existing project, use \`read\` / \`ls\` on ABSOLUTE paths under ${sandboxRoot}.
+- Stop after you've staged everything the task needs. Reply DONE and stop.`;
 
-        const res = await runChild(
-          "Drafter",
-          ["-p", agentPrompt, "--no-extensions", "--tools", "write,ls,read", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
-          ctx,
-          PHASE_TIMEOUT_MS,
-          stagingDir,
-        );
-        reportChild("Drafter", res, ctx);
+      const res = await runChild(
+        "Drafter",
+        [
+          "-e", STAGE_WRITE_TOOL,
+          "-p", agentPrompt,
+          "--no-extensions",
+          "--tools", "stage_write,ls,read",
+          "--provider", "openrouter",
+          "--model", MODEL,
+          "--thinking", "off",
+          "--no-session",
+        ],
+        ctx,
+        PHASE_TIMEOUT_MS,
+        sandboxRoot,
+      );
+      reportChild("Drafter", res, ctx);
 
-        if (res.timedOut) {
-          ctx.ui.notify(`Drafter timed out after ${PHASE_TIMEOUT_MS / 1000}s. Staged files will be discarded.`, "error");
-          return;
-        }
-        if (res.code !== 0) {
-          ctx.ui.notify(`Drafter exited ${res.code}. Stderr: ${res.stderr.slice(-2000)}. Staged files will be discarded.`, "error");
-          return;
-        }
+      if (res.timedOut) {
+        ctx.ui.notify(`Drafter timed out after ${PHASE_TIMEOUT_MS / 1000}s. Drafts discarded.`, "error");
+        return;
+      }
+      if (res.code !== 0) {
+        ctx.ui.notify(`Drafter exited ${res.code}. Stderr: ${res.stderr.slice(-2000)}. Drafts discarded.`, "error");
+        return;
+      }
+      if (res.stagedWrites.length === 0) {
+        ctx.ui.notify("Drafter made no stage_write calls.", "warning");
+        return;
+      }
+      if (res.stagedWrites.length > MAX_FILES_PROMOTABLE) {
+        ctx.ui.notify(`Drafter staged ${res.stagedWrites.length} files (> ${MAX_FILES_PROMOTABLE}); aborting for safety.`, "error");
+        return;
+      }
 
-        const staged = walkStaging(stagingDir);
-        if (staged.length === 0) {
-          ctx.ui.notify("Drafter produced no staged files.", "warning");
-          return;
+      const plans: StagedWrite[] = [];
+      const skips: string[] = [];
+      for (const s of res.stagedWrites) {
+        if (typeof s.path !== "string" || s.path.length === 0) {
+          skips.push(`<invalid path type: ${typeof s.path}>`);
+          continue;
         }
-        if (staged.length > MAX_FILES_PROMOTABLE) {
-          ctx.ui.notify(`Drafter produced ${staged.length} files (> ${MAX_FILES_PROMOTABLE}); aborting for safety.`, "error");
-          return;
+        if (typeof s.content !== "string") {
+          skips.push(`${s.path}: content is ${typeof s.content}, expected string`);
+          continue;
         }
-
-        const plans: StagedFile[] = [];
-        const skips: string[] = [];
-        for (const s of staged) {
-          const destAbs = path.resolve(sandboxRoot, s.relPath);
-          if (destAbs !== sandboxRoot && !destAbs.startsWith(sandboxRoot + path.sep)) {
-            skips.push(`${s.relPath} → escapes sandbox`);
-            continue;
-          }
-          if (fs.existsSync(destAbs)) {
-            skips.push(`${s.relPath} → ${destAbs} already exists`);
-            continue;
-          }
-          const content = fs.readFileSync(s.abs);
-          // Crude binary detection: files with NUL bytes aren't text.
-          const isText = !content.includes(0);
-          plans.push({
-            relPath: s.relPath,
-            stagingAbs: s.abs,
-            destAbs,
-            content,
-            sha: sha256(content),
-            isText,
-          });
+        const relPath = s.path;
+        if (path.isAbsolute(relPath) || relPath.split("/").includes("..") || relPath.split(path.sep).includes("..")) {
+          skips.push(`${relPath}: absolute or contains '..'`);
+          continue;
         }
-
-        for (const skip of skips) {
-          ctx.ui.notify(`Skipping ${skip}`, "warning");
+        const destAbs = path.resolve(sandboxRoot, relPath);
+        if (destAbs !== sandboxRoot && !destAbs.startsWith(sandboxRoot + path.sep)) {
+          skips.push(`${relPath}: escapes sandbox`);
+          continue;
         }
-
-        if (plans.length === 0) {
-          ctx.ui.notify("No promotable files after sandbox + existence checks.", "warning");
-          return;
+        if (fs.existsSync(destAbs)) {
+          skips.push(`${relPath}: destination exists at ${destAbs}`);
+          continue;
         }
-
-        const previewSections = plans.map((p) => {
-          const header = `${p.destAbs} (${p.content.length} bytes, sha ${p.sha.slice(0, 10)}…)`;
-          if (!p.isText) {
-            return `${header}\n<binary; preview omitted>`;
-          }
-          const text = p.content.toString("utf8");
-          const lines = text.split("\n");
-          const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n");
-          const tail = lines.length > PREVIEW_LINES_PER_FILE
-            ? `\n… (+${lines.length - PREVIEW_LINES_PER_FILE} more lines)`
-            : "";
-          return `${header}\n${shown}${tail}`;
+        const byteLength = Buffer.byteLength(s.content, "utf8");
+        if (byteLength > MAX_CONTENT_BYTES_PER_FILE) {
+          skips.push(`${relPath}: ${byteLength} bytes > ${MAX_CONTENT_BYTES_PER_FILE} limit`);
+          continue;
+        }
+        plans.push({
+          relPath,
+          destAbs,
+          content: s.content,
+          sha: sha256(s.content),
+          byteLength,
         });
-        const previewBody = previewSections.join("\n\n---\n\n");
+      }
 
-        const ok = await ctx.ui.confirm(
-          `Promote ${plans.length} file(s)?`,
-          previewBody,
-        );
-        if (!ok) {
-          ctx.ui.notify("Cancelled; nothing written to the project.", "info");
-          return;
+      for (const skip of skips) {
+        ctx.ui.notify(`Skipping ${skip}`, "warning");
+      }
+
+      if (plans.length === 0) {
+        ctx.ui.notify("No promotable drafts after validation.", "warning");
+        return;
+      }
+
+      const previewSections = plans.map((p) => {
+        const header = `${p.destAbs} (${p.byteLength} bytes, sha ${p.sha.slice(0, 10)}…)`;
+        const lines = p.content.split("\n");
+        const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n");
+        const tail = lines.length > PREVIEW_LINES_PER_FILE
+          ? `\n… (+${lines.length - PREVIEW_LINES_PER_FILE} more lines)`
+          : "";
+        return `${header}\n${shown}${tail}`;
+      });
+      const previewBody = previewSections.join("\n\n---\n\n");
+
+      const ok = await ctx.ui.confirm(
+        `Promote ${plans.length} file(s)?`,
+        previewBody,
+      );
+      if (!ok) {
+        ctx.ui.notify("Cancelled; nothing written to the project.", "info");
+        return;
+      }
+
+      const promoted: string[] = [];
+      const failures: string[] = [];
+      for (const p of plans) {
+        if (fs.existsSync(p.destAbs)) {
+          failures.push(`${p.relPath}: destination now exists`);
+          continue;
         }
-
-        const promoted: string[] = [];
-        const failures: string[] = [];
-        for (const p of plans) {
-          if (fs.existsSync(p.destAbs)) {
-            failures.push(`${p.relPath}: destination now exists`);
+        try {
+          fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
+          fs.writeFileSync(p.destAbs, p.content, "utf8");
+          const actualSha = sha256(fs.readFileSync(p.destAbs, "utf8"));
+          if (actualSha !== p.sha) {
+            failures.push(`${p.relPath}: hash mismatch after write`);
             continue;
           }
-          try {
-            fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
-            fs.copyFileSync(p.stagingAbs, p.destAbs);
-            const actualSha = sha256(fs.readFileSync(p.destAbs));
-            if (actualSha !== p.sha) {
-              failures.push(`${p.relPath}: hash mismatch after copy`);
-              continue;
-            }
-            promoted.push(p.destAbs);
-          } catch (e) {
-            failures.push(`${p.relPath}: ${(e as Error).message}`);
-          }
+          promoted.push(p.destAbs);
+        } catch (e) {
+          failures.push(`${p.relPath}: ${(e as Error).message}`);
         }
+      }
 
-        if (failures.length > 0) {
-          ctx.ui.notify(`Promotion had ${failures.length} failure(s):\n${failures.join("\n")}`, "error");
-        }
-        if (promoted.length > 0) {
-          ctx.ui.notify(`Wrote ${promoted.length} file(s):\n${promoted.join("\n")}`, "info");
-        }
-      } finally {
-        try {
-          fs.rmSync(stagingDir, { recursive: true, force: true });
-        } catch {
-          // Cleanup failure is non-fatal; tmp cleanup will eventually reap.
-        }
+      if (failures.length > 0) {
+        ctx.ui.notify(`Promotion had ${failures.length} failure(s):\n${failures.join("\n")}`, "error");
+      }
+      if (promoted.length > 0) {
+        ctx.ui.notify(`Wrote ${promoted.length} file(s):\n${promoted.join("\n")}`, "info");
       }
     },
   });
