@@ -73,6 +73,7 @@ inline `-p "..."`.
 | Location (from `pi-sandbox/` cwd) | Behavior |
 | --- | --- |
 | `.pi/extensions/<name>.ts` | Project-local, auto-discovered by pi |
+| `.pi/child-tools/<name>.ts` | Child-only; loaded via `pi -e <abs path>` from a parent extension. NOT auto-discovered by the parent pi session, so safe to register tools that shadow built-ins (e.g. a stub `stage_write` in place of the real `write`). |
 | `~/.pi/agent/extensions/<name>.ts` | Global, hot-reloadable via `/reload` |
 | `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
 
@@ -87,6 +88,18 @@ When an extension delegates to a child `pi` process:
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
 
 See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
+
+### Worked example
+
+`pi-sandbox/.pi/extensions/deferred-writer.ts` (paired with its
+child-only tool at `pi-sandbox/.pi/child-tools/stage-write.ts`) is the
+live reference implementation — a `/deferred-writer <task>` slash
+command that spawns a drafter child whose only write channel is a stub
+`stage_write` tool. The stub's inputs are harvested from the parent's
+NDJSON event stream, buffered purely in the parent's memory, previewed
+via `ctx.ui.confirm`, and `fs.writeFileSync`'d into `pi-sandbox/` only
+on approval. Every always-on rail from
+`pi-sandbox/skills/pi-agent-builder/references/defaults.md` is applied.
 
 ## Scripted (non-interactive) pi invocations
 
@@ -125,6 +138,9 @@ npm run pi -- --mode json --no-tools \
   auto-discovery stays scoped.
   - `pi-sandbox/.pi/extensions/` — project-local pi extensions
     (auto-discovered when cwd = `pi-sandbox/`, tracked in git).
+  - `pi-sandbox/.pi/child-tools/` — tools meant to be loaded into
+    child pi processes via `pi -e <abs path>`, not auto-discovered by
+    the parent. See `stage-write.ts` for the pattern.
   - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
     anything you don't want to check in. Gitignored.
   - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how
@@ -152,8 +168,7 @@ added under `pi-sandbox/` and loaded via `-e <path>` / `--skill <path>`.
 
 ## Conventions
 
-- Develop on the designated feature branch
-  (`claude/setup-pi-agent-project-fegzL` for the current setup task); do not
+- Develop on the designated feature branch for the current task; do not
   push to other branches without explicit approval.
 - Commit messages should explain the *why* concisely.
 - Don't commit secrets — `.env`, `.env.local`, and `node_modules/` are already
