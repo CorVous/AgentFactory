@@ -12,6 +12,10 @@ const MAX_FILES_PROMOTABLE = 50;
 const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
 const MAX_REVISE_ITERATIONS = 3;
 const NOTIFY_TEXT_MAX = 400;
+const DASHBOARD_KEY = "delegated-writer";
+const TASK_PREVIEW_CHARS = 60;
+const CONTENT_PREVIEW_LINES = 2;
+const CONTENT_PREVIEW_CHARS = 80;
 
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -60,11 +64,114 @@ type PhaseResult = {
   timedOut: boolean;
 };
 
-type UiCtx = { ui: { notify: (m: string, level: "info" | "warning" | "error") => void } };
+type UiCtx = {
+  ui: {
+    notify: (m: string, level: "info" | "warning" | "error") => void;
+    setWidget?: (key: string, content: string[] | undefined) => void;
+    setStatus?: (key: string, text: string | undefined) => void;
+  };
+};
+
+type DrafterPhase = "pending" | "running" | "done" | "timed_out" | "error";
+type PipelinePhase =
+  | "dispatching" | "drafting" | "reviewing" | "revising" | "promoting" | "done" | "failed";
+
+type DrafterState = {
+  task: string;
+  phase: DrafterPhase;
+  stagedWrites: Array<{ path: string; content: string; bytes: number }>;
+};
+
+type PipelineState = {
+  userGoal: string;
+  phase: PipelinePhase;
+  iteration: number;
+  drafters: Map<number, DrafterState>;
+  verdicts: Map<string, ReviewCall>;
+};
 
 const sha256 = (data: string) => createHash("sha256").update(data, "utf8").digest("hex");
 const trunc = (s: string, n = NOTIFY_TEXT_MAX) =>
   s.length > n ? s.slice(0, n) + `… (+${s.length - n} chars)` : s;
+
+const PHASE_EMOJI: Record<DrafterPhase, string> = {
+  pending: "⏸",
+  running: "🔄",
+  done: "✅",
+  timed_out: "⏱",
+  error: "⚠",
+};
+
+function renderDashboard(state: PipelineState): string[] {
+  const lines: string[] = [];
+  const goalShort = trunc(state.userGoal, 70);
+  lines.push(`/delegated-writer · iter ${state.iteration}/${MAX_REVISE_ITERATIONS} · ${state.phase}`);
+  lines.push(`goal: ${goalShort}`);
+  lines.push("─".repeat(48));
+
+  if (state.drafters.size === 0) {
+    lines.push("(no drafters dispatched yet)");
+    return lines;
+  }
+
+  const indices = Array.from(state.drafters.keys()).sort((a, b) => a - b);
+  for (const i of indices) {
+    const d = state.drafters.get(i)!;
+    const emoji = PHASE_EMOJI[d.phase];
+    const taskShort = trunc(d.task, TASK_PREVIEW_CHARS);
+    lines.push(`[${i + 1}] ${emoji} ${d.phase}  "${taskShort}"`);
+    if (d.stagedWrites.length === 0) {
+      if (d.phase === "running" || d.phase === "pending") {
+        lines.push("    └─ (no drafts yet)");
+      } else {
+        lines.push("    └─ (no files staged)");
+      }
+      continue;
+    }
+    for (let j = 0; j < d.stagedWrites.length; j++) {
+      const w = d.stagedWrites[j];
+      const isLast = j === d.stagedWrites.length - 1;
+      const prefix = isLast ? "└─" : "├─";
+      const verdict = state.verdicts.get(w.path);
+      const verdictTag = verdict
+        ? verdict.verdict === "approve"
+          ? "  · ✅ approve"
+          : `  · ✳ revise: ${trunc(verdict.feedback ?? "(no feedback)", 50)}`
+        : "";
+      lines.push(`    ${prefix} ${w.path} (${w.bytes} b)${verdictTag}`);
+      const contentLines = w.content.split("\n").slice(0, CONTENT_PREVIEW_LINES);
+      for (const cl of contentLines) {
+        const clTrim = trunc(cl, CONTENT_PREVIEW_CHARS);
+        lines.push(`       ${clTrim}`);
+      }
+      if (w.content.split("\n").length > CONTENT_PREVIEW_LINES) {
+        lines.push(`       …`);
+      }
+    }
+  }
+  return lines;
+}
+
+function updateDashboard(ctx: UiCtx, state: PipelineState) {
+  if (!ctx.ui.setWidget) return;
+  try { ctx.ui.setWidget(DASHBOARD_KEY, renderDashboard(state)); } catch {}
+}
+
+function clearDashboard(ctx: UiCtx) {
+  if (!ctx.ui.setWidget) return;
+  try { ctx.ui.setWidget(DASHBOARD_KEY, undefined); } catch {}
+}
+
+function renderStatus(state: PipelineState): string {
+  const total = state.drafters.size;
+  const done = Array.from(state.drafters.values()).filter(d => d.phase === "done").length;
+  return `delegated-writer · ${state.phase} · iter ${state.iteration}/${MAX_REVISE_ITERATIONS} · drafters ${done}/${total}`;
+}
+
+function updateStatus(ctx: UiCtx, state: PipelineState) {
+  if (!ctx.ui.setStatus) return;
+  try { ctx.ui.setStatus(DASHBOARD_KEY, renderStatus(state)); } catch {}
+}
 
 // Drafter uses the classic non-RPC json mode — one-shot per task.
 async function runDrafter(
@@ -74,6 +181,7 @@ async function runDrafter(
   taskModel: string,
   sandboxRoot: string,
   ctx: UiCtx,
+  onStage?: (w: { path: string; content: string; bytes: number }) => void,
 ): Promise<DrafterResult> {
   const base = `You are a DRAFTER. Task: ${task}.
 To create a file, call 'stage_write' with a relative 'path' (inside the project at ${sandboxRoot}) and full 'content'. Nothing touches disk until approved.
@@ -120,8 +228,11 @@ Rules:
           if (name === "stage_write" && inputObj) {
             stagedWrites.push({ path: inputObj.path, content: inputObj.content });
             const p = typeof inputObj.path === "string" ? inputObj.path : "<?>";
-            const len = typeof inputObj.content === "string" ? inputObj.content.length : 0;
-            ctx.ui.notify(`Drafter[${taskIndex + 1}] → stage_write ${p} (${len} chars)`, "info");
+            const content = typeof inputObj.content === "string" ? inputObj.content : "";
+            ctx.ui.notify(`Drafter[${taskIndex + 1}] → stage_write ${p} (${content.length} chars)`, "info");
+            if (onStage && typeof inputObj.path === "string") {
+              onStage({ path: p, content, bytes: Buffer.byteLength(content, "utf8") });
+            }
           }
         }
       }
@@ -184,6 +295,8 @@ class DelegatorSession {
     phaseLabel: string,
     timeoutMs: number,
     ctx: UiCtx,
+    onTask?: (task: string) => void,
+    onReview?: (r: ReviewCall) => void,
   ): Promise<PhaseResult> {
     if (this.closed) {
       return { tasks: [], reviews: [], timedOut: true };
@@ -208,12 +321,15 @@ class DelegatorSession {
           if (name === "run_deferred_writer" && inputObj && typeof inputObj.task === "string") {
             tasks.push(inputObj.task);
             ctx.ui.notify(`${phaseLabel} → dispatched: ${trunc(inputObj.task, 80)}`, "info");
+            if (onTask) onTask(inputObj.task);
           } else if (name === "review" && inputObj && typeof inputObj.file_path === "string") {
             const verdict = inputObj.verdict === "approve" ? "approve" : "revise";
             const feedback = typeof inputObj.feedback === "string" ? inputObj.feedback : undefined;
-            reviews.push({ file_path: inputObj.file_path, verdict, feedback });
+            const rc: ReviewCall = { file_path: inputObj.file_path, verdict, feedback };
+            reviews.push(rc);
             const fbTag = feedback ? ` — ${trunc(feedback, 80)}` : "";
             ctx.ui.notify(`${phaseLabel} → review ${inputObj.file_path}: ${verdict}${fbTag}`, verdict === "approve" ? "info" : "warning");
+            if (onReview) onReview(rc);
           }
         } else if (type === "agent_end") {
           if (settled) return;
@@ -352,6 +468,16 @@ export default function (pi: ExtensionAPI) {
       const sandboxRoot = path.resolve(process.cwd());
       ctx.ui.notify(`Starting delegator (RPC, model=${LEAD_MODEL}, sandbox=${sandboxRoot})…`, "info");
 
+      const state: PipelineState = {
+        userGoal: args,
+        phase: "dispatching",
+        iteration: 0,
+        drafters: new Map(),
+        verdicts: new Map(),
+      };
+      const refreshUi = () => { updateDashboard(ctx, state); updateStatus(ctx, state); };
+      refreshUi();
+
       const session = new DelegatorSession(LEAD_MODEL, sandboxRoot);
 
       try {
@@ -364,16 +490,26 @@ You have two tools:
 
 In THIS turn, call run_deferred_writer once per subtask, then reply DONE and stop.`;
 
-        const dispatchRes = await session.runPrompt(dispatchPrompt, "Dispatch", DELEGATOR_PHASE_TIMEOUT_MS, ctx);
+        const dispatchRes = await session.runPrompt(
+          dispatchPrompt, "Dispatch", DELEGATOR_PHASE_TIMEOUT_MS, ctx,
+          (task) => {
+            const nextIdx = state.drafters.size;
+            state.drafters.set(nextIdx, { task, phase: "pending", stagedWrites: [] });
+            refreshUi();
+          },
+        );
         if (dispatchRes.timedOut) {
+          state.phase = "failed"; refreshUi();
           ctx.ui.notify(`Dispatch phase timed out. Stderr: ${session.getStderrTail()}`, "error");
           return;
         }
         if (dispatchRes.tasks.length === 0) {
+          state.phase = "failed"; refreshUi();
           ctx.ui.notify("Delegator dispatched no tasks.", "warning");
           return;
         }
         if (dispatchRes.tasks.length > MAX_SUBTASKS) {
+          state.phase = "failed"; refreshUi();
           ctx.ui.notify(`Delegator exceeded MAX_SUBTASKS (${dispatchRes.tasks.length} > ${MAX_SUBTASKS}).`, "error");
           return;
         }
@@ -383,9 +519,30 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
         // Phase 2: parallel drafters (initial)
         const taskStaged = new Map<number, Array<{ path: unknown; content: unknown }>>();
         const runAllDrafters = async (indices: number[], feedbackByTask?: Map<number, string[]>) => {
+          state.phase = feedbackByTask ? "revising" : "drafting";
+          for (const i of indices) {
+            const d = state.drafters.get(i);
+            if (d) { d.phase = "running"; d.stagedWrites = []; }
+          }
+          refreshUi();
           await Promise.all(indices.map(async (i) => {
             const fb = feedbackByTask?.get(i);
-            const res = await runDrafter(i, tasks[i], fb, TASK_MODEL, sandboxRoot, ctx);
+            const res = await runDrafter(
+              i, tasks[i], fb, TASK_MODEL, sandboxRoot, ctx,
+              (w) => {
+                const d = state.drafters.get(i);
+                if (!d) return;
+                d.stagedWrites.push(w);
+                refreshUi();
+              },
+            );
+            const d = state.drafters.get(i);
+            if (d) {
+              if (res.timedOut) d.phase = "timed_out";
+              else if (res.code !== 0) d.phase = "error";
+              else d.phase = "done";
+            }
+            refreshUi();
             if (res.timedOut) ctx.ui.notify(`Drafter[${i + 1}] timed out.`, "warning");
             if (res.code !== 0 && !res.timedOut) {
               ctx.ui.notify(`Drafter[${i + 1}] exited ${res.code}. Stderr: ${res.stderr.slice(-500)}`, "warning");
@@ -433,10 +590,22 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
 
           const reviewPrompt = buildReviewPrompt(tasks, staged, isInitial);
           isInitial = false;
+          state.phase = "reviewing";
+          state.iteration = iteration;
+          state.verdicts.clear();
+          refreshUi();
           ctx.ui.notify(`Review phase (iteration ${iteration}/${MAX_REVISE_ITERATIONS}, ${staged.length} files)…`, "info");
 
-          const reviewRes = await session.runPrompt(reviewPrompt, `Review-${iteration}`, DELEGATOR_PHASE_TIMEOUT_MS, ctx);
+          const reviewRes = await session.runPrompt(
+            reviewPrompt, `Review-${iteration}`, DELEGATOR_PHASE_TIMEOUT_MS, ctx,
+            undefined,
+            (r) => {
+              state.verdicts.set(r.file_path, r);
+              refreshUi();
+            },
+          );
           if (reviewRes.timedOut) {
+            state.phase = "failed"; refreshUi();
             ctx.ui.notify(`Review phase timed out. Stderr: ${session.getStderrTail()}`, "error");
             return;
           }
@@ -472,7 +641,11 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           }
 
           if (!anyRevise) {
+            state.phase = "promoting";
+            refreshUi();
             promoteFiles(approved, ctx);
+            state.phase = "done";
+            refreshUi();
             return;
           }
 
@@ -482,6 +655,10 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
         }
       } finally {
         session.close();
+        if (ctx.ui.setStatus) {
+          try { ctx.ui.setStatus(DASHBOARD_KEY, undefined); } catch {}
+        }
+        clearDashboard(ctx);
       }
     },
   });
