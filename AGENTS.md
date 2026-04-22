@@ -107,7 +107,12 @@ npx pi --mode json --no-tools \
 - `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`.
 - `models.env` — tier → model-ID mapping (see above).
 - `AGENTS.md` — this file (auto-loaded by pi at startup).
-- `.pi/extensions/` — project-local pi extensions (auto-discovered by pi).
+- `.pi/extensions/` — project-local pi extensions (auto-discovered by pi,
+  tracked in git).
+- `.pi/scratch/` — throwaway prompt files, raw pi output, anything you don't
+  want to check in. Gitignored. Put temporary artifacts here (e.g. the
+  `@path/to/prompt.md` files you feed to pi) so they don't clutter the
+  working tree or leak into commits.
 - `skills/pi-agent-builder/` — pi skill that teaches pi how to build agents.
 
 Additional agent definitions, extensions, skills, or prompt templates can be
