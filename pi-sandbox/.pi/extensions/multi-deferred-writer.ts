@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const PHASE_TIMEOUT_MS = 180_000;
 const REVIEW_TIMEOUT_MS = 60_000;
+const PLAN_TIMEOUT_MS = 60_000;
 const NOTIFY_TEXT_MAX = 400;
 const PREVIEW_LINES_PER_FILE = 20;
 const MAX_FILES_PROMOTABLE = 100;
@@ -181,28 +182,90 @@ Do not include any other text.`;
   }
 
   pi.registerCommand("multi-deferred-writer", {
-    description: "Orchestrate multiple parallel drafters and a reviewer. Syntax: <criteria> :: <subtask1> | <subtask2> | ...",
+    description: "Orchestrate multiple parallel drafters and a reviewer based on a single prompt.",
     handler: async (args, ctx) => {
-      const parts = args.split("::");
-      if (parts.length < 2) {
-        ctx.ui.notify("Usage: /multi-deferred-writer <criteria> :: <subtask1> | <subtask2> | ...", "warning");
+      const userPrompt = args.trim();
+      if (!userPrompt) {
+        ctx.ui.notify("Usage: /multi-deferred-writer <prompt>", "warning");
         return;
       }
 
-      const criteria = parts[0].trim();
-      const subtasks = parts[1].split("|").map(s => s.trim()).filter(s => s.length > 0);
-
-      if (subtasks.length === 0) {
-        ctx.ui.notify("No subtasks provided.", "warning");
-        return;
-      }
-
+      const PLAN_MODEL = process.env.PLAN_MODEL;
       const TASK_MODEL = process.env.TASK_MODEL;
       const LEAD_MODEL = process.env.LEAD_MODEL;
+      if (!PLAN_MODEL) {
+        ctx.ui.notify("PLAN_MODEL env var not set.", "error");
+        return;
+      }
       if (!TASK_MODEL || !LEAD_MODEL) {
         ctx.ui.notify("TASK_MODEL or LEAD_MODEL env var not set.", "error");
         return;
       }
+
+      const plannerPrompt = `You are a PROJECT PLANNER. 
+User Goal: ${userPrompt}
+
+Decompose this goal into 1 to 8 independent subtasks. 
+Each subtask should be a self-contained drafting task for one or more files.
+Subtasks will be executed in parallel with NO shared state. 
+They must collectively cover the entire user goal.
+
+Return exactly one JSON object with this structure:
+{
+  "criteria": "string — acceptance criteria the reviewer will check each file against",
+  "subtasks": ["string — subtask 1", "string — subtask 2", ...]
+}
+
+No prose outside the JSON.`;
+
+      ctx.ui.notify(`Decomposing task with ${PLAN_MODEL}...`, "info");
+      const planRes = await runChild(
+        "Planner",
+        [
+          "-p", plannerPrompt,
+          "--no-tools",
+          "--no-extensions",
+          "--no-session",
+          "--provider", "openrouter",
+          "--model", PLAN_MODEL,
+          "--thinking", "off",
+        ],
+        ctx,
+        PLAN_TIMEOUT_MS
+      );
+
+      if (planRes.timedOut) {
+        ctx.ui.notify("Planner timed out.", "error");
+        return;
+      }
+      if (planRes.code !== 0) {
+        ctx.ui.notify(`Planner failed (exit ${planRes.code}): ${planRes.stderr.slice(-200)}`, "error");
+        return;
+      }
+
+      let plan: { criteria: string; subtasks: string[] };
+      try {
+        const match = planRes.assistantText.match(/\{[\s\S]*\}/);
+        if (!match) throw new Error("No JSON object found in planner response");
+        plan = JSON.parse(match[0]);
+        if (!plan.criteria || !Array.isArray(plan.subtasks) || plan.subtasks.length === 0) {
+          throw new Error("Invalid plan structure (missing criteria or subtasks)");
+        }
+        if (plan.subtasks.length > 8) {
+          throw new Error(`Too many subtasks (${plan.subtasks.length} > 8)`);
+        }
+      } catch (e) {
+        ctx.ui.notify(`Planning failed: ${(e as Error).message}`, "error");
+        return;
+      }
+
+      const criteria = plan.criteria;
+      const subtasks = plan.subtasks;
+
+      ctx.ui.notify(`Plan Created:
+Criteria: ${criteria}
+Tasks:
+${subtasks.map((s, i) => `${i + 1}. ${s}`).join("\n")}`, "info");
 
       if (!fs.existsSync(STAGE_WRITE_TOOL)) {
         ctx.ui.notify(`stage_write tool missing at ${STAGE_WRITE_TOOL}`, "error");
@@ -215,7 +278,7 @@ Do not include any other text.`;
       const drafterPromises = subtasks.map(async (task, idx) => {
         const label = `Drafter-${idx + 1}`;
         const agentPrompt = `You are a DRAFTER for a specific subtask.
-Overall Task Context: ${args}
+Overall Task Context: ${userPrompt}
 Your Specific Subtask: ${task}
 
 Nothing you do will touch disk until the user and a reviewer approve. To create a file, call the \`stage_write\` tool with a relative \`path\` (inside the project at ${sandboxRoot}) and the full \`content\`.
