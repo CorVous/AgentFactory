@@ -23,7 +23,8 @@ a spot to write, and only after the user confirms it…"*), your job is to
 | "read-only" / "survey" / "recon" / "explore" | Child gets `--tools read,grep,glob,ls` (narrower if the prompt says so) |
 | "after the user confirms" / "with approval" / "the user decides" | `ctx.ui.confirm(title, preview)` gate before the side effect; return early on `undefined`/`false` |
 | "not able to overwrite" / "can't modify other files" / "new file only" | Pre-check `!fs.existsSync(path)`; after the write, verify `sha256(fs.readFileSync(path)) === expectedHash` |
-| "decide what it wants to write first" / "plan before acting" / "propose" | Phase 1 returns *structured* output (e.g. JSON inside `<plan>…</plan>` tags) with every field the later phase needs (path + full content, not just a path) |
+| "can't get outside X" / "stays inside X" / "sandboxed to X" / "scoped to this directory" | Capture `sandboxRoot = path.resolve(process.cwd())` (or whatever X resolves to) at handler entry; reject any proposed path whose resolved form doesn't satisfy `abs === sandboxRoot \|\| abs.startsWith(sandboxRoot + path.sep)`; also spawn writer children with `cwd: sandboxRoot` |
+| "decide what it wants to write first" / "plan before acting" / "propose" | Phase 1 returns *structured* output (JSON inside `===PLAN===` … `===ENDPLAN===` fences) with every field the later phase needs (path + full content, not just a path). Prefer ASCII fences over `<…>` tags — some renderers strip angle brackets and break parsing |
 | "two phases" / "first X, then Y" / "propose … then commit" | Separate child `pi` processes per phase, each with its own tool allowlist |
 | "in parallel" / "fan out" / "N tasks at once" | `Promise.all` over the children; tag each result with its task index so the parent can correlate |
 | "slash command" / "/<name>" / "user types" | `pi.registerCommand(name, { handler })` — not `registerTool` |
@@ -60,9 +61,13 @@ Signals extracted:
 
 Resulting structure without further questions: a two-phase command with a
 planner child (structured output) → confirmation → writer child (bounded
-by allowlist + existence and hash checks). A real implementation of this
-exact pattern is committed at `.pi/extensions/deferred-writer.ts` in the
-AgentFactory repo.
+by allowlist + existence and hash checks). Apply every always-on rail
+from `defaults.md` on top — in particular the `stdio: "ignore"` stdin
+fix, the `setTimeout`+`SIGKILL` child timeout, progress `notify` calls
+at every phase boundary, and the sandbox-root path check even though the
+prompt didn't call the sandbox out by name. A real implementation of
+this exact pattern is committed at `.pi/extensions/deferred-writer.ts`
+in the AgentFactory repo.
 
 ## When to still ask
 

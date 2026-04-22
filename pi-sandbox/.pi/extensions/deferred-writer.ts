@@ -23,12 +23,14 @@ export default function(pi: ExtensionAPI) {
     args: string[],
     ctx: { ui: { notify: (m: string, level: "info" | "warning" | "error") => void } },
     timeoutMs = PHASE_TIMEOUT_MS,
+    cwd: string = process.cwd(),
   ): Promise<ChildResult> {
     return new Promise((resolve) => {
       const fullArgs = ["--mode", "json", ...args];
       // Pi blocks reading stdin when it's a pipe, even with -p. Use "ignore"
-      // so the child proceeds straight to the prompt from argv.
-      const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      // so the child proceeds straight to the prompt from argv. Pin cwd so
+      // relative paths resolve inside the sandbox.
+      const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"], cwd });
       let buffer = "";
       let stderr = "";
       let assistantText = "";
@@ -119,7 +121,9 @@ export default function(pi: ExtensionAPI) {
         return;
       }
 
-      ctx.ui.notify(`Planning target and content (model=${MODEL}, up to ${PHASE_TIMEOUT_MS / 1000}s)…`, "info");
+      const sandboxRoot = path.resolve(process.cwd());
+
+      ctx.ui.notify(`Planning target and content (model=${MODEL}, sandbox=${sandboxRoot}, up to ${PHASE_TIMEOUT_MS / 1000}s)…`, "info");
 
       const plannerPrompt = `You are a PLANNER. Task: ${args}.
 
@@ -136,6 +140,8 @@ Escape newlines in the content field as \\n. No prose before or after the PLAN m
         "Planner",
         ["-p", plannerPrompt, "--no-extensions", "--tools", "ls", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
         ctx,
+        PHASE_TIMEOUT_MS,
+        sandboxRoot,
       );
       reportChild("Planner", res1, ctx);
 
@@ -172,32 +178,40 @@ Escape newlines in the content field as \\n. No prose before or after the PLAN m
         ctx.ui.notify("Planner did not return string content.", "error");
         return;
       }
-      if (fs.existsSync(fPath)) {
-        ctx.ui.notify("Proposed file already exists: " + fPath, "error");
+
+      const absPath = path.resolve(sandboxRoot, fPath);
+      if (absPath !== sandboxRoot && !absPath.startsWith(sandboxRoot + path.sep)) {
+        ctx.ui.notify(`Path escapes sandbox (${sandboxRoot}): ${absPath}`, "error");
+        return;
+      }
+      if (fs.existsSync(absPath)) {
+        ctx.ui.notify("Proposed file already exists: " + absPath, "error");
         return;
       }
 
       const lines = content.split("\n");
       const preview = lines.slice(0, 40).join("\n") + (lines.length > 40 ? `\n... (${lines.length - 40} more lines)` : "");
-      if (!(await ctx.ui.confirm("Write new file?", fPath + "\n---\n" + preview))) {
+      if (!(await ctx.ui.confirm("Write new file?", absPath + "\n---\n" + preview))) {
         ctx.ui.notify("Cancelled", "info");
         return;
       }
 
-      if (fs.existsSync(fPath)) {
-        ctx.ui.notify("File was created during confirmation: " + fPath, "error");
+      if (fs.existsSync(absPath)) {
+        ctx.ui.notify("File was created during confirmation: " + absPath, "error");
         return;
       }
 
-      ctx.ui.notify(`Writing ${fPath}…`, "info");
+      ctx.ui.notify(`Writing ${absPath}…`, "info");
 
       const expectedHash = sha256(content);
-      const writerPrompt = `Use the write tool EXACTLY ONCE to create the file at path: ${fPath}. The content is between <<<BEGIN>>> and <<<END>>> markers (exclusive):\n<<<BEGIN>>>\n${content}\n<<<END>>>\nDo not modify any other file. After writing, reply DONE.`;
+      const writerPrompt = `Use the write tool EXACTLY ONCE to create the file at EXACTLY this absolute path: ${absPath}. Do not write to any other path. The content is between <<<BEGIN>>> and <<<END>>> markers (exclusive):\n<<<BEGIN>>>\n${content}\n<<<END>>>\nAfter writing, reply DONE.`;
 
       const res2 = await runChild(
         "Writer",
         ["-p", writerPrompt, "--no-extensions", "--tools", "write", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
         ctx,
+        PHASE_TIMEOUT_MS,
+        sandboxRoot,
       );
       reportChild("Writer", res2, ctx);
 
@@ -210,12 +224,12 @@ Escape newlines in the content field as \\n. No prose before or after the PLAN m
         return;
       }
 
-      if (!fs.existsSync(fPath) || sha256(fs.readFileSync(fPath, "utf-8")) !== expectedHash) {
-        ctx.ui.notify("Writer completed but file missing or hash mismatch.", "error");
+      if (!fs.existsSync(absPath) || sha256(fs.readFileSync(absPath, "utf-8")) !== expectedHash) {
+        ctx.ui.notify("Writer completed but file missing or hash mismatch at " + absPath, "error");
         return;
       }
 
-      ctx.ui.notify("Wrote: " + fPath, "info");
+      ctx.ui.notify("Wrote: " + absPath, "info");
     },
   });
 }
