@@ -118,6 +118,23 @@ npx pi --mode json --no-tools \
 Additional agent definitions, extensions, skills, or prompt templates can be
 added and loaded via `-e <path>` / `--skill <path>` when launching pi.
 
+## Workflow
+
+- **Build pi extensions by having pi build them.** The preferred path is
+  `npx pi --skill skills/pi-agent-builder -p "<short description>"` (or
+  via `@path/to/prompt.md` for longer asks). The `pi-agent-builder` skill
+  is written for pi to consume, not for Claude or any other harness to
+  read on its behalf.
+- **Short natural-language prompts are the norm.** If a short prompt
+  produces an incorrect or unsafe extension, the fix is to refine the
+  skill — add the missing signal to
+  `skills/pi-agent-builder/references/reading-short-prompts.md` or the
+  missing rail to `.../references/defaults.md` — rather than padding
+  every prompt with a full technical spec.
+- **Scratch artifacts live in `.pi/scratch/`** (gitignored). Raw pi
+  output, throwaway prompt files, and experiments go there and stay out
+  of the tracked tree.
+
 ## Conventions
 
 - Develop on the designated feature branch
