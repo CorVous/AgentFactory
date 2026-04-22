@@ -183,9 +183,18 @@ script that calls pi to generate an extension.)
 - `ctx.ui.notify(message, level)` — level is `"info" | "warning" | "error"`.
   Not `"warn"`. Not `"success"`. Generated code that uses either will
   fail to type-check.
-- `registerTool` parameters use TypeBox. For enums that must work with
-  Google/Gemini providers, use `StringEnum`, not plain
+- `registerTool` parameters use TypeBox. **Import from `typebox`**, not
+  `@sinclair/typebox` — pi 0.69.0 migrated the first-party packages to
+  the new `typebox` 1.x package. The legacy root alias still works for
+  back-compat, but `@sinclair/typebox/compiler` is no longer shimmed,
+  and new code should depend on `typebox` directly. For enums that must
+  work with Google/Gemini providers, use `StringEnum`, not plain
   `Type.String({ enum: [...] })`.
+- `registerTool` execute results may now return `terminate: true` to
+  end the tool batch without paying for an automatic follow-up LLM
+  turn (new in pi 0.69.0). Useful for structured-output / stub tools
+  where the tool's return value *is* the final answer. See
+  `node_modules/@mariozechner/pi-coding-agent/examples/extensions/structured-output.ts`.
 - Tool `content` is what the LLM sees in context; `details` is for
   renderers/your own bookkeeping. Don't stuff the full transcript into
   `content`.

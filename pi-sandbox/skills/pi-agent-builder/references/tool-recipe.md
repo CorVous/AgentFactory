@@ -6,7 +6,7 @@ Tools are what the LLM calls mid-conversation. Their output lands in the context
 
 ```ts
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -41,10 +41,10 @@ A weak description (`"Deploys the app"`) underperforms. A strong one reads like 
 
 ### `parameters` — use TypeBox
 
-Pi uses `@sinclair/typebox` for schemas. The schema is converted to JSON Schema for the LLM.
+Pi uses the `typebox` package for schemas (migrated from `@sinclair/typebox` in pi 0.69.0 — legacy path still aliased, but new extensions should import from `typebox`). The schema is converted to JSON Schema for the LLM.
 
 ```ts
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 parameters: Type.Object({
   environment: Type.String({

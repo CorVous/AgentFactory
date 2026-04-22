@@ -17,7 +17,7 @@ Don't use a sub-agent when a single tool call would suffice. Sub-agents cost tok
 ```ts
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { createAgentSession, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
