@@ -414,7 +414,7 @@ function validateStagedWrite(
   };
 }
 
-function promoteFiles(plans: StagedWrite[], ctx: UiCtx) {
+function promoteFiles(plans: StagedWrite[], ctx: UiCtx): StagedWrite[] {
   const promoted: StagedWrite[] = [];
   const failures: string[] = [];
   for (const p of plans) {
@@ -430,15 +430,17 @@ function promoteFiles(plans: StagedWrite[], ctx: UiCtx) {
     }
   }
   if (failures.length > 0) ctx.ui.notify(`Failures:\n${failures.join("\n")}`, "error");
-  if (promoted.length > 0) {
-    const sections = promoted.map((p) => {
-      const lines = p.content.split("\n");
-      const shown = lines.slice(0, WRITTEN_PREVIEW_LINES).map((l) => trunc(l, WRITTEN_PREVIEW_CHARS));
-      const more = lines.length > WRITTEN_PREVIEW_LINES ? `\n  … (+${lines.length - WRITTEN_PREVIEW_LINES} more lines)` : "";
-      return `── ${p.relPath} (${p.byteLength} b) ──\n${shown.map((l) => "  " + l).join("\n")}${more}`;
-    });
-    ctx.ui.notify(`Wrote ${promoted.length} file(s):\n\n${sections.join("\n\n")}`, "info");
-  }
+  return promoted;
+}
+
+function renderWrittenSummary(promoted: StagedWrite[]): string {
+  const sections = promoted.map((p) => {
+    const lines = p.content.split("\n");
+    const shown = lines.slice(0, WRITTEN_PREVIEW_LINES).map((l) => trunc(l, WRITTEN_PREVIEW_CHARS));
+    const more = lines.length > WRITTEN_PREVIEW_LINES ? `\n  … (+${lines.length - WRITTEN_PREVIEW_LINES} more lines)` : "";
+    return `── ${p.relPath} (${p.byteLength} b) ──\n${shown.map((l) => "  " + l).join("\n")}${more}`;
+  });
+  return `Wrote ${promoted.length} file(s):\n\n${sections.join("\n\n")}`;
 }
 
 function buildReviewPrompt(
@@ -666,14 +668,14 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           if (!anyRevise) {
             state.phase = "promoting";
             refreshUi();
-            promoteFiles(approved, ctx);
+            const written = promoteFiles(approved, ctx);
             state.phase = "done";
             refreshUi();
-            const total = state.costs.delegatorUsd + state.costs.draftersUsd;
-            ctx.ui.notify(
-              `Session cost: ${fmtUsd(total)} (delegator ${fmtUsd(state.costs.delegatorUsd)}, drafters ${fmtUsd(state.costs.draftersUsd)})`,
-              "info",
-            );
+            if (written.length > 0) {
+              const total = state.costs.delegatorUsd + state.costs.draftersUsd;
+              const costLine = `Session cost: ${fmtUsd(total)} (delegator ${fmtUsd(state.costs.delegatorUsd)}, drafters ${fmtUsd(state.costs.draftersUsd)})`;
+              ctx.ui.notify(`${renderWrittenSummary(written)}\n\n${costLine}`, "info");
+            }
             return;
           }
 
