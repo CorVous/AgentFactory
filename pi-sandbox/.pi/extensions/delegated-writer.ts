@@ -56,12 +56,14 @@ type DrafterResult = {
   code: number;
   timedOut: boolean;
   stderr: string;
+  costUsd: number;
 };
 
 type PhaseResult = {
   tasks: string[];
   reviews: ReviewCall[];
   timedOut: boolean;
+  costUsd: number;
 };
 
 type UiCtx = {
@@ -88,7 +90,17 @@ type PipelineState = {
   iteration: number;
   drafters: Map<number, DrafterState>;
   verdicts: Map<string, ReviewCall>;
+  costs: { delegatorUsd: number; draftersUsd: number };
 };
+
+function extractCostUsd(ev: Record<string, unknown>): number {
+  if (ev.type !== "message_end") return 0;
+  const msg = ev.message as { usage?: { cost?: { total?: number } } } | undefined;
+  const total = msg?.usage?.cost?.total;
+  return typeof total === "number" && isFinite(total) ? total : 0;
+}
+
+const fmtUsd = (n: number) => `$${n.toFixed(4)}`;
 
 const sha256 = (data: string) => createHash("sha256").update(data, "utf8").digest("hex");
 const trunc = (s: string, n = NOTIFY_TEXT_MAX) =>
@@ -165,7 +177,8 @@ function clearDashboard(ctx: UiCtx) {
 function renderStatus(state: PipelineState): string {
   const total = state.drafters.size;
   const done = Array.from(state.drafters.values()).filter(d => d.phase === "done").length;
-  return `delegated-writer · ${state.phase} · iter ${state.iteration}/${MAX_REVISE_ITERATIONS} · drafters ${done}/${total}`;
+  const totalCost = state.costs.delegatorUsd + state.costs.draftersUsd;
+  return `delegated-writer · ${state.phase} · iter ${state.iteration}/${MAX_REVISE_ITERATIONS} · drafters ${done}/${total} · ${fmtUsd(totalCost)}`;
 }
 
 function updateStatus(ctx: UiCtx, state: PipelineState) {
@@ -208,6 +221,7 @@ Rules:
     let buffer = "";
     let stderr = "";
     const stagedWrites: Array<{ path: unknown; content: unknown }> = [];
+    let costUsd = 0;
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -234,17 +248,19 @@ Rules:
               onStage({ path: p, content, bytes: Buffer.byteLength(content, "utf8") });
             }
           }
+        } else if (e.type === "message_end") {
+          costUsd += extractCostUsd(e);
         }
       }
     });
     child.stderr.on("data", (d) => { stderr += d.toString(); });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ stagedWrites, code: code ?? 0, timedOut, stderr });
+      resolve({ stagedWrites, code: code ?? 0, timedOut, stderr, costUsd });
     });
     child.on("error", () => {
       clearTimeout(timer);
-      resolve({ stagedWrites, code: -1, timedOut, stderr });
+      resolve({ stagedWrites, code: -1, timedOut, stderr, costUsd });
     });
   });
 }
@@ -299,22 +315,26 @@ class DelegatorSession {
     onReview?: (r: ReviewCall) => void,
   ): Promise<PhaseResult> {
     if (this.closed) {
-      return { tasks: [], reviews: [], timedOut: true };
+      return { tasks: [], reviews: [], timedOut: true, costUsd: 0 };
     }
 
     return new Promise<PhaseResult>((resolve) => {
       const tasks: string[] = [];
       const reviews: ReviewCall[] = [];
+      let costUsd = 0;
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
         this.listeners.delete(listener);
-        resolve({ tasks, reviews, timedOut: true });
+        resolve({ tasks, reviews, timedOut: true, costUsd });
       }, timeoutMs);
 
       const listener = (ev: Record<string, unknown>) => {
         const type = ev.type as string | undefined;
+        if (type === "message_end") {
+          costUsd += extractCostUsd(ev);
+        }
         if (type === "tool_execution_start") {
           const name = ev.toolName as string | undefined;
           const inputObj = ev.args as Record<string, unknown> | undefined;
@@ -336,7 +356,7 @@ class DelegatorSession {
           settled = true;
           clearTimeout(timer);
           this.listeners.delete(listener);
-          resolve({ tasks, reviews, timedOut: false });
+          resolve({ tasks, reviews, timedOut: false, costUsd });
         } else if (type === "response" && ev.success === false) {
           ctx.ui.notify(`${phaseLabel} RPC error: ${ev.error}`, "error");
         }
@@ -351,7 +371,7 @@ class DelegatorSession {
         clearTimeout(timer);
         this.listeners.delete(listener);
         ctx.ui.notify(`${phaseLabel} failed to write prompt: ${(e as Error).message}`, "error");
-        resolve({ tasks, reviews, timedOut: true });
+        resolve({ tasks, reviews, timedOut: true, costUsd });
       }
     });
   }
@@ -474,6 +494,7 @@ export default function (pi: ExtensionAPI) {
         iteration: 0,
         drafters: new Map(),
         verdicts: new Map(),
+        costs: { delegatorUsd: 0, draftersUsd: 0 },
       };
       const refreshUi = () => { updateDashboard(ctx, state); updateStatus(ctx, state); };
       refreshUi();
@@ -498,6 +519,8 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
             refreshUi();
           },
         );
+        state.costs.delegatorUsd += dispatchRes.costUsd;
+        refreshUi();
         if (dispatchRes.timedOut) {
           state.phase = "failed"; refreshUi();
           ctx.ui.notify(`Dispatch phase timed out. Stderr: ${session.getStderrTail()}`, "error");
@@ -536,6 +559,7 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
                 refreshUi();
               },
             );
+            state.costs.draftersUsd += res.costUsd;
             const d = state.drafters.get(i);
             if (d) {
               if (res.timedOut) d.phase = "timed_out";
@@ -604,6 +628,8 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
               refreshUi();
             },
           );
+          state.costs.delegatorUsd += reviewRes.costUsd;
+          refreshUi();
           if (reviewRes.timedOut) {
             state.phase = "failed"; refreshUi();
             ctx.ui.notify(`Review phase timed out. Stderr: ${session.getStderrTail()}`, "error");
@@ -646,6 +672,11 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
             promoteFiles(approved, ctx);
             state.phase = "done";
             refreshUi();
+            const total = state.costs.delegatorUsd + state.costs.draftersUsd;
+            ctx.ui.notify(
+              `Session cost: ${fmtUsd(total)} (delegator ${fmtUsd(state.costs.delegatorUsd)}, drafters ${fmtUsd(state.costs.draftersUsd)})`,
+              "info",
+            );
             return;
           }
 
@@ -654,6 +685,13 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           await runAllDrafters(revisedIndices, feedbackByTask);
         }
       } finally {
+        const total = state.costs.delegatorUsd + state.costs.draftersUsd;
+        if (state.phase !== "done" && total > 0) {
+          ctx.ui.notify(
+            `Session cost (no promotion): ${fmtUsd(total)} (delegator ${fmtUsd(state.costs.delegatorUsd)}, drafters ${fmtUsd(state.costs.draftersUsd)})`,
+            "info",
+          );
+        }
         session.close();
         if (ctx.ui.setStatus) {
           try { ctx.ui.setStatus(DASHBOARD_KEY, undefined); } catch {}
