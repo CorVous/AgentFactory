@@ -66,7 +66,7 @@ parameters: Type.Object({
 ### `execute` — the actual work
 
 ```ts
-async execute(toolCallId, params, onUpdate, ctx, signal) {
+async execute(toolCallId, params, signal, onUpdate, ctx) {
   // 1. Validate beyond what the schema catches
   if (params.tags.length === 0) {
     return {
@@ -89,13 +89,13 @@ async execute(toolCallId, params, onUpdate, ctx, signal) {
 }
 ```
 
-**Parameters of `execute`:**
+**Parameters of `execute`** (order matters — pi passes them positionally):
 
 - `toolCallId` — unique per call; use for correlation in logs.
 - `params` — validated against your schema.
+- `signal` — `AbortSignal`; if the user cancels, this fires. **Always pass it to `fetch` and subprocess calls.**
 - `onUpdate` — progress reporter; call it with `{ status, ... }` to update the TUI.
 - `ctx` — the runtime context (see below).
-- `signal` — `AbortSignal`; if the user cancels, this fires. **Always pass it to `fetch` and subprocess calls.**
 
 **Return shape:**
 
@@ -104,10 +104,72 @@ async execute(toolCallId, params, onUpdate, ctx, signal) {
   content: Array<{ type: "text"; text: string } | { type: "image"; ... }>,
   details?: Record<string, unknown>,  // structured data, not shown to LLM
   isError?: boolean,                   // surfaces as error in UI
+  terminate?: boolean,                 // hint to stop after this tool batch (see below)
 }
 ```
 
 The LLM sees `content`. `details` is for your own bookkeeping and for custom renderers.
+
+### Early termination — `terminate: true`
+
+Added in pi 0.69.0. Return `terminate: true` from `execute()` to hint
+that pi should skip the automatic follow-up LLM turn after the current
+tool batch. Use it when the tool call itself **is** the final answer —
+the agent doesn't need to say anything else — and you'd rather not pay
+for another model call just to get "Done." out of the LLM.
+
+Caveat: `terminate` only takes effect when **every** finalized tool
+result in the batch is terminating. Parallel tool calls where any
+non-terminating tool fires will still produce a follow-up turn.
+
+Canonical use cases:
+
+- **Structured-output tools** — the tool emits the final JSON / report;
+  there's nothing for the agent to add.
+- **Stop / exit markers** — a `/done` or `/submit` equivalent.
+- **Stub tools whose result already contains everything** — e.g. a
+  `search_answer` that returns a full-formed answer.
+
+Minimal example:
+
+```ts
+pi.registerTool({
+  name: "submit_answer",
+  label: "Submit Answer",
+  description:
+    "Return the final answer. Use this as your LAST action when you have " +
+    "everything the user asked for.",
+  promptGuidelines: [
+    "Use submit_answer as your final action. Do not emit another assistant message after calling it.",
+  ],
+  parameters: Type.Object({
+    answer: Type.String(),
+  }),
+  async execute(_id, params) {
+    return {
+      content: [{ type: "text", text: `Submitted: ${params.answer}` }],
+      details: { answer: params.answer },
+      terminate: true,
+    };
+  },
+});
+```
+
+The paired `promptGuidelines` entry matters — the LLM needs a prompt
+hook telling it *when* to use the tool as its last action. Without the
+guideline, the model may keep the tool in rotation and call other
+things after it, which nullifies the batch-terminate condition.
+
+See `node_modules/@mariozechner/pi-coding-agent/examples/extensions/structured-output.ts`
+for pi's own minimal demo.
+
+**Do NOT use `terminate` when:**
+
+- The agent might legitimately want to keep working after this tool
+  (e.g. a writer tool that may be called multiple times in a loop —
+  setting `terminate` would stop after the first call).
+- Other tools in the same batch might not be terminating — the hint
+  won't take effect.
 
 ## The `ctx` object — what you actually have
 

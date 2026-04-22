@@ -190,11 +190,20 @@ script that calls pi to generate an extension.)
   and new code should depend on `typebox` directly. For enums that must
   work with Google/Gemini providers, use `StringEnum`, not plain
   `Type.String({ enum: [...] })`.
-- `registerTool` execute results may now return `terminate: true` to
-  end the tool batch without paying for an automatic follow-up LLM
-  turn (new in pi 0.69.0). Useful for structured-output / stub tools
-  where the tool's return value *is* the final answer. See
-  `node_modules/@mariozechner/pi-coding-agent/examples/extensions/structured-output.ts`.
+- `registerTool` execute results may return `terminate: true` to skip
+  the automatic follow-up LLM turn after the current tool batch (new
+  in pi 0.69.0). Use it when the tool call **is** the final answer —
+  structured-output tools, `submit_answer`-style end markers, any stub
+  whose return value already contains everything the caller needs.
+  Every tool result in the batch must be terminating for the hint to
+  take effect. Pair it with a `promptGuidelines` entry telling the LLM
+  to use the tool as its last action, e.g. `["Use submit_answer as
+  your final action. Do not emit another assistant message after
+  calling it."]` — without the guideline the model may keep issuing
+  more calls, and then `terminate` does nothing. Do NOT use it for
+  tools that might run in a loop (a writer called once per file, a
+  staging tool where multiple invocations are expected), or the agent
+  will stop after one call. See `tool-recipe.md` for the full pattern.
 - Tool `content` is what the LLM sees in context; `details` is for
   renderers/your own bookkeeping. Don't stuff the full transcript into
   `content`.
