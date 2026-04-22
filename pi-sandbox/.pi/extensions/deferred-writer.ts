@@ -123,7 +123,7 @@ export default function(pi: ExtensionAPI) {
 
       const res1 = await runChild(
         "Planner",
-        ["-p", plannerPrompt, "--no-extensions", "--tools", "ls,read", "--provider", "openrouter", "--model", MODEL, "--no-session"],
+        ["-p", plannerPrompt, "--no-extensions", "--tools", "ls,read", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
         ctx,
       );
       reportChild("Planner", res1, ctx);
@@ -185,7 +185,7 @@ export default function(pi: ExtensionAPI) {
 
       const res2 = await runChild(
         "Writer",
-        ["-p", writerPrompt, "--no-extensions", "--tools", "write", "--provider", "openrouter", "--model", MODEL, "--no-session"],
+        ["-p", writerPrompt, "--no-extensions", "--tools", "write", "--provider", "openrouter", "--model", MODEL, "--thinking", "off", "--no-session"],
         ctx,
       );
       reportChild("Writer", res2, ctx);
