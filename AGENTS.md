@@ -7,14 +7,22 @@ installed as a regular npm dependency so the `pi` CLI is available via
 
 ## Launching pi
 
-- `npx pi` — interactive session
-- `npm run pi` — same, via the script in `package.json`
-- `npx pi --help` — full flag reference (`-e` for extensions, `--skill` for
-  skills, `-p` for non-interactive mode, `--model` / `--provider` to target a
-  specific model, etc.)
+Pi always runs from `pi-sandbox/` — its extensions, sessions, and scratch
+files live there. The `npm run pi` script handles the `cd` for you and
+also passes `--no-context-files` so the outer `AGENTS.md`/`CLAUDE.md`
+(which are *human* docs about this repo) don't leak into pi's context.
 
-Dependencies live in `node_modules/` (gitignored); run `npm install` after
-cloning.
+- `npm run pi` — interactive pi session in the sandbox.
+- `npm run pi -- -p "..."` — non-interactive. Forward any extra pi
+  flags after the `--`.
+- `npx pi --help` — full flag reference (`-e` for extensions, `--skill`
+  for skills, `-p` for non-interactive, `--mode json` for streaming
+  events, `-nc` / `--no-context-files` to suppress AGENTS.md/CLAUDE.md).
+
+Dependencies live in `node_modules/` at the repo root; run `npm install`
+after cloning. Invoking pi directly (`npx pi`) from the repo root is not
+recommended — it runs outside the sandbox and will pick up the outer
+docs as context.
 
 ## Model tiers
 
@@ -32,7 +40,7 @@ Source the file before launching pi so the tier vars are in scope:
 
 ```sh
 set -a; source models.env; set +a
-npx pi --model "$TASK_MODEL"    # or $LEAD_MODEL / $PLAN_MODEL
+npm run pi -- --model "$TASK_MODEL"    # or $LEAD_MODEL / $PLAN_MODEL
 ```
 
 `models.env` is committed because the IDs are not secrets. Put API keys in a
@@ -48,17 +56,21 @@ extensions that follow its recipes.
 
 ```sh
 set -a; source models.env; set +a
-npx pi --provider openrouter --model "$LEAD_MODEL" \
+npm run pi -- --provider openrouter --model "$LEAD_MODEL" \
   --skill skills/pi-agent-builder \
   -p "Use the pi-agent-builder skill to <describe the agent>."
 ```
 
-For prompts with lots of nested quotes, put the prompt in a file and pass
-`@path/to/prompt.md` — cleaner than escaping inline `-p "..."`.
+Paths (`skills/pi-agent-builder`, `.pi/extensions/…`, `@prompt.md`) resolve
+from `pi-sandbox/` cwd, since `npm run pi` cds in.
+
+For prompts with lots of nested quotes, put the prompt in a file under
+`.pi/scratch/` and pass `@.pi/scratch/prompt.md` — cleaner than escaping
+inline `-p "..."`.
 
 ### Where agent code lives
 
-| Location | Behavior |
+| Location (from `pi-sandbox/` cwd) | Behavior |
 | --- | --- |
 | `.pi/extensions/<name>.ts` | Project-local, auto-discovered by pi |
 | `~/.pi/agent/extensions/<name>.ts` | Global, hot-reloadable via `/reload` |
@@ -74,7 +86,7 @@ When an extension delegates to a child `pi` process:
 - Match the tier to the child's role: `$TASK_MODEL` for workers,
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
 
-See `skills/pi-agent-builder/references/` for recipe-level detail.
+See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
 
 ## Scripted (non-interactive) pi invocations
 
@@ -95,7 +107,7 @@ Gotchas we've hit when calling `pi -p` from scripts:
 Recommended scripted pattern:
 
 ```sh
-npx pi --mode json --no-tools \
+npm run pi -- --mode json --no-tools \
   --provider openrouter --model "$TASK_MODEL" \
   --no-session --no-skills --no-extensions \
   -p "$prompt" \
@@ -104,36 +116,39 @@ npx pi --mode json --no-tools \
 
 ## Repo layout
 
-- `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`.
+- `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`. The
+  `pi` script cds into `pi-sandbox/` and passes `--no-context-files`.
 - `models.env` — tier → model-ID mapping (see above).
-- `AGENTS.md` — this file (auto-loaded by pi at startup).
-- `.pi/extensions/` — project-local pi extensions (auto-discovered by pi,
-  tracked in git).
-- `.pi/scratch/` — throwaway prompt files, raw pi output, anything you don't
-  want to check in. Gitignored. Put temporary artifacts here (e.g. the
-  `@path/to/prompt.md` files you feed to pi) so they don't clutter the
-  working tree or leak into commits.
-- `skills/pi-agent-builder/` — pi skill that teaches pi how to build agents.
+- `AGENTS.md` / `CLAUDE.md` — human docs about this repo. **Not** loaded
+  into pi sessions (`npm run pi` passes `-nc`).
+- `pi-sandbox/` — pi's cwd. Every pi invocation should run from here so
+  auto-discovery stays scoped.
+  - `pi-sandbox/.pi/extensions/` — project-local pi extensions
+    (auto-discovered when cwd = `pi-sandbox/`, tracked in git).
+  - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
+    anything you don't want to check in. Gitignored.
+  - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how
+    to build agents.
 
 Additional agent definitions, extensions, skills, or prompt templates can be
-added and loaded via `-e <path>` / `--skill <path>` when launching pi.
+added under `pi-sandbox/` and loaded via `-e <path>` / `--skill <path>`.
 
 ## Workflow
 
 - **Build pi extensions by having pi build them.** The preferred path is
-  `npx pi --skill skills/pi-agent-builder -p "<short description>"` (or
-  via `@path/to/prompt.md` for longer asks). The `pi-agent-builder` skill
-  is written for pi to consume, not for Claude or any other harness to
-  read on its behalf.
+  `npm run pi -- --skill skills/pi-agent-builder -p "<short description>"`
+  (or via `@.pi/scratch/prompt.md` for longer asks). The `pi-agent-builder`
+  skill is written for pi to consume, not for Claude or any other harness
+  to read on its behalf.
 - **Short natural-language prompts are the norm.** If a short prompt
   produces an incorrect or unsafe extension, the fix is to refine the
   skill — add the missing signal to
-  `skills/pi-agent-builder/references/reading-short-prompts.md` or the
-  missing rail to `.../references/defaults.md` — rather than padding
-  every prompt with a full technical spec.
-- **Scratch artifacts live in `.pi/scratch/`** (gitignored). Raw pi
-  output, throwaway prompt files, and experiments go there and stay out
-  of the tracked tree.
+  `pi-sandbox/skills/pi-agent-builder/references/reading-short-prompts.md`
+  or the missing rail to `.../references/defaults.md` — rather than
+  padding every prompt with a full technical spec.
+- **Scratch artifacts live in `pi-sandbox/.pi/scratch/`** (gitignored).
+  Raw pi output, throwaway prompt files, and experiments go there and
+  stay out of the tracked tree.
 
 ## Conventions
 
