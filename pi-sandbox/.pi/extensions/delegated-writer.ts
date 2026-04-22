@@ -1,18 +1,16 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-const DELEGATOR_TIMEOUT_MS = 60_000;
+const DELEGATOR_PHASE_TIMEOUT_MS = 120_000;
 const DRAFTER_TIMEOUT_MS = 180_000;
-const REVIEWER_TIMEOUT_MS = 120_000;
 const MAX_SUBTASKS = 8;
 const MAX_FILES_PROMOTABLE = 50;
-const MAX_REVISE_ITERATIONS = 3;
 const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
-const PREVIEW_LINES_PER_FILE = 20;
+const MAX_REVISE_ITERATIONS = 3;
 const NOTIFY_TEXT_MAX = 400;
 
 const STAGE_WRITE_TOOL = path.resolve(
@@ -21,14 +19,12 @@ const STAGE_WRITE_TOOL = path.resolve(
   "child-tools",
   "stage-write.ts",
 );
-
 const RUN_DEFERRED_WRITER_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "child-tools",
   "run-deferred-writer.ts",
 );
-
 const REVIEW_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -45,100 +41,294 @@ type StagedWrite = {
   taskIndex: number;
 };
 
-type ChildResult = {
-  assistantText: string;
-  assistantThinking: string;
-  toolCalls: number;
-  stagedWrites: Array<{ path: string; content: string }>;
-  tasks: string[];
-  reviews: Array<{ file_path: string; verdict: "approve" | "revise"; feedback?: string }>;
-  stderr: string;
+type ReviewCall = {
+  file_path: string;
+  verdict: "approve" | "revise";
+  feedback?: string;
+};
+
+type DrafterResult = {
+  stagedWrites: Array<{ path: unknown; content: unknown }>;
   code: number;
+  timedOut: boolean;
+  stderr: string;
+};
+
+type PhaseResult = {
+  tasks: string[];
+  reviews: ReviewCall[];
   timedOut: boolean;
 };
 
-export default function (pi: ExtensionAPI) {
-  const sha256 = (data: string) => createHash("sha256").update(data, "utf8").digest("hex");
-  const trunc = (s: string, n = NOTIFY_TEXT_MAX) =>
-    s.length > n ? s.slice(0, n) + `… (+${s.length - n} chars)` : s;
+type UiCtx = { ui: { notify: (m: string, level: "info" | "warning" | "error") => void } };
 
-  async function runChild(
-    phaseLabel: string,
-    args: string[],
-    ctx: { ui: { notify: (m: string, level: "info" | "warning" | "error") => void } },
-    timeoutMs: number,
-    cwd: string = process.cwd(),
-  ): Promise<ChildResult> {
-    return new Promise((resolve) => {
-      const fullArgs = ["--mode", "json", ...args];
-      const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"], cwd });
-      let buffer = "";
-      let stderr = "";
-      let assistantText = "";
-      let assistantThinking = "";
-      let toolCalls = 0;
-      const stagedWrites: Array<{ path: string; content: string }> = [];
-      const tasks: string[] = [];
-      const reviews: Array<{ file_path: string; verdict: "approve" | "revise"; feedback?: string }> = [];
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGKILL");
-      }, timeoutMs);
+const sha256 = (data: string) => createHash("sha256").update(data, "utf8").digest("hex");
+const trunc = (s: string, n = NOTIFY_TEXT_MAX) =>
+  s.length > n ? s.slice(0, n) + `… (+${s.length - n} chars)` : s;
 
-      child.stdout.on("data", (d) => {
-        buffer += d.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let e: Record<string, any>;
-          try {
-            e = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          if (e.type === "tool_execution_start") {
-            toolCalls++;
-            const name = e.toolName;
-            const inputObj = e.args;
-            if (name === "stage_write" && inputObj) {
-              stagedWrites.push({ path: inputObj.path, content: inputObj.content });
-              ctx.ui.notify(`${phaseLabel} → stage_write ${inputObj.path} (${inputObj.content?.length ?? 0} chars)`, "info");
-            } else if (name === "run_deferred_writer" && inputObj) {
-              tasks.push(inputObj.task);
-              ctx.ui.notify(`${phaseLabel} → dispatched task: ${trunc(inputObj.task, 80)}`, "info");
-            } else if (name === "review" && inputObj) {
-              reviews.push({ file_path: inputObj.file_path, verdict: inputObj.verdict, feedback: inputObj.feedback });
-              ctx.ui.notify(`${phaseLabel} → review ${inputObj.file_path}: ${inputObj.verdict}`, "info");
-            } else {
-              ctx.ui.notify(`${phaseLabel} → ${name}`, "info");
-            }
-          } else if (e.type === "message_end") {
-            const msg = e.message;
-            if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-              for (const part of msg.content) {
-                if (part.type === "text") assistantText += part.text;
-                if (part.type === "thinking") assistantThinking += part.thinking;
-              }
-            }
+// Drafter uses the classic non-RPC json mode — one-shot per task.
+async function runDrafter(
+  taskIndex: number,
+  task: string,
+  feedback: string[] | undefined,
+  taskModel: string,
+  sandboxRoot: string,
+  ctx: UiCtx,
+): Promise<DrafterResult> {
+  const base = `You are a DRAFTER. Task: ${task}.
+To create a file, call 'stage_write' with a relative 'path' (inside the project at ${sandboxRoot}) and full 'content'. Nothing touches disk until approved.
+
+Rules:
+- Only 'stage_write'. No real write tools.
+- Paths relative, inside ${sandboxRoot}, no '..'.
+- Use 'read' / 'ls' on absolute paths under ${sandboxRoot} to explore.
+- Stop after staging everything. Reply DONE.`;
+  const prompt = feedback && feedback.length > 0
+    ? `${base}\n\nThis is a REVISION pass. Previous attempt had issues. Apply this feedback verbatim:\n${feedback.map(f => `- ${f}`).join("\n")}`
+    : base;
+
+  return new Promise((resolve) => {
+    const child = spawn("pi", [
+      "--mode", "json",
+      "-e", STAGE_WRITE_TOOL,
+      "-p", prompt,
+      "--no-extensions", "--no-session", "--thinking", "off",
+      "--tools", "stage_write,ls,read",
+      "--provider", "openrouter", "--model", taskModel,
+    ], { stdio: ["ignore", "pipe", "pipe"], cwd: sandboxRoot });
+
+    let buffer = "";
+    let stderr = "";
+    const stagedWrites: Array<{ path: unknown; content: unknown }> = [];
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, DRAFTER_TIMEOUT_MS);
+
+    child.stdout.on("data", (d) => {
+      buffer += d.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let e: Record<string, unknown>;
+        try { e = JSON.parse(line); } catch { continue; }
+        if (e.type === "tool_execution_start") {
+          const name = e.toolName as string | undefined;
+          const inputObj = e.args as Record<string, unknown> | undefined;
+          if (name === "stage_write" && inputObj) {
+            stagedWrites.push({ path: inputObj.path, content: inputObj.content });
+            const p = typeof inputObj.path === "string" ? inputObj.path : "<?>";
+            const len = typeof inputObj.content === "string" ? inputObj.content.length : 0;
+            ctx.ui.notify(`Drafter[${taskIndex + 1}] → stage_write ${p} (${len} chars)`, "info");
           }
         }
-      });
-      child.stderr.on("data", (d) => { stderr += d.toString(); });
-      child.on("close", (code) => {
+      }
+    });
+    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ stagedWrites, code: code ?? 0, timedOut, stderr });
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve({ stagedWrites, code: -1, timedOut, stderr });
+    });
+  });
+}
+
+// Single persistent RPC-mode pi child, driven through multiple prompt/phase turns.
+class DelegatorSession {
+  private child: ChildProcess;
+  private buffer = "";
+  private stderr = "";
+  private listeners = new Set<(ev: Record<string, unknown>) => void>();
+  private closed = false;
+
+  constructor(leadModel: string, sandboxRoot: string) {
+    this.child = spawn("pi", [
+      "--mode", "rpc",
+      "--no-extensions", "--no-session", "--no-context-files",
+      "--thinking", "off",
+      "-e", RUN_DEFERRED_WRITER_TOOL,
+      "-e", REVIEW_TOOL,
+      "--tools", "run_deferred_writer,review",
+      "--provider", "openrouter", "--model", leadModel,
+    ], { stdio: ["pipe", "pipe", "pipe"], cwd: sandboxRoot });
+
+    this.child.stdout!.on("data", (d) => this.onStdout(d));
+    this.child.stderr!.on("data", (d) => { this.stderr += d.toString(); });
+    this.child.on("close", () => { this.closed = true; });
+    this.child.on("error", () => { this.closed = true; });
+  }
+
+  private onStdout(d: Buffer) {
+    this.buffer += d.toString();
+    // RPC is strict JSONL with \n only; strip trailing \r.
+    while (true) {
+      const idx = this.buffer.indexOf("\n");
+      if (idx === -1) break;
+      let line = this.buffer.slice(0, idx);
+      this.buffer = this.buffer.slice(idx + 1);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (!line.trim()) continue;
+      let ev: Record<string, unknown>;
+      try { ev = JSON.parse(line); } catch { continue; }
+      for (const l of this.listeners) l(ev);
+    }
+  }
+
+  async runPrompt(
+    message: string,
+    phaseLabel: string,
+    timeoutMs: number,
+    ctx: UiCtx,
+  ): Promise<PhaseResult> {
+    if (this.closed) {
+      return { tasks: [], reviews: [], timedOut: true };
+    }
+
+    return new Promise<PhaseResult>((resolve) => {
+      const tasks: string[] = [];
+      const reviews: ReviewCall[] = [];
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.listeners.delete(listener);
+        resolve({ tasks, reviews, timedOut: true });
+      }, timeoutMs);
+
+      const listener = (ev: Record<string, unknown>) => {
+        const type = ev.type as string | undefined;
+        if (type === "tool_execution_start") {
+          const name = ev.toolName as string | undefined;
+          const inputObj = ev.args as Record<string, unknown> | undefined;
+          if (name === "run_deferred_writer" && inputObj && typeof inputObj.task === "string") {
+            tasks.push(inputObj.task);
+            ctx.ui.notify(`${phaseLabel} → dispatched: ${trunc(inputObj.task, 80)}`, "info");
+          } else if (name === "review" && inputObj && typeof inputObj.file_path === "string") {
+            const verdict = inputObj.verdict === "approve" ? "approve" : "revise";
+            const feedback = typeof inputObj.feedback === "string" ? inputObj.feedback : undefined;
+            reviews.push({ file_path: inputObj.file_path, verdict, feedback });
+            const fbTag = feedback ? ` — ${trunc(feedback, 80)}` : "";
+            ctx.ui.notify(`${phaseLabel} → review ${inputObj.file_path}: ${verdict}${fbTag}`, verdict === "approve" ? "info" : "warning");
+          }
+        } else if (type === "agent_end") {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          this.listeners.delete(listener);
+          resolve({ tasks, reviews, timedOut: false });
+        } else if (type === "response" && ev.success === false) {
+          ctx.ui.notify(`${phaseLabel} RPC error: ${ev.error}`, "error");
+        }
+      };
+      this.listeners.add(listener);
+
+      try {
+        this.child.stdin!.write(JSON.stringify({ type: "prompt", message }) + "\n");
+      } catch (e) {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        resolve({ assistantText, assistantThinking, toolCalls, stagedWrites, tasks, reviews, stderr, code: code ?? 0, timedOut });
-      });
-      child.on("error", () => {
-        clearTimeout(timer);
-        resolve({ assistantText, assistantThinking, toolCalls, stagedWrites, tasks, reviews, stderr, code: -1, timedOut });
-      });
+        this.listeners.delete(listener);
+        ctx.ui.notify(`${phaseLabel} failed to write prompt: ${(e as Error).message}`, "error");
+        resolve({ tasks, reviews, timedOut: true });
+      }
     });
   }
 
+  close() {
+    try { this.child.stdin!.end(); } catch {}
+    try { this.child.kill("SIGKILL"); } catch {}
+  }
+
+  getStderrTail(bytes = 2000): string {
+    return this.stderr.slice(-bytes);
+  }
+}
+
+function validateStagedWrite(
+  s: { path: unknown; content: unknown },
+  taskIndex: number,
+  sandboxRoot: string,
+): StagedWrite | { error: string } {
+  if (typeof s.path !== "string" || !s.path) return { error: "invalid path" };
+  if (typeof s.content !== "string") return { error: `${s.path}: content not string` };
+  const relPath = s.path;
+  if (path.isAbsolute(relPath) || relPath.split("/").includes("..") || relPath.split(path.sep).includes("..")) {
+    return { error: `${relPath}: absolute or contains '..'` };
+  }
+  const destAbs = path.resolve(sandboxRoot, relPath);
+  if (destAbs !== sandboxRoot && !destAbs.startsWith(sandboxRoot + path.sep)) {
+    return { error: `${relPath}: escapes sandbox` };
+  }
+  if (fs.existsSync(destAbs)) return { error: `${relPath}: destination exists` };
+  const byteLength = Buffer.byteLength(s.content, "utf8");
+  if (byteLength > MAX_CONTENT_BYTES_PER_FILE) {
+    return { error: `${relPath}: too large (${byteLength} bytes)` };
+  }
+  return {
+    relPath,
+    destAbs,
+    content: s.content,
+    sha: sha256(s.content),
+    byteLength,
+    taskIndex,
+  };
+}
+
+function promoteFiles(plans: StagedWrite[], ctx: UiCtx) {
+  const promoted: string[] = [];
+  const failures: string[] = [];
+  for (const p of plans) {
+    try {
+      if (fs.existsSync(p.destAbs)) { failures.push(`${p.relPath}: exists`); continue; }
+      fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
+      fs.writeFileSync(p.destAbs, p.content, "utf8");
+      const actualSha = sha256(fs.readFileSync(p.destAbs, "utf8"));
+      if (actualSha !== p.sha) { failures.push(`${p.relPath}: sha mismatch after write`); continue; }
+      promoted.push(p.relPath);
+    } catch (e) {
+      failures.push(`${p.relPath}: ${(e as Error).message}`);
+    }
+  }
+  if (failures.length > 0) ctx.ui.notify(`Failures:\n${failures.join("\n")}`, "error");
+  if (promoted.length > 0) ctx.ui.notify(`Wrote ${promoted.length} file(s):\n${promoted.join("\n")}`, "info");
+}
+
+function buildReviewPrompt(
+  tasks: string[],
+  staged: StagedWrite[],
+  isInitial: boolean,
+): string {
+  const header = isInitial
+    ? `All drafters have finished. Review every staged file by calling review(file_path, verdict, feedback).`
+    : `Drafters re-ran with your feedback. Review the updated staged files again.`;
+  const taskList = tasks.map((t, i) => `  [${i + 1}] ${t}`).join("\n");
+  const files = staged.map((s) =>
+    `--- ${s.relPath} (from subtask [${s.taskIndex + 1}]) ---\n${s.content}`
+  ).join("\n\n");
+  return `${header}
+
+Rules:
+- Emit exactly one review call per file listed below.
+- verdict="approve" if the file meets the task and is correct.
+- verdict="revise" if it needs another pass; feedback MUST be a sentence or two the drafter can act on.
+- Do not invent paths — only review files listed.
+
+Subtasks:
+${taskList}
+
+Staged files:
+${files}`;
+}
+
+export default function (pi: ExtensionAPI) {
   pi.registerCommand("delegated-writer", {
-    description: "LLM delegator that dispatches subtasks to parallel drafters",
+    description: "LLM delegator (single RPC session) with run_deferred_writer + review tools. No human confirm.",
     handler: async (args, ctx) => {
       if (!args.trim()) {
         ctx.ui.notify("Usage: /delegated-writer <user goal>", "warning");
@@ -152,240 +342,147 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      for (const t of [STAGE_WRITE_TOOL, RUN_DEFERRED_WRITER_TOOL, REVIEW_TOOL]) {
+        if (!fs.existsSync(t)) {
+          ctx.ui.notify(`Missing child-tool: ${t}`, "error");
+          return;
+        }
+      }
+
       const sandboxRoot = path.resolve(process.cwd());
+      ctx.ui.notify(`Starting delegator (RPC, model=${LEAD_MODEL}, sandbox=${sandboxRoot})…`, "info");
 
-      // Phase 1: Delegation
-      ctx.ui.notify(`Delegating (model=${LEAD_MODEL}, timeout=${DELEGATOR_TIMEOUT_MS/1000}s)...`, "info");
-      const delegatorPrompt = `You are a DELEGATOR. User goal: ${args}.
-Your ONLY capability is to call 'run_deferred_writer(task)' for each subtask.
-Each call dispatches one independent drafter.
-Decide how many subtasks (1-${MAX_SUBTASKS}) and what to tell each.
-The 'task' string must be a complete self-contained instruction a drafter can execute without further context.
-Stop once you have dispatched all subtasks.`;
+      const session = new DelegatorSession(LEAD_MODEL, sandboxRoot);
 
-      const delegatorRes = await runChild(
-        "Delegator",
-        [
-          "-e", RUN_DEFERRED_WRITER_TOOL,
-          "-p", delegatorPrompt,
-          "--no-extensions", "--no-session", "--thinking", "off", "--mode", "json",
-          "--tools", "run_deferred_writer",
-          "--provider", "openrouter", "--model", LEAD_MODEL,
-        ],
-        ctx,
-        DELEGATOR_TIMEOUT_MS,
-        sandboxRoot,
-      );
+      try {
+        // Phase 1: dispatch
+        const dispatchPrompt = `You are a DELEGATOR. User goal: ${args}.
 
-      if (delegatorRes.timedOut) {
-        ctx.ui.notify(`Delegator timed out.`, "error");
-        return;
-      }
-      if (delegatorRes.tasks.length === 0) {
-        ctx.ui.notify("Delegator dispatched no tasks.", "warning");
-        return;
-      }
-      if (delegatorRes.tasks.length > MAX_SUBTASKS) {
-        ctx.ui.notify(`Delegator exceeded max tasks (${delegatorRes.tasks.length} > ${MAX_SUBTASKS}). Aborting.`, "error");
-        return;
-      }
+You have two tools:
+- run_deferred_writer(task): dispatch one independent drafter child. Call once per subtask (1..${MAX_SUBTASKS}). Each "task" must be a complete, self-contained instruction a drafter can execute without further context. Drafters run in parallel; do not rely on ordering or shared state between them.
+- review(file_path, verdict, feedback?): you will use this later once drafters finish; do NOT call it now.
 
-      ctx.ui.notify(`Dispatched ${delegatorRes.tasks.length} tasks. Running drafters in parallel...`, "info");
+In THIS turn, call run_deferred_writer once per subtask, then reply DONE and stop.`;
 
-      // Phase 2: Parallel Drafting
-      ctx.ui.notify(`Running ${delegatorRes.tasks.length} drafters in parallel (model=${TASK_MODEL}, timeout=${DRAFTER_TIMEOUT_MS/1000}s)...`, "info");
-      
-      const taskStagedWrites: Map<number, Array<{ path: string; content: string }>> = new Map();
+        const dispatchRes = await session.runPrompt(dispatchPrompt, "Dispatch", DELEGATOR_PHASE_TIMEOUT_MS, ctx);
+        if (dispatchRes.timedOut) {
+          ctx.ui.notify(`Dispatch phase timed out. Stderr: ${session.getStderrTail()}`, "error");
+          return;
+        }
+        if (dispatchRes.tasks.length === 0) {
+          ctx.ui.notify("Delegator dispatched no tasks.", "warning");
+          return;
+        }
+        if (dispatchRes.tasks.length > MAX_SUBTASKS) {
+          ctx.ui.notify(`Delegator exceeded MAX_SUBTASKS (${dispatchRes.tasks.length} > ${MAX_SUBTASKS}).`, "error");
+          return;
+        }
+        const tasks = dispatchRes.tasks;
+        ctx.ui.notify(`Dispatched ${tasks.length} task(s). Running drafters in parallel…`, "info");
 
-      async function runDrafter(task: string, index: number, feedback?: string[]) {
-        const drafterPrompt = feedback 
-          ? `You are a DRAFTER. This is a REVISION attempt for the task: ${task}.
-The following feedback was provided for your previous attempt:
-${feedback.map(f => `- ${f}`).join("\n")}
+        // Phase 2: parallel drafters (initial)
+        const taskStaged = new Map<number, Array<{ path: unknown; content: unknown }>>();
+        const runAllDrafters = async (indices: number[], feedbackByTask?: Map<number, string[]>) => {
+          await Promise.all(indices.map(async (i) => {
+            const fb = feedbackByTask?.get(i);
+            const res = await runDrafter(i, tasks[i], fb, TASK_MODEL, sandboxRoot, ctx);
+            if (res.timedOut) ctx.ui.notify(`Drafter[${i + 1}] timed out.`, "warning");
+            if (res.code !== 0 && !res.timedOut) {
+              ctx.ui.notify(`Drafter[${i + 1}] exited ${res.code}. Stderr: ${res.stderr.slice(-500)}`, "warning");
+            }
+            taskStaged.set(i, res.stagedWrites);
+          }));
+        };
+        await runAllDrafters(tasks.map((_, i) => i));
 
-Nothing you do will touch disk until the user approves. To create a file, call 'stage_write' with a relative 'path' and full 'content'.
-Rules:
-- Only use 'stage_write'. No real write tools.
-- Paths must be relative, inside ${sandboxRoot}, no '..'.
-- Use 'read'/'ls' on absolute paths under ${sandboxRoot} to explore.
-- Stop after staging all needed files.`
-          : `You are a DRAFTER. Task: ${task}.
-Nothing you do will touch disk until the user approves. To create a file, call 'stage_write' with a relative 'path' and full 'content'.
-Rules:
-- Only use 'stage_write'. No real write tools.
-- Paths must be relative, inside ${sandboxRoot}, no '..'.
-- Use 'read'/'ls' on absolute paths under ${sandboxRoot} to explore.
-- Stop after staging all needed files.`;
+        // Phases 3+: review / revise loop
+        let iteration = 0;
+        let isInitial = true;
+        while (true) {
+          iteration++;
+          if (iteration > MAX_REVISE_ITERATIONS) {
+            ctx.ui.notify(`Hit MAX_REVISE_ITERATIONS (${MAX_REVISE_ITERATIONS}) — not all files approved. Nothing promoted.`, "error");
+            return;
+          }
 
-        const res = await runChild(
-          `Drafter-${index + 1}`,
-          [
-            "-e", STAGE_WRITE_TOOL,
-            "-p", drafterPrompt,
-            "--no-extensions", "--no-session", "--thinking", "off", "--mode", "json",
-            "--tools", "stage_write,ls,read",
-            "--provider", "openrouter", "--model", TASK_MODEL!,
-          ],
-          ctx,
-          DRAFTER_TIMEOUT_MS,
-          sandboxRoot,
-        );
-        if (res.timedOut) ctx.ui.notify(`Drafter-${index + 1} timed out.`, "warning");
-        taskStagedWrites.set(index, res.stagedWrites);
-      }
+          const staged: StagedWrite[] = [];
+          const skips: string[] = [];
+          const seenPaths = new Set<string>();
+          for (const [taskIndex, writes] of taskStaged.entries()) {
+            for (const w of writes) {
+              if (typeof w.path === "string" && seenPaths.has(w.path)) {
+                skips.push(`${w.path}: duplicate across tasks`);
+                continue;
+              }
+              const result = validateStagedWrite(w, taskIndex, sandboxRoot);
+              if ("error" in result) { skips.push(result.error); continue; }
+              seenPaths.add(result.relPath);
+              staged.push(result);
+            }
+          }
+          for (const s of skips) ctx.ui.notify(`Skipping ${s}`, "warning");
 
-      await Promise.all(delegatorRes.tasks.map((task, i) => runDrafter(task, i)));
+          if (staged.length === 0) {
+            ctx.ui.notify("No valid staged files after validation. Nothing to review.", "warning");
+            return;
+          }
+          if (staged.length > MAX_FILES_PROMOTABLE) {
+            ctx.ui.notify(`Too many files (${staged.length} > ${MAX_FILES_PROMOTABLE}). Aborting.`, "error");
+            return;
+          }
 
-      // Phase 3 & 4: Review and Revise Loop
-      let iteration = 0;
-      while (iteration < MAX_REVISE_ITERATIONS) {
-        iteration++;
-        ctx.ui.notify(`Review phase (iteration ${iteration}/${MAX_REVISE_ITERATIONS}, model=${LEAD_MODEL}, timeout=${REVIEWER_TIMEOUT_MS/1000}s)...`, "info");
+          const reviewPrompt = buildReviewPrompt(tasks, staged, isInitial);
+          isInitial = false;
+          ctx.ui.notify(`Review phase (iteration ${iteration}/${MAX_REVISE_ITERATIONS}, ${staged.length} files)…`, "info");
 
-        const allStagedCurrent: StagedWrite[] = [];
-        const seenPaths = new Set<string>();
+          const reviewRes = await session.runPrompt(reviewPrompt, `Review-${iteration}`, DELEGATOR_PHASE_TIMEOUT_MS, ctx);
+          if (reviewRes.timedOut) {
+            ctx.ui.notify(`Review phase timed out. Stderr: ${session.getStderrTail()}`, "error");
+            return;
+          }
 
-        for (const [taskIndex, writes] of taskStagedWrites.entries()) {
-          for (const s of writes) {
-            if (typeof s.path !== "string" || !s.path || typeof s.content !== "string") continue;
-            if (seenPaths.has(s.path)) {
-              ctx.ui.notify(`Duplicate path ${s.path} across tasks. Ignoring.`, "warning");
+          // Build verdict map; missing verdicts → implicit revise.
+          const verdictByPath = new Map<string, ReviewCall>();
+          for (const r of reviewRes.reviews) verdictByPath.set(r.file_path, r);
+
+          const approved: StagedWrite[] = [];
+          const feedbackByTask = new Map<number, string[]>();
+          let anyRevise = false;
+          for (const s of staged) {
+            const v = verdictByPath.get(s.relPath);
+            if (!v) {
+              ctx.ui.notify(`No verdict for ${s.relPath}; treating as revise.`, "warning");
+              anyRevise = true;
+              const arr = feedbackByTask.get(s.taskIndex) ?? [];
+              arr.push(`${s.relPath}: Reviewer produced no verdict — reconsider the draft.`);
+              feedbackByTask.set(s.taskIndex, arr);
               continue;
             }
-            seenPaths.add(s.path);
-            
-            const relPath = s.path;
-            if (path.isAbsolute(relPath) || relPath.split("/").includes("..") || relPath.split(path.sep).includes("..")) continue;
-            const destAbs = path.resolve(sandboxRoot, relPath);
-            if (!destAbs.startsWith(sandboxRoot + path.sep) && destAbs !== sandboxRoot) continue;
-            if (fs.existsSync(destAbs)) continue;
-            const byteLength = Buffer.byteLength(s.content, "utf8");
-            if (byteLength > MAX_CONTENT_BYTES_PER_FILE) continue;
-
-            allStagedCurrent.push({
-              relPath,
-              destAbs,
-              content: s.content,
-              sha: sha256(s.content),
-              byteLength,
-              taskIndex,
-            });
-          }
-        }
-
-        if (allStagedCurrent.length === 0) {
-          ctx.ui.notify("No valid files staged to review.", "warning");
-          return;
-        }
-        if (allStagedCurrent.length > MAX_FILES_PROMOTABLE) {
-          ctx.ui.notify(`Too many files staged (${allStagedCurrent.length} > ${MAX_FILES_PROMOTABLE}). Aborting.`, "error");
-          return;
-        }
-
-        let reviewPrompt = `You are a REVIEWER. For each staged file below, call \`review(file_path, verdict, feedback)\`:
-- verdict="approve" if the file meets the task and is correct.
-- verdict="revise" with feedback (a sentence or two the drafter can act on) if it needs another pass.
-
-Do NOT invent paths — only review files listed. You MUST emit exactly one review call per file.
-
-Subtasks:
-${delegatorRes.tasks.map((t, i) => `  [${i + 1}] ${t}`).join("\n")}
-
-Staged files:
-`;
-
-        for (const s of allStagedCurrent) {
-          reviewPrompt += `--- ${s.relPath} (from subtask [${s.taskIndex + 1}]) ---\n${s.content}\n`;
-        }
-
-        const reviewRes = await runChild(
-          "Reviewer",
-          [
-            "-e", REVIEW_TOOL,
-            "-p", reviewPrompt,
-            "--no-extensions", "--no-session", "--thinking", "off", "--mode", "json",
-            "--tools", "review",
-            "--provider", "openrouter", "--model", LEAD_MODEL,
-          ],
-          ctx,
-          REVIEWER_TIMEOUT_MS,
-          sandboxRoot,
-        );
-
-        if (reviewRes.timedOut) {
-          ctx.ui.notify(`Reviewer timed out.`, "error");
-          return;
-        }
-
-        const verdictsMap = new Map<string, { verdict: "approve" | "revise"; feedback: string }>();
-        for (const r of reviewRes.reviews) {
-          verdictsMap.set(r.file_path, { verdict: r.verdict, feedback: r.feedback || "" });
-        }
-
-        const revisedTasksMap: Map<number, string[]> = new Map();
-        const approvedFiles: StagedWrite[] = [];
-        let anyRevision = false;
-
-        for (const s of allStagedCurrent) {
-          let v = verdictsMap.get(s.relPath);
-          if (!v) {
-            ctx.ui.notify(`Reviewer produced no verdict for ${s.relPath}. Treating as revise.`, "warning");
-            v = { verdict: "revise", feedback: "Reviewer produced no verdict." };
-          }
-          if (v.verdict === "revise" && !v.feedback) {
-            ctx.ui.notify(`Reviewer gave 'revise' for ${s.relPath} without feedback.`, "warning");
-            v.feedback = "Reviewer requested revision but provided no feedback.";
+            if (v.verdict === "revise") {
+              anyRevise = true;
+              const fb = v.feedback && v.feedback.trim()
+                ? v.feedback.trim()
+                : "Reviewer requested revision but provided no feedback.";
+              const arr = feedbackByTask.get(s.taskIndex) ?? [];
+              arr.push(`${s.relPath}: ${fb}`);
+              feedbackByTask.set(s.taskIndex, arr);
+            } else {
+              approved.push(s);
+            }
           }
 
-          if (v.verdict === "revise") {
-            anyRevision = true;
-            const taskFeedback = revisedTasksMap.get(s.taskIndex) ?? [];
-            taskFeedback.push(`${s.relPath}: ${v.feedback}`);
-            revisedTasksMap.set(s.taskIndex, taskFeedback);
-          } else {
-            approvedFiles.push(s);
+          if (!anyRevise) {
+            promoteFiles(approved, ctx);
+            return;
           }
-        }
 
-        if (!anyRevision) {
-          // All approved!
-          await promoteFiles(approvedFiles, ctx);
-          return;
+          const revisedIndices = Array.from(feedbackByTask.keys());
+          ctx.ui.notify(`Revision needed for ${revisedIndices.length} task(s); re-drafting…`, "info");
+          await runAllDrafters(revisedIndices, feedbackByTask);
         }
-
-        // Run revisions
-        const revisionIndices = Array.from(revisedTasksMap.keys());
-        ctx.ui.notify(`Revision needed for ${revisionIndices.length} tasks. Re-drafting...`, "info");
-        await Promise.all(revisionIndices.map(idx => runDrafter(delegatorRes.tasks[idx], idx, revisedTasksMap.get(idx))));
+      } finally {
+        session.close();
       }
-
-      ctx.ui.notify(`Max revision iterations (${MAX_REVISE_ITERATIONS}) reached. Aborting.`, "error");
-    }
+    },
   });
-
-  async function promoteFiles(plans: StagedWrite[], ctx: any) {
-    const promoted: string[] = [];
-    const failures: string[] = [];
-    for (const p of plans) {
-      try {
-        if (fs.existsSync(p.destAbs)) {
-          failures.push(`${p.relPath}: exists`);
-          continue;
-        }
-        fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
-        fs.writeFileSync(p.destAbs, p.content, "utf8");
-        const actualSha = createHash("sha256").update(fs.readFileSync(p.destAbs, "utf8"), "utf8").digest("hex");
-        if (actualSha !== p.sha) {
-          failures.push(`${p.relPath}: SHA mismatch after write`);
-          continue;
-        }
-        promoted.push(p.relPath);
-      } catch (e) {
-        failures.push(`${p.relPath}: ${(e as Error).message}`);
-      }
-    }
-
-    if (failures.length > 0) ctx.ui.notify(`Failures:\n${failures.join("\n")}`, "error");
-    if (promoted.length > 0) ctx.ui.notify(`Wrote ${promoted.length} files:\n${promoted.join("\n")}`, "info");
-  }
 }
