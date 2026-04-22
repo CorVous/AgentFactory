@@ -16,6 +16,8 @@ const DASHBOARD_KEY = "delegated-writer";
 const TASK_PREVIEW_CHARS = 60;
 const CONTENT_PREVIEW_LINES = 2;
 const CONTENT_PREVIEW_CHARS = 80;
+const WRITTEN_PREVIEW_LINES = 8;
+const WRITTEN_PREVIEW_CHARS = 120;
 
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -243,7 +245,6 @@ Rules:
             stagedWrites.push({ path: inputObj.path, content: inputObj.content });
             const p = typeof inputObj.path === "string" ? inputObj.path : "<?>";
             const content = typeof inputObj.content === "string" ? inputObj.content : "";
-            ctx.ui.notify(`Drafter[${taskIndex + 1}] → stage_write ${p} (${content.length} chars)`, "info");
             if (onStage && typeof inputObj.path === "string") {
               onStage({ path: p, content, bytes: Buffer.byteLength(content, "utf8") });
             }
@@ -340,15 +341,12 @@ class DelegatorSession {
           const inputObj = ev.args as Record<string, unknown> | undefined;
           if (name === "run_deferred_writer" && inputObj && typeof inputObj.task === "string") {
             tasks.push(inputObj.task);
-            ctx.ui.notify(`${phaseLabel} → dispatched: ${trunc(inputObj.task, 80)}`, "info");
             if (onTask) onTask(inputObj.task);
           } else if (name === "review" && inputObj && typeof inputObj.file_path === "string") {
             const verdict = inputObj.verdict === "approve" ? "approve" : "revise";
             const feedback = typeof inputObj.feedback === "string" ? inputObj.feedback : undefined;
             const rc: ReviewCall = { file_path: inputObj.file_path, verdict, feedback };
             reviews.push(rc);
-            const fbTag = feedback ? ` — ${trunc(feedback, 80)}` : "";
-            ctx.ui.notify(`${phaseLabel} → review ${inputObj.file_path}: ${verdict}${fbTag}`, verdict === "approve" ? "info" : "warning");
             if (onReview) onReview(rc);
           }
         } else if (type === "agent_end") {
@@ -417,7 +415,7 @@ function validateStagedWrite(
 }
 
 function promoteFiles(plans: StagedWrite[], ctx: UiCtx) {
-  const promoted: string[] = [];
+  const promoted: StagedWrite[] = [];
   const failures: string[] = [];
   for (const p of plans) {
     try {
@@ -426,13 +424,21 @@ function promoteFiles(plans: StagedWrite[], ctx: UiCtx) {
       fs.writeFileSync(p.destAbs, p.content, "utf8");
       const actualSha = sha256(fs.readFileSync(p.destAbs, "utf8"));
       if (actualSha !== p.sha) { failures.push(`${p.relPath}: sha mismatch after write`); continue; }
-      promoted.push(p.relPath);
+      promoted.push(p);
     } catch (e) {
       failures.push(`${p.relPath}: ${(e as Error).message}`);
     }
   }
   if (failures.length > 0) ctx.ui.notify(`Failures:\n${failures.join("\n")}`, "error");
-  if (promoted.length > 0) ctx.ui.notify(`Wrote ${promoted.length} file(s):\n${promoted.join("\n")}`, "info");
+  if (promoted.length > 0) {
+    const sections = promoted.map((p) => {
+      const lines = p.content.split("\n");
+      const shown = lines.slice(0, WRITTEN_PREVIEW_LINES).map((l) => trunc(l, WRITTEN_PREVIEW_CHARS));
+      const more = lines.length > WRITTEN_PREVIEW_LINES ? `\n  … (+${lines.length - WRITTEN_PREVIEW_LINES} more lines)` : "";
+      return `── ${p.relPath} (${p.byteLength} b) ──\n${shown.map((l) => "  " + l).join("\n")}${more}`;
+    });
+    ctx.ui.notify(`Wrote ${promoted.length} file(s):\n\n${sections.join("\n\n")}`, "info");
+  }
 }
 
 function buildReviewPrompt(
@@ -467,7 +473,7 @@ export default function (pi: ExtensionAPI) {
     description: "LLM delegator (single RPC session) with run_deferred_writer + review tools. No human confirm.",
     handler: async (args, ctx) => {
       if (!args.trim()) {
-        ctx.ui.notify("Usage: /delegated-writer <user goal>", "warning");
+        ctx.ui.notify("Usage: /delegated-writer <user goal>", "error");
         return;
       }
 
@@ -486,7 +492,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       const sandboxRoot = path.resolve(process.cwd());
-      ctx.ui.notify(`Starting delegator (RPC, model=${LEAD_MODEL}, sandbox=${sandboxRoot})…`, "info");
 
       const state: PipelineState = {
         userGoal: args,
@@ -528,7 +533,7 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
         }
         if (dispatchRes.tasks.length === 0) {
           state.phase = "failed"; refreshUi();
-          ctx.ui.notify("Delegator dispatched no tasks.", "warning");
+          ctx.ui.notify("Delegator dispatched no tasks.", "error");
           return;
         }
         if (dispatchRes.tasks.length > MAX_SUBTASKS) {
@@ -537,7 +542,6 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           return;
         }
         const tasks = dispatchRes.tasks;
-        ctx.ui.notify(`Dispatched ${tasks.length} task(s). Running drafters in parallel…`, "info");
 
         // Phase 2: parallel drafters (initial)
         const taskStaged = new Map<number, Array<{ path: unknown; content: unknown }>>();
@@ -567,10 +571,6 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
               else d.phase = "done";
             }
             refreshUi();
-            if (res.timedOut) ctx.ui.notify(`Drafter[${i + 1}] timed out.`, "warning");
-            if (res.code !== 0 && !res.timedOut) {
-              ctx.ui.notify(`Drafter[${i + 1}] exited ${res.code}. Stderr: ${res.stderr.slice(-500)}`, "warning");
-            }
             taskStaged.set(i, res.stagedWrites);
           }));
         };
@@ -601,10 +601,9 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
               staged.push(result);
             }
           }
-          for (const s of skips) ctx.ui.notify(`Skipping ${s}`, "warning");
-
           if (staged.length === 0) {
-            ctx.ui.notify("No valid staged files after validation. Nothing to review.", "warning");
+            state.phase = "failed"; refreshUi();
+            ctx.ui.notify("No valid staged files after validation. Nothing to review.", "error");
             return;
           }
           if (staged.length > MAX_FILES_PROMOTABLE) {
@@ -618,7 +617,6 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           state.iteration = iteration;
           state.verdicts.clear();
           refreshUi();
-          ctx.ui.notify(`Review phase (iteration ${iteration}/${MAX_REVISE_ITERATIONS}, ${staged.length} files)…`, "info");
 
           const reviewRes = await session.runPrompt(
             reviewPrompt, `Review-${iteration}`, DELEGATOR_PHASE_TIMEOUT_MS, ctx,
@@ -632,7 +630,7 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           refreshUi();
           if (reviewRes.timedOut) {
             state.phase = "failed"; refreshUi();
-            ctx.ui.notify(`Review phase timed out. Stderr: ${session.getStderrTail()}`, "error");
+            ctx.ui.notify(`Delegator review timed out. Stderr: ${session.getStderrTail()}`, "error");
             return;
           }
 
@@ -646,7 +644,6 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           for (const s of staged) {
             const v = verdictByPath.get(s.relPath);
             if (!v) {
-              ctx.ui.notify(`No verdict for ${s.relPath}; treating as revise.`, "warning");
               anyRevise = true;
               const arr = feedbackByTask.get(s.taskIndex) ?? [];
               arr.push(`${s.relPath}: Reviewer produced no verdict — reconsider the draft.`);
@@ -681,7 +678,6 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           }
 
           const revisedIndices = Array.from(feedbackByTask.keys());
-          ctx.ui.notify(`Revision needed for ${revisedIndices.length} task(s); re-drafting…`, "info");
           await runAllDrafters(revisedIndices, feedbackByTask);
         }
       } finally {
