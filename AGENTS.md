@@ -38,15 +38,80 @@ npx pi --model "$TASK_MODEL"    # or $LEAD_MODEL / $PLAN_MODEL
 `models.env` is committed because the IDs are not secrets. Put API keys in a
 gitignored `.env` instead.
 
+## Creating pi agents
+
+Pi ships no sub-agent feature by default. Use pi itself with the bundled
+`pi-agent-builder` skill — pi reads the skill on demand and generates
+extensions that follow its recipes.
+
+### Invoking the skill
+
+```sh
+set -a; source models.env; set +a
+npx pi --provider openrouter --model "$LEAD_MODEL" \
+  --skill skills/pi-agent-builder \
+  -p "Use the pi-agent-builder skill to <describe the agent>."
+```
+
+For prompts with lots of nested quotes, put the prompt in a file and pass
+`@path/to/prompt.md` — cleaner than escaping inline `-p "..."`.
+
+### Where agent code lives
+
+| Location | Behavior |
+| --- | --- |
+| `.pi/extensions/<name>.ts` | Project-local, auto-discovered by pi |
+| `~/.pi/agent/extensions/<name>.ts` | Global, hot-reloadable via `/reload` |
+| `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
+
+### Mandatory safety rails for sub-agents
+
+When an extension delegates to a child `pi` process:
+
+- Pass `--no-extensions` to the child — prevents recursive sub-agents.
+- Whitelist the child's tools (`--tools read,grep,...`) to match its role.
+- Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
+- Match the tier to the child's role: `$TASK_MODEL` for workers,
+  `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
+
+See `skills/pi-agent-builder/references/` for recipe-level detail.
+
+## Scripted (non-interactive) pi invocations
+
+Gotchas we've hit when calling `pi -p` from scripts:
+
+- **Text mode buffers stdout.** The default `--mode text` emits nothing until
+  the run completes, so progress (and hangs) are invisible. Use
+  `--mode json` — it streams NDJSON events line by line (`turn_start`,
+  `tool_execution_start`/`_end`, `message_update`, `agent_end`, etc.).
+- **Idle tools invite exploration loops.** With the default tool set and a
+  coding-agent system prompt, many models spontaneously run `bash`/`read`
+  even for trivial prompts, burning turns and minutes. Always either
+  `--no-tools` (pure completion) or `--tools <allowlist>` sized to the job.
+- **`timeout` doesn't reach pi through `npm exec`.** SIGTERM kills the
+  wrapper but the grandchild `pi` keeps running. If you need a hard ceiling,
+  also kill the surviving `pi` PID explicitly.
+
+Recommended scripted pattern:
+
+```sh
+npx pi --mode json --no-tools \
+  --provider openrouter --model "$TASK_MODEL" \
+  --no-session --no-skills --no-extensions \
+  -p "$prompt" \
+  | jq -c 'select(.type | IN("tool_execution_start","turn_end","agent_end"))'
+```
+
 ## Repo layout
 
 - `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`.
 - `models.env` — tier → model-ID mapping (see above).
-- `CLAUDE.md` — this file.
+- `AGENTS.md` — this file (auto-loaded by pi at startup).
+- `.pi/extensions/` — project-local pi extensions (auto-discovered by pi).
+- `skills/pi-agent-builder/` — pi skill that teaches pi how to build agents.
 
-Agent definitions, extensions, and skills can be added under directories like
-`agents/`, `extensions/`, or `skills/` and loaded via `-e <path>` /
-`--skill <path>` when launching pi.
+Additional agent definitions, extensions, skills, or prompt templates can be
+added and loaded via `-e <path>` / `--skill <path>` when launching pi.
 
 ## Conventions
 
