@@ -13,6 +13,9 @@ LOG="${1:?log dir required}"
 MODEL="${2:?model id required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
+# Force LOG to an absolute path — the behavioral probe cds into the sandbox,
+# and any relative redirect would then resolve there, not under the log dir.
+LOG="$(cd "$LOG" && pwd)"
 ART="$LOG/artifacts"
 JSON="$LOG/grade.json"
 
@@ -378,7 +381,12 @@ elif [[ ${#EXT_FILES[@]} -gt 0 && -n "$CMD_NAME" ]]; then
   # network call because confirm returns false in print mode, and
   # --no-tools prevents any spawn).
   TASK_MODEL_FOR_LOAD="${TASK_MODEL:-anthropic/claude-haiku-4.5}"
+  # Prepend node_modules/.bin to PATH so extension-level `spawn("pi", ...)`
+  # calls resolve the binary. The reference extension does this too; under
+  # `npm run pi` npm sets PATH, but we invoke pi directly and have to
+  # replicate the setup.
   timeout 30s env PI_SKIP_UPDATE_CHECK=1 TASK_MODEL="$TASK_MODEL_FOR_LOAD" \
+    PATH="$REPO/node_modules/.bin:$PATH" \
     "$REPO/node_modules/.bin/pi" \
       --no-context-files --no-session --no-skills --no-extensions \
       -e "$EXT_FILE" \
@@ -441,6 +449,7 @@ elif [[ $LOAD_STATUS == "pass" || $LOAD_STATUS == "partial" ]]; then
   (
     cd "$SANDBOX"
     timeout 180s env PI_SKIP_UPDATE_CHECK=1 \
+      PATH="$REPO/node_modules/.bin:$PATH" \
       "$REPO/node_modules/.bin/pi" \
         --no-context-files --no-session --no-skills \
         --provider openrouter --model "$TASK_MODEL" \
@@ -457,36 +466,43 @@ elif [[ $LOAD_STATUS == "pass" || $LOAD_STATUS == "partial" ]]; then
   # Wipe the injected artifacts to leave the sandbox clean for the next pass.
   rm -rf "$SANDBOX/.pi/extensions"/* "$SANDBOX/.pi/child-tools"/* 2>/dev/null || true
 
-  SAW_CHILD_EVENT=no
-  SAW_STAGE_WRITE=no
-  SAW_CONFIRM=no
+  # Observability caveat: ctx.ui.notify is a no-op in print mode, so we
+  # cannot directly see whether the child pi fired stage_write — its
+  # NDJSON flows into the extension's parser, not onto our stdout. The
+  # outer NDJSON only ever shows the `session` header for a registered
+  # command. So the behavioral pass/fail distinguishes: did the handler
+  # run end-to-end without crashing (exit 0), did it timeout (124), or
+  # did it throw (>0). An async-cleanup bug shows up as a nonzero exit
+  # even though stdout looks clean.
+  EVT_COUNT_BH=0
+  SAW_AGENT_START_BH=0
   if [[ -f "$LOG/behavior.ndjson" ]]; then
-    if grep -q "tool_execution_start" "$LOG/behavior.ndjson" 2>/dev/null; then
-      SAW_CHILD_EVENT=yes
-    fi
-    if grep -q "stage_write" "$LOG/behavior.ndjson" 2>/dev/null; then
-      SAW_STAGE_WRITE=yes
-    fi
-    if grep -qi "cancel\|confirm\|approve" "$LOG/behavior.ndjson" 2>/dev/null; then
-      SAW_CONFIRM=yes
-    fi
+    EVT_COUNT_BH=$(wc -l < "$LOG/behavior.ndjson" 2>/dev/null | awk '{print $1+0}')
+    SAW_AGENT_START_BH=$(grep -c '"type":"agent_start"' "$LOG/behavior.ndjson" 2>/dev/null; true)
+    SAW_AGENT_START_BH="${SAW_AGENT_START_BH:-0}"
   fi
 
-  if [[ $BEH_EXIT -eq 0 && $SAW_STAGE_WRITE == yes ]]; then
+  if [[ $BEH_EXIT -eq 0 && $SAW_AGENT_START_BH -eq 0 && ${EVT_COUNT_BH:-0} -le 3 ]]; then
     BEH_STATUS="pass"
-    say "- [x] exit 0; stage_write observed in NDJSON"
-  elif [[ $BEH_EXIT -eq 0 && $SAW_CHILD_EVENT == yes ]]; then
-    BEH_STATUS="partial"
-    BEH_NOTE="exit 0 but no stage_write event; child ran"
-    say "- [~] exit 0; child ran but no stage_write call"
+    say "- [x] exit 0; handler ran, dispatched + cancelled cleanly"
+  elif [[ $BEH_EXIT -eq 0 && $SAW_AGENT_START_BH -ge 1 ]]; then
+    BEH_STATUS="fail"
+    BEH_NOTE="command not registered — /cmd went to LLM instead of handler"
+    say "- [ ] command not registered (went to LLM)"
   elif [[ $BEH_EXIT -eq 124 ]]; then
     BEH_STATUS="fail"
     BEH_NOTE="timed out after 180s (hang)"
     say "- [ ] timed out — hang"
-  else
+  elif [[ $BEH_EXIT -ne 0 ]]; then
     BEH_STATUS="fail"
-    BEH_NOTE="exit $BEH_EXIT, stage_write=$SAW_STAGE_WRITE"
-    say "- [ ] exit $BEH_EXIT, stage_write=$SAW_STAGE_WRITE"
+    STDERR_TAIL=$(tail -3 "$LOG/behavior.stderr" 2>/dev/null | tr '\n' ' ' | head -c 200)
+    BEH_NOTE="exit $BEH_EXIT: $STDERR_TAIL"
+    say "- [ ] exit $BEH_EXIT (see behavior.stderr)"
+    [[ -n "$STDERR_TAIL" ]] && say "      stderr: $STDERR_TAIL"
+  else
+    BEH_STATUS="partial"
+    BEH_NOTE="ambiguous — events=$EVT_COUNT_BH agent_start=$SAW_AGENT_START_BH"
+    say "- [~] ambiguous (events=$EVT_COUNT_BH agent_start=$SAW_AGENT_START_BH)"
   fi
 else
   say "- [ ] skipped (load failed)"
