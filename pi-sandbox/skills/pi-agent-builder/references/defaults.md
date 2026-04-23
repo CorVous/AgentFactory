@@ -4,6 +4,179 @@ Apply every rail in this file to every extension you generate, unless the
 user **explicitly** tells you to skip one. Each rail exists because its
 absence caused a real failure in a real session.
 
+## Canonical drafter spawn (copy this, don't reconstruct it)
+
+When your extension spawns a single-task drafter child (the
+`/deferred-writer` shape), the spawn call must be *exactly* the
+template below. Every flag is mandatory — we have seen models skip
+`--thinking off`, skip `--no-session`, pull provider from an optional
+env fallback, or drop `--model` entirely by pulling it from a
+nonexistent `args.model`. The grader scores each of those as a
+separate miss; the prose-bullet section further down explains each
+rail in isolation, but for the drafter case, **copy this block
+verbatim** rather than rebuilding it from the rails list:
+
+```ts
+pi.registerCommand("deferred-writer", {
+  description: "Stage file writes for user approval before they hit disk",
+  handler: async (args, ctx) => {
+    // 1. Args check — ALWAYS the first line. Empty or whitespace-only
+    //    input means the user typed the command with no task, so
+    //    notify usage and return. Do NOT fall through to a hardcoded
+    //    default prompt; an agent with no user task has nothing to do.
+    if (!args.trim()) {
+      ctx.ui.notify("Usage: /deferred-writer <task description>", "warning");
+      return;
+    }
+
+    // 2. Env check — error out now if the required tier model isn't
+    //    set. Do not fall back to a hardcoded model ID; that hides
+    //    misconfiguration and sends traffic to a model the user
+    //    didn't pick.
+    const MODEL = process.env.TASK_MODEL;
+    if (!MODEL) {
+      ctx.ui.notify("TASK_MODEL env var not set. Source models.env before launching pi.", "error");
+      return;
+    }
+
+    // 3. Pin the sandbox root once so the rest of the handler shares
+    //    one definition of "inside the project".
+    const sandboxRoot = path.resolve(process.cwd());
+
+    // 4. Resolve the child-tool path relative to THIS file, not $HOME.
+    //    fileURLToPath + import.meta.url ties the lookup to the
+    //    extension's own location so the layout ships with the project.
+    const STAGE_WRITE_TOOL = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..", "child-tools", "stage-write.ts",
+    );
+
+    // 5. Build the drafter's prompt from `args`. The user's task is
+    //    the drafter's task — do NOT ignore `args` or replace it with
+    //    a hardcoded generic instruction. If you need scaffolding
+    //    around it (role, constraints, format), interpolate, don't
+    //    substitute.
+    const agentPrompt = `You are a DRAFTER. Task: ${args}.
+
+To create a file, call stage_write(path, content). Paths must be
+relative to ${sandboxRoot}. Reply DONE when finished.`;
+
+    // 6. Wrap the spawn in a Promise and `await` it. The handler
+    //    MUST hold open until the child finishes; otherwise pi sees
+    //    the handler return immediately after setting up callbacks,
+    //    disposes the session, and the close-handler's later touch
+    //    of `ctx.ui` throws "extension instance is stale after
+    //    session replacement or reload". Every callback that touches
+    //    ctx must run while the handler is still awaiting.
+    const staged: Array<{ path: string; content: string }> = [];
+    await new Promise<void>((resolveChild) => {
+      const child = spawn("pi", [
+        "-e", STAGE_WRITE_TOOL,
+        "-p", agentPrompt,
+        "--no-extensions",
+        "--tools", "stage_write,ls",
+        "--provider", "openrouter",
+        "--model", MODEL,
+        "--thinking", "off",
+        "--no-session",
+        "--mode", "json",
+      ], {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: sandboxRoot,
+      });
+
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolveChild();
+      }, 120_000);
+
+      child.on("error", () => { clearTimeout(timer); resolveChild(); });
+      child.on("close", () => { clearTimeout(timer); resolveChild(); });
+
+      // Parse NDJSON and accumulate staged writes. Keep this handler
+      // SYNC — no `await` inside. Harvest only; do not confirm or
+      // write to disk from inside the stream callback.
+      let buffer = "";
+      child.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const e = JSON.parse(line);
+            if (e.type === "tool_execution_start" && e.toolName === "stage_write") {
+              staged.push({ path: e.args.path, content: e.args.content });
+            }
+          } catch { /* ignore partial or non-JSON lines */ }
+        }
+      });
+    });
+
+    // 7. Confirm + write happen in the handler body, AFTER the
+    //    child has closed and the Promise resolved — but still
+    //    inside the active handler, so ctx.ui is live. Never call
+    //    ctx.ui.confirm from inside an on("close") callback; the
+    //    session may have been torn down by then.
+    if (staged.length === 0) {
+      ctx.ui.notify("Drafter finished with no staged files.", "warning");
+      return;
+    }
+    const preview = staged.map(s => `${s.path} (${s.content.length} bytes)`).join("\n");
+    const ok = await ctx.ui.confirm(`Promote ${staged.length} file(s)?`, preview);
+    if (!ok) {
+      ctx.ui.notify("Cancelled; nothing written.", "info");
+      return;
+    }
+    // … fs.mkdirSync + fs.writeFileSync + sha256 verify …
+  },
+});
+```
+
+Every element of this block is a rail we have lost a run to when it
+was omitted. Notes:
+
+- **Step 1 (args check) is mandatory, not optional.** `async (args,
+  ctx)` not `async (_args, ctx)` — the underscore prefix signals
+  "deliberately unused" and is a code-smell here because the whole
+  point of the command is to do what `args` describes. An extension
+  that ignores `args` and hardcodes `agentPrompt` will launch a
+  drafter even when the user typed `/deferred-writer` with no task,
+  spending the user's budget on a generic prompt they didn't
+  author.
+- **Step 6 (the `await new Promise(...)` wrap) is where most
+  otherwise-correct extensions fail.** An async handler that fires
+  off `spawn(...) + child.on(...)` without awaiting anything returns
+  immediately; pi thinks the handler is done, disposes the session,
+  and when the child's callbacks fire later they throw
+  *"This extension instance is stale after session replacement or
+  reload."* on the first `ctx.ui.*` access. The handler must hold
+  open until the child has closed, and the idiomatic way to do that
+  is to wrap the spawn in `new Promise` and `await` it. Don't call
+  `ctx.ui.confirm` or other `await`-needing APIs from inside the
+  close callback — resolve the Promise with the accumulated staged
+  writes and do the UI work back in the handler body, where ctx
+  is still live.
+- **The stdout stream callback stays sync** (no `await` inside the
+  `on("data", ...)` handler). Any callback that contains `await`
+  must be declared `async`; but keeping the stream handler sync is
+  deliberate — harvest NDJSON into a plain array, then do the
+  awaitable work (confirm, write) in the handler body after the
+  Promise resolves. A `(code) => { const ok = await ... }` is a
+  ParseError at module load; pi emits zero NDJSON events and the
+  extension fails to register at all.
+- **`"openrouter"` is a string literal**, not `process.env.PI_PROVIDER
+  || "openrouter"` — defaulting to an optional env var means a
+  missing env silently resolves to the wrong provider.
+- **`MODEL` comes from `process.env.TASK_MODEL`** with an *error exit*
+  on unset, not a hardcoded fallback like `"gpt-4o-mini"`.
+- **`"stage_write,ls"` has no `read`** (see the *Deferred /
+  approval-gated side effects* section below for why).
+- All three quoting forms (`"..."`, `` `...` ``, `'...'`) are valid
+  TS, but mixing them in one argv is a code-smell — pick one and
+  stay consistent so humans reviewing the diff don't have to
+  double-check.
+
 ## For every sub-agent (child `pi` process)
 
 - `--no-extensions` on the child — prevents recursive sub-agents (recursion
@@ -48,10 +221,16 @@ absence caused a real failure in a real session.
   `PLAN_MODEL` for orchestration. Notify an error and return if the env
   var is unset — *do not* silently fall back to a hardcoded model that
   the user didn't pick.
-- `--provider openrouter` (or whatever your project standardizes on)
-  explicitly on every child. A model ID with a provider prefix like
-  `deepseek/deepseek-v3.2` will otherwise route to that provider's
-  direct API, which usually has no API key configured and stalls.
+- `--provider openrouter` as a **literal string** on every child.
+  Not `process.env.PI_PROVIDER`, not `process.env.PROVIDER ||
+  "openrouter"`, and not any other env-var indirection — in this
+  repo, openrouter is the one provider we test against, so hardcode
+  it. An optional env fallback silently resolves to the wrong
+  provider when the env var isn't set, and a model ID with a
+  provider prefix like `deepseek/deepseek-v3.2` will otherwise route
+  to that provider's direct API, which usually has no API key
+  configured and stalls. (If downstream forks need a different
+  provider, they can fork this file.)
 - Pass `--no-session` unless the child's session needs to feed back into
   parent state.
 
@@ -139,8 +318,9 @@ Every child LLM gets the minimum tool surface for its role; "just in
 case" is not a reason to add a tool.
 
 - One-shot children: pass `--tools <comma-list>` with exactly the
-  verbs the role needs. Examples: drafter → `stage_write,ls,read`;
-  reviewer → `review`; dispatcher → `run_deferred_writer`.
+  verbs the role needs. Examples: drafter → `stage_write,ls` (no
+  `read` — the drafter produces new files, it does not read existing
+  ones); reviewer → `review`; dispatcher → `run_deferred_writer`.
 - RPC children: see *Persistent RPC sub-agents* above — pass the
   union of per-phase tools and enforce phase narrowing via the
   prompt that opens each phase.
@@ -211,13 +391,63 @@ zero artifacts on disk.
 ### In-memory variant (preferred)
 
 - Write a small "stub" tool (e.g. `stage_write({ path, content })`) in
-  its own file *outside* the auto-discovered extensions path (e.g.
-  `.pi/child-tools/stage-write.ts`). Its `execute` body is a no-op that
-  just returns `{ content: [{ type: "text", text: "Drafted …" }], details: {} }`.
-- Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls,read`.
-  The child can read the real project (via `ls`/`read` on absolute paths
-  under `sandboxRoot`) but has no `write` tool — `stage_write` is its
-  only channel for producing files.
+  its own file *outside* the auto-discovered extensions path. The
+  canonical location is `.pi/child-tools/<n>.ts` under the same
+  project-local `.pi/` directory as the parent extension — NOT a global
+  path under `$HOME`. The stub file must use the factory shape and
+  return `details`:
+
+  ```ts
+  // .pi/child-tools/stage-write.ts
+  import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+  import { Type } from "typebox";
+
+  export default function (pi: ExtensionAPI) {
+    pi.registerTool({
+      name: "stage_write",
+      label: "Stage Write",
+      description: "Draft a file. Content is staged in the parent's memory for user review before being persisted. Use in place of `write`.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Relative destination path inside the project." }),
+        content: Type.String({ description: "Full text content of the file." }),
+      }),
+      async execute(_id, params) {
+        return {
+          content: [{ type: "text", text: `Drafted ${params.path} (${Buffer.byteLength(params.content, "utf8")} bytes). Staged; not yet written.` }],
+          details: {},   // REQUIRED — the AgentToolResult type refuses to compile without it
+        };
+      },
+    });
+  }
+  ```
+
+  **Three traps this block protects against, each of which we have
+  paid for in a real run:**
+  1. A bare `const stage_write: Tool = { ... }; export default stage_write;`
+     loads without error under `pi -e <path>` but registers *nothing* —
+     the child LLM then has no `stage_write` tool, `tool_execution_start`
+     for the name never fires, and the parent collects zero staged
+     writes. The default export MUST be a function.
+  2. Dropping `details` (returning just `{ content: [...] }`) fails the
+     TS `AgentToolResult` constraint at compile time. For a stub with
+     nothing structured to report, `details: {}` is the correct value
+     — not `null`, not the param object, not omitted.
+  3. Resolving the child-tool path via `process.env.HOME` or a global
+     `~/.pi/` prefix ties the parent extension to one user's home
+     directory. Use `path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "child-tools", "stage-write.ts")`
+     inside the parent extension — relative to the parent's own file —
+     so the layout ships with the project and works on any machine.
+- Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls`.
+  The `<abs path to stub tool>` should be computed from the parent
+  extension's own location (see the `fileURLToPath(import.meta.url)`
+  recipe above), not hardcoded and not derived from `$HOME`.
+  The child can walk the sandbox via `ls` on absolute paths under
+  `sandboxRoot` to pick destinations, but has no `write` tool — `stage_write`
+  is its only channel for producing files. **Do NOT add `read`** to the
+  allowlist: the drafter is not meant to be reading existing file contents,
+  and every built-in it gets weakens the "stage_write is the only write
+  channel" guarantee. If the drafter genuinely needs prior-file context
+  to do its job, surface it in the prompt instead — don't hand it `read`.
 - In `--mode json` the child emits `{"type":"tool_execution_start",
   "toolName":"stage_write", "args": {"path": "...", "content": "..."}}`
   for every call. The parent harvests `e.args.path` and `e.args.content`
