@@ -14,16 +14,29 @@ a spot to write, and only after the user confirms it…"*), your job is to
 4. Now check for **residual** ambiguity — things the table and defaults
    can't resolve on their own. Ask about those only.
 
+### The "agent" trap
+
+When a user says "write me an agent that [does X]", they want the work
+performed by an autonomous actor — **not** a bare `registerTool` the
+user's own LLM has to remember to invoke. A tool-only solution looks
+tempting (it's less code) but it shifts the responsibility for
+*using* the tool back onto the human's main pi session, which defeats
+the point. Build a slash command whose handler spawns a child pi
+process; the user invokes the command, the child does the work. This
+is true even when the prompt doesn't literally say "sub-agent" or
+"spawn". See the first row of the signal table.
+
 ## Signal → rail
 
 | If the prompt says (or implies)… | You must include… |
 | --- | --- |
+| "write me an agent that …" / "build an agent that …" / "an agent that [verb]s X" / any phrasing that casts the deliverable as an autonomous agent doing work | **Sub-agent**, not a plain tool. The user wants the work done for them by an isolated actor — spawn a child `pi` process, do not hang a bare `registerTool` off the user's main session and hope the main-session LLM decides to call it. Pair with the *slash command* row below unless the prompt explicitly says "the LLM should call it". Apply every sub-agent rail from the "a sub-agent / delegate / spawn a child" row |
 | "a sub-agent" / "delegate" / "spawn a child" | `--no-extensions` on child; `AbortSignal` forwarded into `spawn`; stdout truncated to ~20 KB in the tool result; `--model` from the tier env vars |
 | "only has the ability to X" / "restricted to X" / "can only X" | Child gets `--tools X` allowlist *and nothing else* |
 | "read-only" / "survey" / "recon" / "explore" | Child gets `--tools read,grep,glob,ls` (narrower if the prompt says so) |
 | "after the user confirms" / "with approval" / "the user decides" | `ctx.ui.confirm(title, preview)` gate before the side effect; return early on `undefined`/`false` |
 | "not able to overwrite" / "can't modify other files" / "new file only" | Pre-check `!fs.existsSync(path)`; after the write, verify `sha256(fs.readFileSync(path)) === expectedHash` |
-| "buffered" / "staged" / "in memory" / "let it try to write but don't actually write yet" / "show me what it would do, then write on approval" | Prefer the **in-memory** pattern: give the child a stub `stage_write({path, content})` tool via `-e <path>` (loaded from outside the auto-discovered extensions dir), and *no* real write tool. The parent harvests path+content from `tool_execution_start` events (`e.args`, not `e.toolCall.input`) in `--mode json`, validates (sandbox-root check, size cap, no pre-existing destination), previews via `ctx.ui.confirm`, and `fs.writeFileSync`s on approval. No disk artifacts until commit. If the agent needs to read its own prior drafts within the session, fall back to the tmpdir variant (`fs.mkdtempSync` + `cwd: stagingDir` + real `write` tool + `fs.copyFileSync` on approval + `fs.rmSync` in `finally`). See `defaults.md` for both |
+| "buffered" / "staged" / "in memory" / "in buffer" / "buffers writes" / "let it try to write but don't actually write yet" / "show me what it would do, then write on approval" / "waits for the user to approve before the writes go through" | Prefer the **in-memory** pattern: give the child a stub `stage_write({path, content})` tool via `-e <path>` (loaded from outside the auto-discovered extensions dir), and *no* real write tool. The parent harvests path+content from `tool_execution_start` events (`e.args`, not `e.toolCall.input`) in `--mode json`, validates (sandbox-root check, size cap, no pre-existing destination), previews via `ctx.ui.confirm`, and `fs.writeFileSync`s on approval. No disk artifacts until commit. If the agent needs to read its own prior drafts within the session, fall back to the tmpdir variant (`fs.mkdtempSync` + `cwd: stagingDir` + real `write` tool + `fs.copyFileSync` on approval + `fs.rmSync` in `finally`). See `defaults.md` for both |
 | "can't get outside X" / "stays inside X" / "sandboxed to X" / "scoped to this directory" | Capture `sandboxRoot = path.resolve(process.cwd())` (or whatever X resolves to) at handler entry; reject any proposed path whose resolved form doesn't satisfy `abs === sandboxRoot \|\| abs.startsWith(sandboxRoot + path.sep)`; also spawn writer children with `cwd: sandboxRoot` |
 | "decide what it wants to write first" / "plan before acting" / "propose" | Phase 1 returns *structured* output (JSON inside `===PLAN===` … `===ENDPLAN===` fences) with every field the later phase needs (path + full content, not just a path). Prefer ASCII fences over `<…>` tags — some renderers strip angle brackets and break parsing |
 | "two phases" / "first X, then Y" / "propose … then commit" | Separate child `pi` processes per phase, each with its own tool allowlist |
