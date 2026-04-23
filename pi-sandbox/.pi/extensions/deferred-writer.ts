@@ -11,13 +11,22 @@ const PREVIEW_LINES_PER_FILE = 20;
 const MAX_FILES_PROMOTABLE = 50;
 const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
 
-// Path to the child-only stage_write tool we load via -e. Computed relative
-// to THIS extension file so the layout is self-contained.
+// Paths to the components we load via -e on every drafter spawn. Both
+// resolved relative to THIS extension file so the layout is
+// self-contained. cwd-guard loads even though the canonical write
+// channel is stage_write — it's a safety backstop against a future
+// change that adds a real write primitive to the child's toolset.
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "components",
   "stage-write.ts",
+);
+const CWD_GUARD = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "components",
+  "cwd-guard.ts",
 );
 
 type StagedWrite = {
@@ -46,12 +55,13 @@ export default function (pi: ExtensionAPI) {
     ctx: { ui: { notify: (m: string, level: "info" | "warning" | "error") => void } },
     timeoutMs = PHASE_TIMEOUT_MS,
     cwd: string = process.cwd(),
+    env: NodeJS.ProcessEnv = process.env,
   ): Promise<ChildResult> {
     return new Promise((resolve) => {
       const fullArgs = ["--mode", "json", ...args];
       // Pi blocks reading stdin when it's a pipe, even with -p. Use "ignore"
       // so the child proceeds straight to the prompt from argv.
-      const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"], cwd });
+      const child = spawn("pi", fullArgs, { stdio: ["ignore", "pipe", "pipe"], cwd, env });
       let buffer = "";
       let stderr = "";
       let assistantText = "";
@@ -150,8 +160,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      if (!fs.existsSync(STAGE_WRITE_TOOL)) {
-        ctx.ui.notify(`stage_write tool missing at ${STAGE_WRITE_TOOL}`, "error");
+      if (!fs.existsSync(STAGE_WRITE_TOOL) || !fs.existsSync(CWD_GUARD)) {
+        ctx.ui.notify(`components missing; check pi-sandbox/.pi/components/`, "error");
         return;
       }
 
@@ -172,6 +182,7 @@ Rules:
       const res = await runChild(
         "Drafter",
         [
+          "-e", CWD_GUARD,
           "-e", STAGE_WRITE_TOOL,
           "-p", agentPrompt,
           "--no-extensions",
@@ -184,6 +195,7 @@ Rules:
         ctx,
         PHASE_TIMEOUT_MS,
         sandboxRoot,
+        { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
       );
       reportChild("Drafter", res, ctx);
 

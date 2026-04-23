@@ -1,0 +1,9 @@
+skill: pi-agent-assembler
+expectation:
+  kind: assembly
+  pattern: drafter-with-approval
+prompt: |
+  Write me an agent that writes to a file in buffer that waits for the
+  user to approve before the writes go through.
+probe:
+  args: " create a file hello-probe.md with the text hi"

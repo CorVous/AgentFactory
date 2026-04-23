@@ -3,7 +3,7 @@
 #
 # Runs pi in a fresh cwd under pi-sandbox/.pi/scratch/runs/<label>/
 # with:
-#   - the pi-agent-builder skill loaded (absolute path)
+#   - the skill declared by tasks/<task>/test.yaml (overridable via -s)
 #   - a narrow --tools allowlist (no write/edit/bash)
 #   - cwd-guard.ts extension adding sandbox_write/sandbox_edit that
 #     reject any path outside cwd
@@ -14,11 +14,13 @@
 #
 # Examples:
 #   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 --grade
-#   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 -s pi-agent-assembler --grade
+#   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 -s pi-agent-builder --grade
 #   agent-maker.sh --interactive -m google/gemini-3-flash-preview
 #
-# -s <skill> resolves to pi-sandbox/skills/<skill>; defaults to
-# pi-agent-builder.
+# Task definition lives at scripts/approach-b-framework/tasks/<task>/test.yaml
+# (schema: grader/lib/test-spec.ts). The file declares which skill to
+# invoke, the expected outcome (assembly + pattern, or gap), the
+# natural-language prompt, and the behavioral probe args.
 #
 # Artifacts land under the run cwd:
 #   .pi/{extensions,child-tools,scratch}/   — pi auto-discovery dirs
@@ -33,7 +35,7 @@ TASK=""
 MODEL_OVERRIDE=""
 LABEL=""
 DO_GRADE=0
-SKILL_NAME="pi-agent-builder"
+SKILL_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,11 +46,11 @@ while [[ $# -gt 0 ]]; do
     -l)
       LABEL="$2"; shift 2 ;;
     -s|--skill)
-      SKILL_NAME="$2"; shift 2 ;;
+      SKILL_OVERRIDE="$2"; shift 2 ;;
     --grade)
       DO_GRADE=1; shift ;;
     -h|--help)
-      sed -n '2,22p' "$0"; exit 0 ;;
+      sed -n '2,29p' "$0"; exit 0 ;;
     -*)
       echo "Unknown flag: $1" >&2; exit 2 ;;
     *)
@@ -62,13 +64,11 @@ done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
-SKILL="$REPO/pi-sandbox/skills/$SKILL_NAME"
-if [[ ! -d "$SKILL" ]]; then
-  echo "Skill not found at $SKILL (pass -s <skill-name>)." >&2
-  exit 2
-fi
 GUARD="$REPO/pi-sandbox/.pi/components/cwd-guard.ts"
 RUNS_ROOT="$SANDBOX/.pi/scratch/runs"
+
+# shellcheck disable=SC1091
+source "$HERE/lib/test-spec-sh.sh"
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
   echo "OPENROUTER_API_KEY not set; pi cannot call openrouter." >&2
@@ -87,18 +87,32 @@ if [[ -z "$MODEL" ]]; then
   exit 2
 fi
 
+SKILL_NAME="${SKILL_OVERRIDE:-pi-agent-builder}"
 if [[ $INTERACTIVE -eq 0 ]]; then
   if [[ -z "$TASK" ]]; then
     echo "One-shot mode requires <task>. Use --interactive for REPL." >&2
     exit 2
   fi
   TASK_DIR="$HERE/tasks/$TASK"
-  if [[ ! -f "$TASK_DIR/task.env" || ! -f "$TASK_DIR/prompt.txt" ]]; then
-    echo "Task $TASK missing files at $TASK_DIR." >&2
+  if [[ ! -f "$TASK_DIR/test.yaml" ]]; then
+    echo "Task $TASK missing test.yaml at $TASK_DIR." >&2
     exit 2
   fi
-  USER_PROMPT="$(sed -E 's/[[:space:]]+$//' "$TASK_DIR/prompt.txt")"
+  load_test_spec "$TASK_DIR"
+  # -s override takes precedence over the test.yaml skill field; otherwise
+  # test.yaml wins (the task declares which skill it tests).
+  if [[ -z "$SKILL_OVERRIDE" ]]; then
+    SKILL_NAME="$TEST_SKILL"
+  fi
+  USER_PROMPT="$(sed -E 's/[[:space:]]+$//' "$TEST_PROMPT_FILE")"
+  rm -f "$TEST_PROMPT_FILE"
   WRAPPED="Use the ${SKILL_NAME} skill to: ${USER_PROMPT}."
+fi
+
+SKILL="$REPO/pi-sandbox/skills/$SKILL_NAME"
+if [[ ! -d "$SKILL" ]]; then
+  echo "Skill not found at $SKILL (pass -s <skill-name>)." >&2
+  exit 2
 fi
 
 if [[ -z "$LABEL" ]]; then
