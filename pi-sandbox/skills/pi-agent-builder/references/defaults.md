@@ -61,44 +61,74 @@ pi.registerCommand("deferred-writer", {
 To create a file, call stage_write(path, content). Paths must be
 relative to ${sandboxRoot}. Reply DONE when finished.`;
 
-    // 6. Spawn with the canonical argv + options. Every flag is a
-    //    mandatory rail; see the annotations below.
-    const child = spawn("pi", [
-      "-e", STAGE_WRITE_TOOL,
-      "-p", agentPrompt,
-      "--no-extensions",
-      "--tools", "stage_write,ls",
-      "--provider", "openrouter",
-      "--model", MODEL,
-      "--thinking", "off",
-      "--no-session",
-      "--mode", "json",
-    ], {
-      stdio: ["ignore", "pipe", "pipe"],
-      cwd: sandboxRoot,
+    // 6. Wrap the spawn in a Promise and `await` it. The handler
+    //    MUST hold open until the child finishes; otherwise pi sees
+    //    the handler return immediately after setting up callbacks,
+    //    disposes the session, and the close-handler's later touch
+    //    of `ctx.ui` throws "extension instance is stale after
+    //    session replacement or reload". Every callback that touches
+    //    ctx must run while the handler is still awaiting.
+    const staged: Array<{ path: string; content: string }> = [];
+    await new Promise<void>((resolveChild) => {
+      const child = spawn("pi", [
+        "-e", STAGE_WRITE_TOOL,
+        "-p", agentPrompt,
+        "--no-extensions",
+        "--tools", "stage_write,ls",
+        "--provider", "openrouter",
+        "--model", MODEL,
+        "--thinking", "off",
+        "--no-session",
+        "--mode", "json",
+      ], {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: sandboxRoot,
+      });
+
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolveChild();
+      }, 120_000);
+
+      child.on("error", () => { clearTimeout(timer); resolveChild(); });
+      child.on("close", () => { clearTimeout(timer); resolveChild(); });
+
+      // Parse NDJSON and accumulate staged writes. Keep this handler
+      // SYNC — no `await` inside. Harvest only; do not confirm or
+      // write to disk from inside the stream callback.
+      let buffer = "";
+      child.stdout.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const e = JSON.parse(line);
+            if (e.type === "tool_execution_start" && e.toolName === "stage_write") {
+              staged.push({ path: e.args.path, content: e.args.content });
+            }
+          } catch { /* ignore partial or non-JSON lines */ }
+        }
+      });
     });
 
-    const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
-    child.on("error", (err) => { /* resolve with clean failure */ });
-
-    // 7. The close-handler must be `async` because it awaits
-    //    ctx.ui.confirm and fs operations. Writing
-    //    `child.on("close", (code) => { const ok = await ... })`
-    //    is a ParseError at module load — pi never emits even the
-    //    session header, and the extension fails to register at all.
-    //    Any callback containing `await` must be declared async; the
-    //    `child.on("error", ...)` handler above stays sync because
-    //    it doesn't await anything.
-    child.on("close", async (code) => {
-      clearTimeout(timer);
-      // … parse NDJSON, validate staged entries, build preview …
-      const ok = await ctx.ui.confirm(`Promote N file(s)?`, preview);
-      if (!ok) {
-        ctx.ui.notify("Cancelled; nothing written.", "info");
-        return;
-      }
-      // … fs.mkdirSync + fs.writeFileSync + sha256 verify …
-    });
+    // 7. Confirm + write happen in the handler body, AFTER the
+    //    child has closed and the Promise resolved — but still
+    //    inside the active handler, so ctx.ui is live. Never call
+    //    ctx.ui.confirm from inside an on("close") callback; the
+    //    session may have been torn down by then.
+    if (staged.length === 0) {
+      ctx.ui.notify("Drafter finished with no staged files.", "warning");
+      return;
+    }
+    const preview = staged.map(s => `${s.path} (${s.content.length} bytes)`).join("\n");
+    const ok = await ctx.ui.confirm(`Promote ${staged.length} file(s)?`, preview);
+    if (!ok) {
+      ctx.ui.notify("Cancelled; nothing written.", "info");
+      return;
+    }
+    // … fs.mkdirSync + fs.writeFileSync + sha256 verify …
   },
 });
 ```
@@ -114,16 +144,27 @@ was omitted. Notes:
   drafter even when the user typed `/deferred-writer` with no task,
   spending the user's budget on a generic prompt they didn't
   author.
-- **Step 7 (async close-handler) matters because pi's extension
-  loader parses the whole file before registering anything.** A
-  `(code) => { const ok = await ctx.ui.confirm(...) }` callback
-  is a ParseError at load time, not a runtime error — pi emits zero
-  NDJSON events, the extension never registers, and the slash
-  command falls through to the LLM. *Every callback that contains
-  `await` must be declared `async`.* The `on("error", ...)` handler
-  stays sync because it doesn't await; the `on("close", ...)`
-  handler must be async because it awaits both `ctx.ui.confirm`
-  and the write/verify loop.
+- **Step 6 (the `await new Promise(...)` wrap) is where most
+  otherwise-correct extensions fail.** An async handler that fires
+  off `spawn(...) + child.on(...)` without awaiting anything returns
+  immediately; pi thinks the handler is done, disposes the session,
+  and when the child's callbacks fire later they throw
+  *"This extension instance is stale after session replacement or
+  reload."* on the first `ctx.ui.*` access. The handler must hold
+  open until the child has closed, and the idiomatic way to do that
+  is to wrap the spawn in `new Promise` and `await` it. Don't call
+  `ctx.ui.confirm` or other `await`-needing APIs from inside the
+  close callback — resolve the Promise with the accumulated staged
+  writes and do the UI work back in the handler body, where ctx
+  is still live.
+- **The stdout stream callback stays sync** (no `await` inside the
+  `on("data", ...)` handler). Any callback that contains `await`
+  must be declared `async`; but keeping the stream handler sync is
+  deliberate — harvest NDJSON into a plain array, then do the
+  awaitable work (confirm, write) in the handler body after the
+  Promise resolves. A `(code) => { const ok = await ... }` is a
+  ParseError at module load; pi emits zero NDJSON events and the
+  extension fails to register at all.
 - **`"openrouter"` is a string literal**, not `process.env.PI_PROVIDER
   || "openrouter"` — defaulting to an optional env var means a
   missing env silently resolves to the wrong provider.
