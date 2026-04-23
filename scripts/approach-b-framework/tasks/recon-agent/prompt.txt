@@ -1,0 +1,1 @@
+Write me an agent that reads a directory and produces a one-page summary of what it contains.
