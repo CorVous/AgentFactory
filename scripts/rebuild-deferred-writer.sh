@@ -91,30 +91,40 @@ for MODEL in "${MODELS[@]}"; do
   echo "    log=$LOG"
   echo "================================================================"
 
-  # Fresh slate
+  # Fresh slate. Models often write files OUTSIDE .pi/extensions and
+  # .pi/child-tools — docs, demos, scratch — which would leak into the
+  # next model's run. Normalize via git: drop all untracked files under
+  # pi-sandbox/ (respecting .gitignore so scratch/ survives), restore
+  # any modified tracked file, THEN re-wipe the two target dirs.
+  git -C "$REPO" clean -fdq -- pi-sandbox/ || true
+  git -C "$REPO" checkout -- pi-sandbox/ 2>/dev/null || true
   rm -rf "$EXT_DIR"/* "$CHILD_DIR"/* 2>/dev/null || true
 
   # Invoke pi. Let pi's own tools produce files; we rely on pi's write tool
   # to actually place them under pi-sandbox/.pi/.
   #
   # Notes:
-  # - cd into sandbox to match npm run pi behavior.
+  # - cd into sandbox to match `npm run pi` behavior so pi's auto-discovery
+  #   + relative paths resolve inside pi-sandbox/ (not the repo root).
   # - --no-context-files suppresses AGENTS.md/CLAUDE.md (human docs).
   # - --no-session: ephemeral.
   # - Do NOT pass --no-tools; pi needs write/bash/edit/ls to produce files.
   # - Do NOT pass --no-extensions; there are none to auto-discover anyway
   #   (we just wiped the dir) and the skill is passed explicitly.
   set +e
-  timeout 600s env PI_SKIP_UPDATE_CHECK=1 \
-    node_modules/.bin/pi \
-      --no-context-files \
-      --provider openrouter \
-      --model "$MODEL" \
-      --skill pi-sandbox/skills/pi-agent-builder \
-      --mode json \
-      --no-session \
-      -p "$WRAPPED_PROMPT" \
-      > "$LOG/events.ndjson" 2> "$LOG/stderr.log"
+  (
+    cd "$SANDBOX"
+    timeout 600s env PI_SKIP_UPDATE_CHECK=1 \
+      "$REPO/node_modules/.bin/pi" \
+        --no-context-files \
+        --provider openrouter \
+        --model "$MODEL" \
+        --skill skills/pi-agent-builder \
+        --mode json \
+        --no-session \
+        -p "$WRAPPED_PROMPT" \
+        > "$LOG/events.ndjson" 2> "$LOG/stderr.log"
+  )
   PI_EXIT=$?
   set -e
   echo "pi exit code: $PI_EXIT" > "$LOG/pi-exit.txt"

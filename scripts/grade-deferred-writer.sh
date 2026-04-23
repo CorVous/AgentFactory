@@ -34,6 +34,20 @@ fi
 
 ALL_FILES=("${EXT_FILES[@]}" "${CHILD_FILES[@]}")
 
+# Build whitespace-collapsed blobs. Many anchors below are syntactic
+# constructs that models frequently split across lines (e.g.
+# `"--tools",\n"stage_write,ls"`). Line-local grep misses those.
+EXT_BLOB=""
+ALL_BLOB=""
+if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
+  EXT_BLOB=$(cat "${EXT_FILES[@]}" 2>/dev/null | tr '\n' ' ' | tr -s ' ')
+fi
+if [[ ${#ALL_FILES[@]} -gt 0 ]]; then
+  ALL_BLOB=$(cat "${ALL_FILES[@]}" 2>/dev/null | tr '\n' ' ' | tr -s ' ')
+fi
+blob_has() { [[ "$EXT_BLOB" == *"$1"* ]]; }
+blob_has_ere() { echo "$EXT_BLOB" | grep -qE -- "$1"; }
+
 say() { echo "$@"; }
 say "# Grade — $MODEL"
 say
@@ -114,10 +128,17 @@ else
   mark_p0 "registerCommand in extension" fail
 fi
 
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "deferred-writer" "${EXT_FILES[@]}"; then
-  mark_p0 "command name is 'deferred-writer'" pass
+# Extract the actual registered slash command name for later probes.
+# The rubric intentionally does NOT grade the name itself — any slug is fine.
+CMD_NAME=""
+if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
+  CMD_NAME=$(grep -hoE 'registerCommand\(["'\''][a-zA-Z0-9_-]+["'\'']' "${EXT_FILES[@]}" 2>/dev/null \
+    | head -1 | sed -E 's/.*\(["'\'']([a-zA-Z0-9_-]+)["'\''].*/\1/')
+fi
+if [[ -n "$CMD_NAME" ]]; then
+  say "- registered slash command: \`/$CMD_NAME\`"
 else
-  mark_p0 "command name is 'deferred-writer'" fail "rubric tolerates equivalent slugs; check manually"
+  say "- [warn] could not extract registered slash command name"
 fi
 
 if [[ ${#CHILD_FILES[@]} -gt 0 ]] && grep_any "stage_write" "${CHILD_FILES[@]}"; then
@@ -145,15 +166,15 @@ else
   mark_p0 "--no-extensions on spawn" fail
 fi
 
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any_ere '"--mode".*,.*"json"|"--mode", *"json"|--mode json' "${EXT_FILES[@]}"; then
+if blob_has_ere '"--mode"[^a-zA-Z]+"json"|--mode json'; then
   mark_p0 "--mode json on spawn" pass
 else
   mark_p0 "--mode json on spawn" fail
 fi
 
 TOOLS_LINE=""
-if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
-  TOOLS_LINE=$(grep -oE '"--tools",[[:space:]]*"[^"]+"|--tools "[^"]+"|--tools,[[:space:]]*"[^"]+"' "${EXT_FILES[@]}" 2>/dev/null | head -1 || true)
+if [[ -n "$EXT_BLOB" ]]; then
+  TOOLS_LINE=$(echo "$EXT_BLOB" | grep -oE '"--tools"[^a-zA-Z]+"[^"]+"|--tools "[^"]+"' | head -1 || true)
 fi
 if [[ -n "$TOOLS_LINE" ]]; then
   ALLOWLIST=$(echo "$TOOLS_LINE" | grep -oE '"[^"]+"' | tail -1 | tr -d '"')
@@ -177,19 +198,19 @@ else
   mark_p0 "--provider openrouter + --model from env" fail
 fi
 
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any_ere 'stdio:[[:space:]]*\[[[:space:]]*"ignore"' "${EXT_FILES[@]}"; then
+if blob_has_ere 'stdio: *\[ *"ignore"'; then
   mark_p0 'stdio: ["ignore", "pipe", "pipe"]' pass
 else
   mark_p0 'stdio: ["ignore", "pipe", "pipe"]' fail
 fi
 
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "path.resolve(process.cwd())" "${EXT_FILES[@]}" && grep_any_ere 'cwd:[[:space:]]*[a-zA-Z_]' "${EXT_FILES[@]}"; then
+if blob_has "path.resolve(process.cwd())" && blob_has_ere 'cwd:[[:space:]]*[a-zA-Z_]'; then
   mark_p0 "sandboxRoot captured + cwd pinned on spawn" pass
 else
   mark_p0 "sandboxRoot captured + cwd pinned on spawn" fail
 fi
 
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "setTimeout(" "${EXT_FILES[@]}" && grep_any_ere 'SIGKILL|child\.kill\(' "${EXT_FILES[@]}"; then
+if blob_has "setTimeout(" && blob_has_ere 'SIGKILL|child\.kill\(|childProcess\.kill\('; then
   mark_p0 "hard timeout + SIGKILL on child" pass
 else
   mark_p0 "hard timeout + SIGKILL on child" fail
@@ -204,16 +225,16 @@ else
 fi
 
 HARVEST_FIELD_OK=1
-if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
-  # Reference impl aliases e.args to inputObj first, then reads inputObj.path/content.
-  # Accept any of: e.args.path, e.args.content, args.path, args.content, or a
-  # const alias assignment from e.args followed by .path/.content reads.
-  if grep_any_ere '(e\.)?args\.(path|content)|(e\.)?args\["(path|content)"\]|= *e\.args' "${EXT_FILES[@]}"; then
+if [[ -n "$EXT_BLOB" ]]; then
+  # Accept: e.args.path/content, args.path/content, event.args.path/content,
+  # destructuring `= event.args` or `= e.args`, or `inputObj = e.args`.
+  if blob_has_ere '(e|event)\.args\.(path|content)|args\.(path|content)|= *(e|event)\.args|= *inputObj' \
+     || blob_has "= event.args" || blob_has "= e.args"; then
     :
   else
     HARVEST_FIELD_OK=0
   fi
-  if grep_any "toolCall.input" "${EXT_FILES[@]}"; then
+  if blob_has "toolCall.input"; then
     HARVEST_FIELD_OK=0
   fi
 else
@@ -270,7 +291,7 @@ else
   fi
 fi
 
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any_ere '"--thinking".*"off"|thinking off' "${EXT_FILES[@]}" && grep_any "--no-session" "${EXT_FILES[@]}"; then
+if blob_has_ere '"--thinking"[^a-zA-Z]+"off"|--thinking off' && blob_has "--no-session"; then
   mark_p1 "--thinking off + --no-session on drafter" pass
 else
   mark_p1 "--thinking off + --no-session on drafter" fail
@@ -303,9 +324,9 @@ if [[ "${SKIP_LOAD:-0}" == "1" ]]; then
   LOAD_STATUS="skip"
   LOAD_NOTE="SKIP_LOAD=1"
   say "- [-] skipped (SKIP_LOAD=1)"
-elif [[ ${#EXT_FILES[@]} -gt 0 ]]; then
-  # Probe: invoke "/deferred-writer" with no args via pi -p. When the
-  # command is registered, agent-session.js short-circuits in
+elif [[ ${#EXT_FILES[@]} -gt 0 && -n "$CMD_NAME" ]]; then
+  # Probe: invoke "/<CMD_NAME>" with no args via pi -p. When the command
+  # is registered, agent-session.js short-circuits in
   # _tryExecuteExtensionCommand and NO agent_start / message_* events
   # fire — only the session header appears on stdout. When the command is
   # NOT registered, pi sends the text to the LLM and emits ~dozens of
@@ -323,7 +344,7 @@ elif [[ ${#EXT_FILES[@]} -gt 0 ]]; then
       -e "$EXT_FILE" \
       --mode json --no-tools \
       --provider openrouter --model "$TASK_MODEL_FOR_LOAD" \
-      -p "/deferred-writer" \
+      -p "/$CMD_NAME" \
       > "$LOG/load.ndjson" 2> "$LOG/load.stderr"
   LOAD_EXIT=$?
   set -e
@@ -334,11 +355,11 @@ elif [[ ${#EXT_FILES[@]} -gt 0 ]]; then
   SAW_AGENT_START="${SAW_AGENT_START:-0}"
   if [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -le 3 ]]; then
     LOAD_STATUS="pass"
-    say "- [x] command registered (no LLM call on /deferred-writer)"
+    say "- [x] command /$CMD_NAME registered (no LLM call)"
   elif [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -ge 1 ]]; then
     LOAD_STATUS="fail"
-    LOAD_NOTE="extension loaded but /deferred-writer was not registered (went to LLM)"
-    say "- [ ] command not registered — /deferred-writer went to LLM"
+    LOAD_NOTE="extension loaded but /$CMD_NAME was not registered (went to LLM)"
+    say "- [ ] command /$CMD_NAME not registered — went to LLM"
   elif [[ $LOAD_EXIT -ne 0 ]]; then
     LOAD_STATUS="fail"
     LOAD_NOTE="pi exit $LOAD_EXIT on load (see load.stderr)"
@@ -350,6 +371,10 @@ elif [[ ${#EXT_FILES[@]} -gt 0 ]]; then
     LOAD_NOTE="ambiguous — events=$EVT_COUNT agent_start=$SAW_AGENT_START"
     say "- [~] ambiguous (events=$EVT_COUNT agent_start=$SAW_AGENT_START)"
   fi
+elif [[ -z "$CMD_NAME" ]]; then
+  LOAD_STATUS="fail"
+  LOAD_NOTE="could not extract registered command name from extension"
+  say "- [ ] skipped (no CMD_NAME found in extension)"
 else
   say "- [ ] skipped (no extension file)"
 fi
@@ -380,7 +405,7 @@ elif [[ $LOAD_STATUS == "pass" || $LOAD_STATUS == "partial" ]]; then
         --no-context-files --no-session --no-skills \
         --provider openrouter --model "$TASK_MODEL" \
         --mode json \
-        -p "/deferred-writer create a file hello-probe.md with the text hi" \
+        -p "/$CMD_NAME create a file hello-probe.md with the text hi" \
         > "$LOG/behavior.ndjson" 2> "$LOG/behavior.stderr"
   )
   BEH_EXIT=$?

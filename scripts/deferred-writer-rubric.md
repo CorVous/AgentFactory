@@ -19,9 +19,10 @@ test wipes them).
   contains `registerCommand`; exactly one file contains `registerTool`; the
   registerTool file path does NOT contain `/extensions/`.
 - **Slash command registration.** Extension calls `pi.registerCommand(...)`
-  and the registered name resolves to `/deferred-writer` (or an obviously
-  equivalent slug like `defwrite`). Anchor: `registerCommand("deferred-writer"`
-  or `registerCommand('deferred-writer'` or similar; grader tolerates the slug.
+  with *any* name — the slug itself is not graded. The grader extracts
+  the actual name from the source and uses it in the load/behavioral
+  probes. Anchor: `registerCommand("..."` or `registerCommand('...'`
+  matched as a regex.
 - **Stub tool shape.** Child-tool file registers `stage_write` with a
   `{ path, content }` TypeBox schema and returns `{ content: [...], details: ... }`
   — the `details` field must be present (even if `{}`). Anchors: `"stage_write"`,
