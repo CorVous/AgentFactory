@@ -91,7 +91,7 @@ progress `notify` calls at every tool-call boundary, the sandbox-root
 path check, and the `MAX_FILES_PROMOTABLE` / `MAX_CONTENT_BYTES` caps
 even though the prompt didn't call any of them out by name. A real
 implementation is committed at `.pi/extensions/deferred-writer.ts`
-(plus the child-only tool at `.pi/child-tools/stage-write.ts`) in the
+(plus the child-only tool at `.pi/components/stage-write.ts`) in the
 AgentFactory repo.
 
 ## When to still ask

@@ -169,7 +169,7 @@ the committed reference files:
 - `artifacts/extensions/{deferred-writer,delegated-writer}.ts` —
   copied from `pi-sandbox/.pi/extensions/`.
 - `artifacts/child-tools/{stage-write,review,run-deferred-writer}.ts`
-  — copied from `pi-sandbox/.pi/child-tools/`.
+  — copied from `pi-sandbox/.pi/components/`.
 
 ### Run
 

@@ -9,12 +9,16 @@
 #     reject any path outside cwd
 #
 # Usage:
-#   agent-maker.sh <task>       [-m <model>] [-l <label>] [--grade]
-#   agent-maker.sh --interactive [-m <model>] [-l <label>]
+#   agent-maker.sh <task>       [-m <model>] [-l <label>] [-s <skill>] [--grade]
+#   agent-maker.sh --interactive [-m <model>] [-l <label>] [-s <skill>]
 #
 # Examples:
 #   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 --grade
+#   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 -s pi-agent-assembler --grade
 #   agent-maker.sh --interactive -m google/gemini-3-flash-preview
+#
+# -s <skill> resolves to pi-sandbox/skills/<skill>; defaults to
+# pi-agent-builder.
 #
 # Artifacts land under the run cwd:
 #   .pi/{extensions,child-tools,scratch}/   — pi auto-discovery dirs
@@ -29,6 +33,7 @@ TASK=""
 MODEL_OVERRIDE=""
 LABEL=""
 DO_GRADE=0
+SKILL_NAME="pi-agent-builder"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,10 +43,12 @@ while [[ $# -gt 0 ]]; do
       MODEL_OVERRIDE="$2"; shift 2 ;;
     -l)
       LABEL="$2"; shift 2 ;;
+    -s|--skill)
+      SKILL_NAME="$2"; shift 2 ;;
     --grade)
       DO_GRADE=1; shift ;;
     -h|--help)
-      sed -n '2,18p' "$0"; exit 0 ;;
+      sed -n '2,22p' "$0"; exit 0 ;;
     -*)
       echo "Unknown flag: $1" >&2; exit 2 ;;
     *)
@@ -55,8 +62,12 @@ done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
-SKILL="$REPO/pi-sandbox/skills/pi-agent-builder"
-GUARD="$REPO/pi-sandbox/.pi/child-tools/cwd-guard.ts"
+SKILL="$REPO/pi-sandbox/skills/$SKILL_NAME"
+if [[ ! -d "$SKILL" ]]; then
+  echo "Skill not found at $SKILL (pass -s <skill-name>)." >&2
+  exit 2
+fi
+GUARD="$REPO/pi-sandbox/.pi/components/cwd-guard.ts"
 RUNS_ROOT="$SANDBOX/.pi/scratch/runs"
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
@@ -87,7 +98,7 @@ if [[ $INTERACTIVE -eq 0 ]]; then
     exit 2
   fi
   USER_PROMPT="$(sed -E 's/[[:space:]]+$//' "$TASK_DIR/prompt.txt")"
-  WRAPPED="Use the pi-agent-builder skill to: ${USER_PROMPT}."
+  WRAPPED="Use the ${SKILL_NAME} skill to: ${USER_PROMPT}."
 fi
 
 if [[ -z "$LABEL" ]]; then

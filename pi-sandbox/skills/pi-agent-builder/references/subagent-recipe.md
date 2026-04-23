@@ -177,8 +177,8 @@ different problems and are not interchangeable:
 
 | Child tool                                    | When to use                                                                 |
 |-----------------------------------------------|------------------------------------------------------------------------------|
-| `pi-sandbox/.pi/child-tools/stage-write.ts`   | The parent needs to **preview** every write before it touches disk. Tool stub stages in parent memory; no fs I/O happens until the parent promotes. Pair with `--tools stage_write,ls,read`. |
-| `pi-sandbox/.pi/child-tools/cwd-guard.ts`     | The child should be allowed to write freely but only inside a **scoped directory**. Registers `sandbox_write` and `sandbox_edit` that reject any path outside `$PI_SANDBOX_ROOT`. Pair with `--tools read,sandbox_write,sandbox_edit,ls,grep`. |
+| `pi-sandbox/.pi/components/stage-write.ts`   | The parent needs to **preview** every write before it touches disk. Tool stub stages in parent memory; no fs I/O happens until the parent promotes. Pair with `--tools stage_write,ls,read`. |
+| `pi-sandbox/.pi/components/cwd-guard.ts`     | The child should be allowed to write freely but only inside a **scoped directory**. Registers `sandbox_write` and `sandbox_edit` that reject any path outside `$PI_SANDBOX_ROOT`. Pair with `--tools read,sandbox_write,sandbox_edit,ls,grep`. |
 
 Both ship as committed child-tools; prefer loading them over
 reimplementing the pattern. Loading cwd-guard into a sub-pi:
@@ -186,7 +186,7 @@ reimplementing the pattern. Loading cwd-guard into a sub-pi:
 ```ts
 await spawn(ctx, {
   args: [
-    "-e", "/abs/path/to/pi-sandbox/.pi/child-tools/cwd-guard.ts",
+    "-e", "/abs/path/to/pi-sandbox/.pi/components/cwd-guard.ts",
     "--tools", "read,sandbox_write,sandbox_edit,ls,grep",
     "--no-extensions",
     "--mode", "json",
@@ -250,7 +250,7 @@ Key properties this pattern preserves:
   across all phases.
 
 Reference: `.pi/extensions/delegated-writer.ts` (orchestrator) +
-`.pi/child-tools/run-deferred-writer.ts` (dispatch stub).
+`.pi/components/run-deferred-writer.ts` (dispatch stub).
 
 ## Reviewer with revise-loop
 
@@ -290,7 +290,7 @@ Loop in the parent:
 5. No `ctx.ui.confirm` anywhere on the success path — the reviewer
    LLM is the gate.
 
-Reference: `.pi/child-tools/review.ts` (correctly imports
+Reference: `.pi/components/review.ts` (correctly imports
 `StringEnum` from `@mariozechner/pi-ai` and returns `details: {}`).
 
 ## Top failure modes

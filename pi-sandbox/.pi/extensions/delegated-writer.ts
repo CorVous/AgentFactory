@@ -22,19 +22,19 @@ const WRITTEN_PREVIEW_CHARS = 120;
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "child-tools",
+  "components",
   "stage-write.ts",
 );
 const RUN_DEFERRED_WRITER_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "child-tools",
+  "components",
   "run-deferred-writer.ts",
 );
 const REVIEW_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "child-tools",
+  "components",
   "review.ts",
 );
 
