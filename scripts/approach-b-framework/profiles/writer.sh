@@ -152,7 +152,7 @@ profile_grade_polish() {
 
   local notify_count=0
   if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
-    notify_count=$(grep -cH "ctx.ui.notify" "${EXT_FILES[@]}" 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
+    notify_count=$(grep -cHE 'ctx\.ui\.notify\(' "${EXT_FILES[@]}" 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
   fi
   if [[ $notify_count -ge 4 ]]; then
     mark_p1 "notifies at phase boundaries (>=4 calls)" pass "$notify_count calls"

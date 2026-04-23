@@ -159,7 +159,7 @@ profile_grade_polish() {
 
   local notify_count=0
   if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
-    notify_count=$(grep -cH "ctx.ui.notify" "${EXT_FILES[@]}" 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
+    notify_count=$(grep -cHE 'ctx\.ui\.notify\(' "${EXT_FILES[@]}" 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
   fi
   # Recon typically notifies 2–3 times (entry, child-progress, final
   # summary). ≥2 is a reasonable bar; writer's ≥4 would over-score
