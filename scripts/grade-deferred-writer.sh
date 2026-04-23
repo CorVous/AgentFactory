@@ -209,7 +209,7 @@ else
   mark_p0 "--no-extensions on spawn" fail
 fi
 
-if blob_has_ere '"--mode"[^a-zA-Z]+"json"|--mode json'; then
+if blob_has_ere '[`"'\'']--mode[`"'\''][^a-zA-Z]+[`"'\'']json[`"'\'']|--mode json'; then
   mark_p0 "--mode json on spawn" pass
 else
   mark_p0 "--mode json on spawn" fail
@@ -217,10 +217,15 @@ fi
 
 TOOLS_LINE=""
 if [[ -n "$EXT_BLOB" ]]; then
-  TOOLS_LINE=$(echo "$EXT_BLOB" | grep -oE '"--tools"[^a-zA-Z]+"[^"]+"|--tools "[^"]+"' | head -1 || true)
+  # Accept --tools followed by the allowlist in double-quotes, backticks,
+  # or single-quotes — all three forms are common in TS.
+  TOOLS_LINE=$(echo "$EXT_BLOB" | grep -oE "[\`\"']--tools[\`\"'][^a-zA-Z]+[\`\"'][^\`\"']+[\`\"']|--tools \"[^\"]+\"" | head -1 || true)
 fi
 if [[ -n "$TOOLS_LINE" ]]; then
-  ALLOWLIST=$(echo "$TOOLS_LINE" | grep -oE '"[^"]+"' | tail -1 | tr -d '"')
+  # Extract the allowlist value — it follows `--tools` and can be in
+  # double-quotes, backticks, or single-quotes. Keep only the last
+  # quoted substring of the match (the first is `--tools` itself).
+  ALLOWLIST=$(echo "$TOOLS_LINE" | grep -oE "[\`\"'][^\`\"']+[\`\"']" | tail -1 | tr -d '`"'"'")
   # Required: stage_write. Forbidden: write, edit, bash, grep, glob, read (per user direction).
   if [[ ",$ALLOWLIST," == *",stage_write,"* ]]; then
     if [[ ",$ALLOWLIST," == *",write,"* || ",$ALLOWLIST," == *",edit,"* || ",$ALLOWLIST," == *",bash,"* || ",$ALLOWLIST," == *",grep,"* || ",$ALLOWLIST," == *",glob,"* || ",$ALLOWLIST," == *",read,"* ]]; then
@@ -334,7 +339,7 @@ else
   fi
 fi
 
-if blob_has_ere '"--thinking"[^a-zA-Z]+"off"|--thinking off' && blob_has "--no-session"; then
+if blob_has_ere '[`"'\'']--thinking[`"'\''][^a-zA-Z]+[`"'\'']off[`"'\'']|--thinking off' && blob_has "--no-session"; then
   mark_p1 "--thinking off + --no-session on drafter" pass
 else
   mark_p1 "--thinking off + --no-session on drafter" fail
