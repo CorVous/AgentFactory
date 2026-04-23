@@ -28,9 +28,11 @@ writer code. Track A remains strictly better on one anchor (`bounded output` —
 with regex vs B's P1 substring). The notify threshold difference (A ≥4
 vs B ≥2) is a documented design disagreement, not a regression.
 
-Do not delete Track A until ONE regression-preserving change lands in
-Track B's recon profile: elevate `bounded output` to P0 and tighten
-`Buffer.byteLength` to a regex. ~2 lines in `profiles/recon.sh`.
+Track A lives only on branch `claude/refactor-grading-scripts-tf9IY`
+and was never merged, so no deletion is required — the branch simply
+stays unmerged. Before Track B is merged, one regression-preserving
+change should land in `profiles/recon.sh`: elevate `bounded output`
+to P0 and tighten `Buffer.byteLength` to a regex. ~2 lines.
 
 ## Structural diff (per-anchor)
 
@@ -116,12 +118,12 @@ Takeaway: the 10 IDENTICAL/COSMETIC anchors are cleanly extractable as
 Track B already factors them. This validates the core-rails hypothesis
 from the root plan — the rails are real, not wishful decomposition.
 
-## Actions before Track A deletion
+## Actions before merging Track B
 
 Track B's recon profile has ONE regression (with two fix components)
 and one documented design disagreement relative to Track A. The
-regression must land before Track A is removed (per root plan:
-"the other is deleted, not kept as dead code"):
+regression should land before Track B is merged to `main`. Track A's
+branch need not be touched — it just stays unmerged:
 
 1. **Elevate `bounded output` to P0** in `profiles/recon.sh:149` — change `mark_p1` to `mark_p0`. This matches A's priority and `defaults.md` line 217 ("~20 KB") treating bounded output as core recon discipline, not polish.
 2. **Tighten `bounded output` regex** — replace `grep_any "Buffer.byteLength"` with `grep_any_ere 'Buffer\.byteLength\('`. This matches A's regex and eliminates the comment-collision bug the edge fixture exposed.
@@ -147,6 +149,7 @@ but that's grader hygiene, not a comparison-deciding issue.
 - `pi-sandbox/.pi/scratch/comparison/` — fixtures + raw grade outputs, gitignored (scratch).
 - `/tmp/compare/{trackA,trackB}/` — extracted graders, ephemeral.
 
-No changes to either track's code. Follow-up PR against Track B for the
-three actions above, then a second PR to delete
-`scripts/approach-a-monolithic/` once Track B is regression-clean.
+No changes to either track's code. Follow-up PR against Track B for
+the regression-preserving fix, then merge Track B to `main`. Track A's
+branch stays unmerged — no deletion PR needed, since
+`scripts/approach-a-monolithic/` was never on `main`.
