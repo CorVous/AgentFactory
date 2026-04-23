@@ -97,7 +97,11 @@ inline `-p "..."`.
 When an extension delegates to a child `pi` process:
 
 - Pass `--no-extensions` to the child — prevents recursive sub-agents.
-- Whitelist the child's tools (`--tools read,grep,...`) to match its role.
+- Whitelist the child's tools (`--tools <verbs>`) to match its role.
+  Drafter children typically get `stage_write,ls` (no `read`); recon
+  children get `ls,grep,glob`. Omit every verb the role doesn't need —
+  `read` on a writer leaks the "stub is the only write channel"
+  guarantee, and default tool sets invite `bash` loops.
 - Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
 - Match the tier to the child's role: `$TASK_MODEL` for workers,
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
@@ -149,6 +153,28 @@ Gotchas we've hit when calling `pi -p` from scripts:
 - **`timeout` doesn't reach pi through `npm exec`.** SIGTERM kills the
   wrapper but the grandchild `pi` keeps running. If you need a hard ceiling,
   also kill the surviving `pi` PID explicitly.
+- **Slash commands DO execute in `-p` mode.** `pi -p "/cmd args"` routes
+  through `_tryExecuteExtensionCommand` before hitting the LLM. Useful
+  diagnostic: in `--mode json`, a *registered* command emits only the
+  `session` header on stdout (handler fires, no LLM call); an
+  *unregistered* `/cmd` produces the full turn-start/message_update/turn_end
+  event cascade. Count types to tell which happened without spending tokens.
+- **`ctx.ui.notify` is a no-op in print mode** (`runner.js`'s
+  `noOpUIContext`). Mid-run progress messages never reach the NDJSON
+  stream — grade/monitor harnesses cannot use notify content as evidence
+  of anything. Interactive mode is the only place they surface.
+- **`ctx.ui.confirm` returns `false` unconditionally in print mode.** An
+  approval-gated command called with `-p` will always hit the cancel
+  path immediately. Extensions must exit cleanly on that branch (notify
+  "cancelled" and return) or the handler errors out and leaks the wiped
+  state. This makes `-p '/your-approval-command …'` a cheap behavioral
+  smoke test for the cancel path, but useless for testing the approve
+  path.
+- **No `--model` + no `--provider` silently defaults to
+  `openai/gpt-5.1-codex`.** Not openrouter, not any tier var from
+  `models.env`. Always pass both flags explicitly in scripted runs; a
+  missing `--model` is a silent cost regression into a different
+  provider.
 
 Recommended scripted pattern:
 
@@ -220,6 +246,36 @@ Four sharp edges we've paid for in this repo. Each one is enforced in
   one multi-line notify, interleave a non-info notify (warning/error)
   between them, or use `ctx.ui.setWidget` for persistent multi-line
   state that should stay on screen.
+- **`pi -e <path>` silently ignores default-exported non-function modules.**
+  The loader expects `export default function (pi: ExtensionAPI) { … }`.
+  A file that does `const tool: Tool = { … }; export default tool;`
+  loads without error but registers nothing, so the child LLM has no
+  way to call the stub, `tool_execution_start` for its name never
+  fires, and a stub-write harness silently collects zero staged
+  writes. Always wrap tool definitions in the factory shape, even
+  for child-only stub files.
+
+## Gotchas we've hit (harness / multi-run orchestration)
+
+When running pi in a loop (skill evals, regression harness, batch
+generation), a separate class of issues surfaces:
+
+- **`npm run pi` re-sources `models.env` on every invocation.** Env-var
+  overrides set by the outer caller get clobbered when the script
+  re-runs `set -a; source models.env; set +a`. To iterate on a subset
+  of `AGENT_BUILDER_TARGETS`, either edit `models.env` directly or
+  set the override *after* the source step inside your wrapper.
+- **Models write files anywhere they think "the project" lives.** A
+  single-model run that produces a correct extension can still land
+  it in `/home/user/AgentFactory/.pi/extensions/` (repo root),
+  `/home/user/.pi/agent/extensions/` (global), or
+  `pi-sandbox/<stray>.md` (sandbox root) — none of which is the
+  canonical `pi-sandbox/.pi/extensions/`. Multi-model harnesses need
+  to scan broadly (`find -newer`) to capture artifacts, and to scrub
+  all three locations between runs (`git clean -fdq pi-sandbox/` +
+  `rm -rf $REPO/.pi` + targeted deletes under `~/.pi/agent/`). A
+  narrow wipe that trusts models to use the intended path leaks state
+  between iterations.
 
 ## Repo layout
 
