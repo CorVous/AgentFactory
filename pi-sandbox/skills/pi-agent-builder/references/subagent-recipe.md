@@ -19,6 +19,8 @@ Use a **plain tool** when:
 - The output is small and you want it directly in the parent's context.
 - You need the parent's full conversation context to do the work.
 
+**Rule of thumb**: delegate if the sub-task would take more than ~5 tool calls in the parent's context; otherwise do it inline. Sub-agents cost a full system prompt, a full tool-description block, and N turns of their own — the overhead only pays off when the parent-context savings are substantial.
+
 ## Two modes: `spawn` vs `fork`
 
 The child pi process can be started two ways, and the choice materially changes behavior.
@@ -27,6 +29,14 @@ The child pi process can be started two ways, and the choice materially changes 
 - **`fork`** — Child receives a snapshot of the parent's context plus the task. Higher cost, but the child knows what you've been working on. Best when the task depends on prior discussion or recent file reads.
 
 Default to `spawn`. Reach for `fork` only when the task genuinely depends on parent context.
+
+## Subprocess vs in-process
+
+The patterns below all shell out to a child `pi` **subprocess**. This is the default choice in this repo — it's what the canonical `.pi/extensions/deferred-writer.ts` and `.pi/extensions/delegated-writer.ts` do. Subprocess isolation gives you a clean process boundary: separate context, separate tool surface via `--tools`, separate PID for SIGKILL timeouts, and the NDJSON event stream lets the parent observe every tool call the child makes.
+
+Pi also exposes an **in-process** API — `createAgentSession` from `@mariozechner/pi-coding-agent`, which spins up a second `AgentSession` inside the same Node process. It's lower-overhead (no fork, no spawn, no JSON serialization) and lets you pass `customTools` the parent doesn't have. Trade-offs: no process-level kill lever, no `--tools` allowlist flag (you pass `activeTools: [...]` instead), and no native NDJSON stream to harvest from — you work with the returned `messages` array.
+
+Prefer subprocess in this repo unless you have a specific reason to stay in-process (performance-critical paths, sharing live JS state with the parent). The up-to-date in-process SDK reference is `packages/coding-agent/docs/sdk.md` in pi-mono — grep for `createAgentSession`, `DefaultResourceLoader`, and `AgentSessionRuntime` when you need the current signatures.
 
 ## Minimal sub-agent extension
 
@@ -145,6 +155,12 @@ const results = await Promise.all(tasks.map(runChild));
 ```
 
 Only parallelize tasks that are **genuinely independent** — no shared files being modified, no ordering constraint on the output.
+
+## Pipelined agents across turns
+
+For a pipeline that needs to cross a turn boundary — "Stage 1 produces output, Stage 2 refines it" — don't run both inside one tool call. Use `pi.sendUserMessage("Stage 2: …", { deliverAs: "followUp" })` at the end of Stage 1 so pi queues Stage 2 as a follow-up user turn. This keeps each stage's tool result visible in the parent transcript (vs. one giant tool result that hides the intermediate work) and lets the parent LLM condition on Stage 1's output before Stage 2 runs.
+
+Use the fan-out/fan-in parallel pattern (Promise.all over `spawn` calls) when stages are independent and can race. Use `deliverAs: "followUp"` only when Stage 2 genuinely needs Stage 1's output in the parent's visible transcript.
 
 ## Output handling
 
