@@ -1,6 +1,6 @@
 ---
 name: pi-agent-assembler
-description: Composes documented, pre-tested parts from a committed library into Pi agents. Use this skill whenever the user wants to create a pi-coding-agent extension, sub-agent, slash command, or lifecycle hook and the request can be covered by one of the known patterns (recon / drafter-with-approval / confined-drafter / orchestrator). Trigger on phrases like "pi extension", "pi agent", "pi sub-agent", "registerTool", "ExtensionAPI", ".pi/extensions/", ".pi/components/", "recon", "drafter", "stage write", "orchestrator", or any ask to extend pi with behavior that fits a known shape. This skill does NOT author from scratch — if no pattern matches, it STOPS and emits a GAP message so the user can fall back to `pi-agent-builder`.
+description: Composes documented, pre-tested parts from a committed library into Pi agents. Use this skill whenever the user wants to create a pi-coding-agent extension, sub-agent, slash command, or lifecycle hook and the request can be covered by one of the known patterns (recon / drafter-with-approval / confined-drafter / orchestrator). Trigger on phrases like "pi extension", "pi agent", "pi sub-agent", "registerTool", "ExtensionAPI", ".pi/extensions/", ".pi/components/", "recon", "drafter", "stage write", "emit summary", "orchestrator", or any ask to extend pi with behavior that fits a known shape. This skill does NOT author from scratch — if no pattern matches, it STOPS and emits a GAP message so the user can fall back to `pi-agent-builder`.
 ---
 
 # Pi Agent Assembler
@@ -21,12 +21,15 @@ rather than a confabulated extension.
    extensions in `patterns/` are the vocabulary. You do not write new
    child-tools, new stub shapes, or new NDJSON harvesters inside this
    skill.
-2. **cwd-guard on every sub-pi spawn.** Every generated agent that
-   spawns a child pi process MUST load
+2. **cwd-guard on every write-capable sub-pi spawn.** Every
+   generated agent that spawns a child pi process with a write-capable
+   tool in its allowlist MUST load
    `pi-sandbox/.pi/components/cwd-guard.ts` via `-e <abs path>` and
-   pin `PI_SANDBOX_ROOT` in the child's env. No exceptions; this is
-   the safety rail that keeps a child from writing outside its run
-   cwd.
+   pin `PI_SANDBOX_ROOT` in the child's env. This is the safety
+   rail that keeps a child from writing outside its run cwd. The
+   sole exception is the recon pattern, whose child has a read-only
+   allowlist plus `emit_summary` (no filesystem contact) — no
+   write channel, nothing to sandbox.
 3. **If no pattern matches, STOP.** Emit the GAP template from
    `procedure.md`. Do not improvise a new pattern in place.
 4. **Write to `.pi/extensions/<n>.ts`**, not to the cwd root. Pi
@@ -43,12 +46,13 @@ into child pi processes via `pi -e <abs path>`.
 
 | Part | Role | When to use |
 | --- | --- | --- |
-| `cwd-guard.ts` | Sandbox for child writes | **REQUIRED on every sub-pi spawn.** Registers `sandbox_write` + `sandbox_edit`; both reject paths outside `$PI_SANDBOX_ROOT`. Replaces built-in `write` / `edit`. |
+| `cwd-guard.ts` | Sandbox for child writes | **REQUIRED on every write-capable sub-pi spawn.** Registers `sandbox_write` + `sandbox_edit`; both reject paths outside `$PI_SANDBOX_ROOT`. Replaces built-in `write` / `edit`. Recon children skip it — they have no write channel at all. |
 | `stage-write.ts` | Stub drafter channel | The child should draft files the *parent previews and approves* before anything hits disk. Child calls `stage_write({path, content})`; parent harvests from NDJSON `tool_execution_start` events and `fs.writeFileSync`s only on user approval. |
+| `emit-summary.ts` | Stub structured-output channel | The child should return one or more *named summaries* instead of free-form assistant text. Child calls `emit_summary({title, body})`; parent harvests from NDJSON `tool_execution_start` events, caps byte-length per body, and persists / forwards the result. The recon pattern's primary output channel. |
 | `review.ts` | Stub reviewer verdict | An orchestrator LLM renders `approve`/`revise` verdicts on staged drafts. Parent harvests the verdicts and loops (dispatch → review → revise) up to a bounded iteration count. |
 
 Per-part detail: `parts/cwd-guard.md`, `parts/stage-write.md`,
-`parts/review.md`.
+`parts/emit-summary.md`, `parts/review.md`.
 
 `pi-sandbox/.pi/components/run-deferred-writer.ts` also ships in the
 library, but it is the delegated-writer pattern's dispatch stub
@@ -62,7 +66,7 @@ TypeScript skeleton with TODO-marked insertion points.
 
 | Pattern | Problem shape |
 | --- | --- |
-| `patterns/recon.md` | **Read-only survey.** Child walks a directory / codebase and emits a bounded text summary. No side effects. |
+| `patterns/recon.md` | **Read-only survey.** Child walks a directory / codebase and emits one or more structured summaries via `emit_summary`. No side effects. |
 | `patterns/drafter-with-approval.md` | **Single drafter + user gate.** Child stages writes in parent memory via `stage_write`; parent previews via `ctx.ui.confirm` and promotes approved drafts. Canonical: `deferred-writer.ts`. |
 | `patterns/confined-drafter.md` | **Single drafter, no approval gate.** Child writes freely but only inside a scoped cwd via `cwd-guard.ts`. Use when a human-confirm loop would hurt more than it helps (batch / scripted runs, agent-maker). |
 | `patterns/orchestrator.md` | **Delegator over drafters + LLM review.** One RPC delegator LLM dispatches drafters (via `run_deferred_writer` stub) and reviews drafts (via `review.ts`); parent harvests both stubs from NDJSON. Canonical: `delegated-writer.ts`. |
@@ -73,8 +77,9 @@ Follow `procedure.md` exactly:
 
 1. **Classify** the user's prompt against the pattern rows above.
 2. **Pick parts** — the pattern's parts list is authoritative.
-3. **Verify cwd-guard** is first in the parts list (except for
-   recon, where the child has no write tool at all).
+3. **Verify cwd-guard** is first in the parts list for every
+   write-capable child (recon's child is read-only + `emit_summary`,
+   so it loads `emit-summary.ts` in cwd-guard's place).
 4. **Emit glue** from the pattern's skeleton, filling TODO slots.
 5. **If step 1 is not a confident match, STOP and emit the GAP
    message** exactly as given in `procedure.md`.
@@ -103,8 +108,11 @@ Load the `pi-agent-builder` skill instead when:
 - **Inventing a new part in a user session.** The library is
   closed; if a new child-tool shape is needed, that's a GAP, not
   an opportunity to improvise.
-- **Skipping cwd-guard "just this once".** Non-negotiable on every
-  spawn. An agent without it is unsafe no matter how narrow the
+- **Skipping cwd-guard on a write-capable child.** Non-negotiable
+  on every write-capable spawn; the one exception is the recon
+  child (read-only + `emit_summary`, no filesystem contact). An
+  agent that skips cwd-guard while handing the child `sandbox_write`
+  / `write` / `edit` / `bash` is unsafe no matter how narrow the
   task looks.
 - **Paraphrasing a pattern's skeleton.** Use the template as-is.
   Tweaking boilerplate re-introduces the failure modes the patterns

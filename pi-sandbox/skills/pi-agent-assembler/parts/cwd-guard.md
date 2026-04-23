@@ -17,8 +17,10 @@ skill. The child's `--tools` allowlist should include
 `edit`, so the only write path out of the child is validated.
 
 Exception: `recon` pattern. Recon children have no write channel at
-all — the allowlist is read-only (`ls,read,grep,glob`), so cwd-guard
-adds nothing. Every OTHER pattern loads it.
+all — the allowlist is read-only plus `emit_summary` (the stub has
+no filesystem contact), so cwd-guard adds nothing. Recon loads
+`emit-summary.ts` instead; see `parts/emit-summary.md`. Every
+OTHER pattern loads cwd-guard.
 
 ## Load mechanism
 

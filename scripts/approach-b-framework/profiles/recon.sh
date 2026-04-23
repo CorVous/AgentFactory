@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# profiles/recon.sh — read-only recon pattern (directory survey → bounded
-# summary, no side effects). The read-only counterpart of writer.sh.
+# profiles/recon.sh — read-only recon pattern (directory survey →
+# structured summaries via emit_summary, no side effects). The read-only
+# counterpart of writer.sh.
 #
 # Key shape differences from writer:
 #   - One file (extension only); no child-tool, nothing to stage.
-#   - --tools allowlist is read-only (ls + grep + glob + read); stage_write
-#     / write / edit / bash are all FORBIDDEN.
-#   - Summary is harvested from the child's message_end events (not
-#     tool_execution_start), because read-only children produce text, not
-#     staged tool calls.
+#   - --tools allowlist is read-only (ls + grep + glob + read) PLUS
+#     `emit_summary`; stage_write / write / edit / bash are all
+#     FORBIDDEN.
+#   - Summary is harvested from tool_execution_start events whose
+#     toolName === "emit_summary" (args.title / args.body). The
+#     child does NOT produce its summary as free-form assistant
+#     text — the parent ignores message_end for content purposes.
+#     This is a P0 contract: a correct recon loads emit-summary.ts
+#     via -e and harvests the structured calls.
 #   - Absence anchors: no ctx.ui.confirm (no gate to open — there is no
 #     side effect), no fs.writeFileSync outside .pi/scratch/ (recon does
 #     not promote).
@@ -62,51 +67,67 @@ profile_grade_tools_allowlist() {
   local allow
   allow=$(extract_tools_allowlist)
   if [[ -z "$allow" ]]; then
-    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read), no writers" fail "no --tools flag found"
+    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read) + emit_summary, no writers" fail "no --tools flag found"
     return
   fi
-  # At least one read-only verb MUST be present. `ls` alone is valid for
-  # the narrowest case, but a useful recon will have read too. We accept
-  # any of the four — the reading-short-prompts.md table lists all four
-  # as canonical for "read-only / survey / recon / explore".
-  local has_read_verb=0 forbidden=""
+  # At least one read-only verb MUST be present plus `emit_summary` (the
+  # structured-output channel). We accept any of the four read verbs —
+  # reading-short-prompts.md lists all four as canonical for "read-only
+  # / survey / recon / explore".
+  local has_read_verb=0 has_emit_summary=0 forbidden=""
   local v
   for v in ls read grep glob; do
     if [[ ",$allow," == *",$v,"* ]]; then has_read_verb=1; fi
   done
+  if [[ ",$allow," == *",emit_summary,"* ]]; then has_emit_summary=1; fi
   for v in stage_write write edit bash; do
     if [[ ",$allow," == *",$v,"* ]]; then forbidden="$forbidden $v"; fi
   done
   if [[ $has_read_verb -eq 0 ]]; then
-    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read), no writers" fail "no read-only verb present: $allow"
+    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read) + emit_summary, no writers" fail "no read-only verb present: $allow"
+  elif [[ $has_emit_summary -eq 0 ]]; then
+    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read) + emit_summary, no writers" fail "emit_summary missing from $allow"
   elif [[ -n "$forbidden" ]]; then
-    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read), no writers" fail "forbidden verb(s):$forbidden in $allow"
+    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read) + emit_summary, no writers" fail "forbidden verb(s):$forbidden in $allow"
   else
-    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read), no writers" pass
+    mark_p0 "--tools allowlist is read-only (ls/grep/glob/read) + emit_summary, no writers" pass
   fi
 }
 
 profile_grade_harvest() {
   say "## Harvest + validate"
-  # Recon reads the CHILD's final answer, which arrives as message_end
-  # (assistant role) — not as a tool call. message_update is acceptable
-  # too for streaming-collection implementations.
-  if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any_ere 'message_end|message_update' "${EXT_FILES[@]}"; then
-    mark_p0 "harvest source = message_end / message_update event" pass
+  # Recon loads emit-summary.ts via `-e` on the spawn args so the child
+  # can call the emit_summary stub. The path should end in
+  # components/emit-summary.ts (resolved relative to the parent
+  # extension's own file), passed as the value of a `-e` argv entry.
+  if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any_ere '(components/emit-summary\.ts|emit-summary\.ts)' "${EXT_FILES[@]}"; then
+    mark_p0 "emit-summary.ts loaded via -e" pass
   else
-    mark_p0 "harvest source = message_end / message_update event" fail
+    mark_p0 "emit-summary.ts loaded via -e" fail "emit-summary.ts path not referenced in extension"
   fi
 
-  # Negative: recon MUST NOT handle tool_execution_start AND read args
-  # off it — that's the writer harvest pattern. Accept any of the
+  # Recon harvests structured summaries from tool_execution_start events
+  # whose toolName === "emit_summary", reading {title, body} from
+  # e.args. Accept quoted-string and property-access forms for the tool
+  # name match.
+  if [[ ${#EXT_FILES[@]} -gt 0 ]] \
+     && grep_any "tool_execution_start" "${EXT_FILES[@]}" \
+     && grep_any_ere '["'\''`]emit_summary["'\''`]' "${EXT_FILES[@]}"; then
+    mark_p0 "harvest source = emit_summary tool_execution_start" pass
+  else
+    mark_p0 "harvest source = emit_summary tool_execution_start" fail "parent does not match on toolName === \"emit_summary\""
+  fi
+
+  # Negative: recon MUST NOT harvest stage_write-shape args (path +
+  # content) — that's the drafter harvest pattern. Accept any of the
   # common shapes the writer uses: direct e.args.path/content,
   # destructured `= e.args` / `= event.args`, or the `inputObj = e.args`
-  # idiom that the reference implementation uses.
-  if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "tool_execution_start" "${EXT_FILES[@]}" \
-     && grep_any_ere '(e|event)\.args\.(path|content)|args\.(path|content)|= *(e|event)\.args|= *inputObj|inputObj\.(path|content)' "${EXT_FILES[@]}"; then
-    mark_p0 "no writer-shape harvest (tool_execution_start + args)" fail "found writer-shape harvest in a recon agent"
+  # idiom. emit_summary args are title/body; this regex intentionally
+  # does not match those.
+  if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any_ere '(e|event)\.args\.(path|content)|args\.(path|content)|inputObj\.(path|content)' "${EXT_FILES[@]}"; then
+    mark_p0 "no stage_write-shape harvest (path/content args)" fail "found drafter-shape harvest in a recon agent"
   else
-    mark_p0 "no writer-shape harvest (tool_execution_start + args)" pass
+    mark_p0 "no stage_write-shape harvest (path/content args)" pass
   fi
 }
 
