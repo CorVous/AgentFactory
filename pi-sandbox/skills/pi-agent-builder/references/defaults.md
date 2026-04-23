@@ -55,6 +55,108 @@ absence caused a real failure in a real session.
 - Pass `--no-session` unless the child's session needs to feed back into
   parent state.
 
+### Persistent RPC sub-agents (single-spawn across phases)
+
+When one child LLM must run across multiple phases (dispatch → review
+→ revise) and *keep its conversation history*, don't respawn. Use
+`--mode rpc` instead of `--mode json -p`. Rails:
+
+- `--mode rpc` instead of `-p "<prompt>"`. The prompt arrives via
+  stdin as `{"type":"prompt","message":"…"}\n` per turn. Stdout is
+  the same NDJSON event stream as `--mode json`.
+- **stdin must stay open for the life of the session** (don't
+  `stdio: ["ignore", ...]` here — the child needs to read prompts).
+  `stdio: ["pipe", "pipe", "pipe"]`.
+- Line-buffer stdout yourself. Events arrive as `\n`-delimited JSON;
+  split on the last `\n` and keep the trailing partial line as a
+  buffer for the next chunk.
+- **RPC cannot re-scope `--tools` between phases.** Pass the *union*
+  of tools any phase will need (e.g. `--tools run_deferred_writer,review`)
+  and narrow per phase via the prompt that opens the phase ("In this
+  turn, call run_deferred_writer once per subtask, then reply DONE").
+  This is a genuine least-privilege rail — the union stays small and
+  excludes every built-in (`bash`/`read`/`grep`/`write`).
+- Still pass `--no-extensions --no-session --thinking off` and a
+  tier-appropriate `--provider openrouter --model "$LEAD_MODEL"`.
+- Still wrap the whole session in a hard timeout (SIGKILL ceiling),
+  still forward the parent's `AbortSignal`, still pin `cwd`.
+- Accumulate cost from `message_end` events (see *Cost tracking*
+  below). In RPC mode you sum across phases; one child, one running
+  total.
+
+Reference: `.pi/extensions/delegated-writer.ts`.
+
+### UI: dashboards and notifies
+
+Pi exposes two persistent-UI channels on `ctx.ui` alongside the
+ephemeral `notify`:
+
+- `ctx.ui.setWidget(key, lines | undefined)` — renders a multi-line
+  block above the editor. Each call with the same `key` replaces the
+  previous content. Pass `undefined` to clear.
+- `ctx.ui.setStatus(key, text | undefined)` — renders a single-line
+  status entry in the bottom status bar. Same key semantics.
+
+Both are fire-and-forget (no await, no return value). Both **may be
+absent** on clients other than the interactive TUI (notably the RPC
+client), so guard every call: `ctx.ui.setWidget?.(key, lines)` and
+wrap in `try { … } catch {}`. Always clear both in `finally`.
+
+Use `setWidget`/`setStatus` for **live progress** that must stay on
+screen (per-child phase, verdicts, accumulating cost). Use `notify`
+only for (a) terminal errors and (b) a single combined final success
+notify on completion — `showStatus` (the info-level `notify` renderer
+at `dist/modes/interactive/interactive-mode.js:2375`) *replaces* the
+previous status line in place when two info-level notifies fire
+back-to-back, so mid-run `notify` calls silently overwrite each
+other. Two ways to sidestep the collapse: combine into one multi-line
+notify, or interleave a non-info level between them.
+
+### Cost tracking (always on)
+
+This is a rail, not an option. Every extension that spawns one or
+more LLM children MUST track and surface cost:
+
+- Accumulate `message.usage.cost.total` from every `message_end`
+  event the child emits. Track per tier separately when you have
+  multiple (e.g. one delegator total + one aggregated drafter total)
+  so the breakdown is legible.
+- Surface a **running total in the status bar** while the command
+  runs (`ctx.ui.setStatus(DASHBOARD_KEY, \`cost: $\${total.toFixed(4)}\`)`).
+  Users watch it climb and kill runaway sessions early.
+- Include the total + per-tier breakdown in the **combined final
+  success notify** (alongside the list of promoted files).
+- On every bail-out path — timeout, max-revisions exceeded, hard
+  error, user abort — still emit a `Session cost (no promotion): $X`
+  notify before returning. Silent bail-outs hide what was spent.
+- A provider that omits the cost field must render as `$0.0000`,
+  never throw. Treat `message?.usage?.cost?.total ?? 0` as the
+  accumulator step.
+
+### Tool allowlist (always on)
+
+Every child LLM gets the minimum tool surface for its role; "just in
+case" is not a reason to add a tool.
+
+- One-shot children: pass `--tools <comma-list>` with exactly the
+  verbs the role needs. Examples: drafter → `stage_write,ls,read`;
+  reviewer → `review`; dispatcher → `run_deferred_writer`.
+- RPC children: see *Persistent RPC sub-agents* above — pass the
+  union of per-phase tools and enforce phase narrowing via the
+  prompt that opens each phase.
+- Built-in tools the role does **not** need (`bash`, `read`, `grep`,
+  `write`, `edit`, `glob`, `ls`, `task`) must not appear in the
+  spawn command. Default tool sets on coding-agent models cause
+  spontaneous `bash`/`read` calls that burn turns.
+- If the child needs a stub tool that shadows a built-in (a
+  `stage_write` standing in for `write`), load it via `-e <absolute
+  path>` *and* pass `--no-extensions` so the only way that tool name
+  resolves is to the stub.
+
+This rail pairs with the sandbox rails in *For every writer /
+mutator* below — a narrow allowlist is how you prove the child
+*can't* write outside the staged channel.
+
 ## For every slash command
 
 - **Emit a `ctx.ui.notify` at every phase boundary.** Commands have no

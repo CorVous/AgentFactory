@@ -56,7 +56,18 @@ parameters: Type.Object({
 })
 ```
 
-**Gotcha**: for string enums that need to work with Google/Gemini providers, use the `StringEnum` helper from pi (not `Type.String({ enum: [...] })`) — Google's API is strict about this.
+**Gotcha**: for string enums that need to work with Google/Gemini providers, use the `StringEnum` helper from pi (not `Type.String({ enum: [...] })`) — Google's API is strict about this. `StringEnum` is a **named export** from `@mariozechner/pi-ai`, *not* a method on `Type`. `Type.StringEnum(...)` throws at runtime — import and call it directly:
+
+```ts
+import { StringEnum } from "@mariozechner/pi-ai";
+import { Type } from "typebox";
+
+parameters: Type.Object({
+  verdict: StringEnum(["approve", "revise"] as const, {
+    description: "approve = file is good as-is; revise = send back with feedback",
+  }),
+}),
+```
 
 ### `name` and `label`
 
@@ -102,13 +113,13 @@ async execute(toolCallId, params, signal, onUpdate, ctx) {
 ```ts
 {
   content: Array<{ type: "text"; text: string } | { type: "image"; ... }>,
-  details?: Record<string, unknown>,  // structured data, not shown to LLM
+  details: Record<string, unknown>,    // REQUIRED — not optional. Pass {} if nothing to say.
   isError?: boolean,                   // surfaces as error in UI
   terminate?: boolean,                 // hint to stop after this tool batch (see below)
 }
 ```
 
-The LLM sees `content`. `details` is for your own bookkeeping and for custom renderers.
+The LLM sees `content`. `details` is for your own bookkeeping and for custom renderers — but it is **required** by `AgentToolResult<unknown>`, so a stub tool that has nothing structured to report must still `return { content: [...], details: {} }`. Omitting `details` fails TS compile.
 
 ### Early termination — `terminate: true`
 
