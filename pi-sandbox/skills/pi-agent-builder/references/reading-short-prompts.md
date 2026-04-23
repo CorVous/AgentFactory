@@ -31,6 +31,7 @@ a spot to write, and only after the user confirms it…"*), your job is to
 | "slash command" / "/<name>" / "user types" | `pi.registerCommand(name, { handler })` — not `registerTool` |
 | "the LLM should call" / "the agent decides to use" | `pi.registerTool(spec)` — not `registerCommand` |
 | "cancellable" / "user can abort" | Wire the `signal` from `execute` (or the command's own `AbortController`) through every `spawn`, `fetch`, and long-running await |
+| "delegates to X" / "orchestrates" / "decides how many" / "calls X N times" / "LLM picks the subtasks" / "reviewer approves or revises" | **Orchestrator-over-extension** pattern (`subagent-recipe.md` → *Orchestrator-over-extension*): one persistent RPC delegator LLM (`--mode rpc`) with stub tools the parent harvests (`run_deferred_writer`, `review`). **Least-privilege tool allowlist is always on** (`defaults.md` → *Tool allowlist*) — pass only the stub names, no built-ins. **Cost tracking is always on** (`defaults.md` → *Cost tracking*) — accumulate from `message_end`, surface running total in status bar, include breakdown in final notify, report on every bail-out. LLM is the approval gate — no `ctx.ui.confirm` on the success path; reviewer verdict drives a bounded revise-loop (≤3 iterations). Combined final notify with content previews instead of per-phase log spam. Reference `.pi/extensions/delegated-writer.ts` |
 
 If the prompt contains a phrase not in this table, fall back to the
 matching recipe file (tool / command / events / subagent) and still apply

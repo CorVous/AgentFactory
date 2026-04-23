@@ -89,17 +89,35 @@ When an extension delegates to a child `pi` process:
 
 See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
 
-### Worked example
+### Worked examples
 
-`pi-sandbox/.pi/extensions/deferred-writer.ts` (paired with its
-child-only tool at `pi-sandbox/.pi/child-tools/stage-write.ts`) is the
-live reference implementation — a `/deferred-writer <task>` slash
-command that spawns a drafter child whose only write channel is a stub
-`stage_write` tool. The stub's inputs are harvested from the parent's
-NDJSON event stream, buffered purely in the parent's memory, previewed
-via `ctx.ui.confirm`, and `fs.writeFileSync`'d into `pi-sandbox/` only
-on approval. Every always-on rail from
-`pi-sandbox/skills/pi-agent-builder/references/defaults.md` is applied.
+Two live reference implementations, each illustrating a distinct
+pattern. Docs under `pi-sandbox/skills/pi-agent-builder/references/`
+cite them by path; do not edit them without updating the references.
+
+- **Single-task drafter** — `pi-sandbox/.pi/extensions/deferred-writer.ts`
+  paired with `pi-sandbox/.pi/child-tools/stage-write.ts`. A
+  `/deferred-writer <task>` slash command spawns one drafter child
+  whose only write channel is a stub `stage_write` tool. Inputs are
+  harvested from the parent's NDJSON event stream, buffered in parent
+  memory, previewed via `ctx.ui.confirm`, and `fs.writeFileSync`'d
+  into `pi-sandbox/` only on approval.
+- **Orchestrator-over-extension** — `pi-sandbox/.pi/extensions/delegated-writer.ts`
+  paired with `pi-sandbox/.pi/child-tools/run-deferred-writer.ts` and
+  `pi-sandbox/.pi/child-tools/review.ts`. A `/delegated-writer <task>`
+  slash command spawns one *persistent RPC* delegator LLM with two
+  stub tools (`run_deferred_writer` dispatches a drafter; `review`
+  approves or revises a draft). The parent harvests both stub calls
+  from NDJSON, runs actual drafter children in parallel, feeds each
+  produced file back to the delegator for review, and iterates up to
+  3 revise rounds. No human confirm — the reviewer LLM is the gate.
+  A live dashboard (`ctx.ui.setWidget` + `ctx.ui.setStatus`) tracks
+  per-drafter phase + cost; a combined final notify reports promoted
+  files + session cost breakdown.
+
+Every always-on rail from
+`pi-sandbox/skills/pi-agent-builder/references/defaults.md` is applied
+in both.
 
 ## Scripted (non-interactive) pi invocations
 
@@ -126,6 +144,67 @@ npm run pi -- --mode json --no-tools \
   -p "$prompt" \
   | jq -c 'select(.type | IN("tool_execution_start","turn_end","agent_end"))'
 ```
+
+### RPC mode — persistent single-spawn children
+
+`--mode rpc` keeps one child pi alive across multiple prompts in the
+same session (same conversation history, same LLM memory, same
+accumulated cost). Protocol is line-delimited JSON on both channels:
+
+- Parent → child on stdin: `{"type":"prompt","message":"…"}\n` per
+  turn. More commands exist (`get_session_stats`, etc.); check
+  `node_modules/@mariozechner/pi-coding-agent/dist/modes/rpc/…` if you
+  need them.
+- Child → parent on stdout: the same NDJSON event stream as `--mode
+  json` (`turn_start`, `tool_execution_start`/`_end`, `message_update`,
+  `message_end`, `agent_end`, …). `message_end` events carry
+  `message.usage.cost.total: number` — accumulate across events for
+  the session total.
+
+Choose RPC over the one-shot `--mode json -p` pattern when:
+
+- The child needs to see its own previous output across "phases"
+  (dispatch → review → revise loop) without re-priming the context.
+- You want a single cost meter for the whole session instead of
+  summing across respawns.
+- The tool surface differs per phase but the *conversation* is one
+  continuous thread. RPC can't re-scope `--tools` mid-session, so
+  pass the union of tools the session will ever need and narrow
+  **by the prompt** that opens each phase.
+
+Reference implementation: `pi-sandbox/.pi/extensions/delegated-writer.ts`
+spawns one RPC delegator with `--tools run_deferred_writer,review` and
+drives it through dispatch → review → revise phases via three
+different prompts on the same stdin.
+
+## Gotchas we've hit (pi API)
+
+Four sharp edges we've paid for in this repo. Each one is enforced in
+`pi-agent-builder`'s references but surfaces here so humans reading
+`AGENTS.md` hit them before pi does:
+
+- **`StringEnum` is a named export, not a method on `Type`.** `Type.StringEnum(...)`
+  throws at runtime. Use `import { StringEnum } from "@mariozechner/pi-ai"`
+  and call it directly: `verdict: StringEnum(["approve","revise"] as const, { description: "…" })`.
+- **Tool `execute` return MUST include `details`.** Returning only
+  `{ content: [...] }` fails TS compile — `AgentToolResult<unknown>`
+  requires it. For stubs pass `details: {}`; for real tools echo the
+  structured output you'd want a custom renderer to see.
+- **`process.env.FOO` type narrowing doesn't survive closures.** After
+  `const FOO = process.env.FOO; if (!FOO) return;` the *outer* binding
+  is narrowed to `string`, but a nested function (a drafter helper, an
+  event handler) loses the narrowing and sees `string | undefined`.
+  Either reassign to a typed `const FOO_NARROWED: string = FOO;`, use
+  a non-null assertion at the inner use site, or pass `FOO` as a
+  parameter into the nested function.
+- **Pi's TUI collapses consecutive info-level notifies.** `showStatus`
+  (the info-level renderer at `dist/modes/interactive/interactive-mode.js:2375`)
+  *replaces* the previous status line in place when two info-level
+  `ctx.ui.notify` calls arrive back-to-back, so mid-run progress
+  messages silently overwrite one another. Workarounds: combine into
+  one multi-line notify, interleave a non-info notify (warning/error)
+  between them, or use `ctx.ui.setWidget` for persistent multi-line
+  state that should stay on screen.
 
 ## Repo layout
 

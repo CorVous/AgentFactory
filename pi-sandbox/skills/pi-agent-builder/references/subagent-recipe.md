@@ -19,6 +19,8 @@ Use a **plain tool** when:
 - The output is small and you want it directly in the parent's context.
 - You need the parent's full conversation context to do the work.
 
+**Rule of thumb**: delegate if the sub-task would take more than ~5 tool calls in the parent's context; otherwise do it inline. Sub-agents cost a full system prompt, a full tool-description block, and N turns of their own — the overhead only pays off when the parent-context savings are substantial.
+
 ## Two modes: `spawn` vs `fork`
 
 The child pi process can be started two ways, and the choice materially changes behavior.
@@ -27,6 +29,14 @@ The child pi process can be started two ways, and the choice materially changes 
 - **`fork`** — Child receives a snapshot of the parent's context plus the task. Higher cost, but the child knows what you've been working on. Best when the task depends on prior discussion or recent file reads.
 
 Default to `spawn`. Reach for `fork` only when the task genuinely depends on parent context.
+
+## Subprocess vs in-process
+
+The patterns below all shell out to a child `pi` **subprocess**. This is the default choice in this repo — it's what the canonical `.pi/extensions/deferred-writer.ts` and `.pi/extensions/delegated-writer.ts` do. Subprocess isolation gives you a clean process boundary: separate context, separate tool surface via `--tools`, separate PID for SIGKILL timeouts, and the NDJSON event stream lets the parent observe every tool call the child makes.
+
+Pi also exposes an **in-process** API — `createAgentSession` from `@mariozechner/pi-coding-agent`, which spins up a second `AgentSession` inside the same Node process. It's lower-overhead (no fork, no spawn, no JSON serialization) and lets you pass `customTools` the parent doesn't have. Trade-offs: no process-level kill lever, no `--tools` allowlist flag (you pass `activeTools: [...]` instead), and no native NDJSON stream to harvest from — you work with the returned `messages` array.
+
+Prefer subprocess in this repo unless you have a specific reason to stay in-process (performance-critical paths, sharing live JS state with the parent). The up-to-date in-process SDK reference is `packages/coding-agent/docs/sdk.md` in pi-mono — grep for `createAgentSession`, `DefaultResourceLoader`, and `AgentSessionRuntime` when you need the current signatures.
 
 ## Minimal sub-agent extension
 
@@ -146,6 +156,12 @@ const results = await Promise.all(tasks.map(runChild));
 
 Only parallelize tasks that are **genuinely independent** — no shared files being modified, no ordering constraint on the output.
 
+## Pipelined agents across turns
+
+For a pipeline that needs to cross a turn boundary — "Stage 1 produces output, Stage 2 refines it" — don't run both inside one tool call. Use `pi.sendUserMessage("Stage 2: …", { deliverAs: "followUp" })` at the end of Stage 1 so pi queues Stage 2 as a follow-up user turn. This keeps each stage's tool result visible in the parent transcript (vs. one giant tool result that hides the intermediate work) and lets the parent LLM condition on Stage 1's output before Stage 2 runs.
+
+Use the fan-out/fan-in parallel pattern (Promise.all over `spawn` calls) when stages are independent and can race. Use `deliverAs: "followUp"` only when Stage 2 genuinely needs Stage 1's output in the parent's visible transcript.
+
 ## Output handling
 
 Sub-agent outputs can be large. Strategies:
@@ -153,6 +169,96 @@ Sub-agent outputs can be large. Strategies:
 - **Truncate aggressively** in the tool result. The LLM doesn't need every word.
 - **Write the full output to disk** and return the path plus a summary. The LLM can `read` it if it needs detail.
 - **Stream progress** via `onUpdate` so the user sees activity.
+
+## Orchestrator-over-extension (stub-tool harvest, one level up)
+
+The stub-tool pattern (`stage_write` harvesting path+content from the
+drafter's event stream) generalizes one level higher: a **delegator**
+LLM whose only tool is a stub that the parent harvests and dispatches
+to the real pipeline. Use this when the *decision of what subtasks to
+run* is itself an LLM judgment — the parent doesn't know in advance
+whether to call the drafter 1 or 5 times.
+
+Shape:
+
+- Parent registers a slash command. Handler spawns **one** child pi
+  (RPC mode — see `defaults.md` → *Persistent RPC sub-agents*) as
+  the delegator.
+- Child is loaded with stub tools via `-e <abs path>` and
+  `--tools run_deferred_writer,review --no-extensions`. Neither tool
+  has a real implementation; their `execute` bodies are no-ops that
+  return `{ content: [...], details: {} }`.
+- Parent reads the child's stdout NDJSON. Every
+  `tool_execution_start` for `run_deferred_writer` carries
+  `e.args.task` — the parent dispatches a *real* drafter child
+  (the single-task `deferred-writer` pattern, or a direct spawn of
+  its guts) for that task, in parallel with any other dispatches
+  from the same turn.
+- After drafters finish, parent prompts the delegator again: "here
+  are the drafts; call `review` for each." Each `review` call's
+  `{file_path, verdict, feedback?}` is harvested the same way; on
+  `revise` the parent re-dispatches the drafter for that task with
+  the feedback appended, up to a bounded iteration count.
+- Final promotion: parent `fs.writeFileSync`s the approved drafts
+  into `process.cwd()`. No human confirm — the reviewer LLM is the
+  approval gate.
+
+Key properties this pattern preserves:
+
+- **Narrow tool surface at every layer.** Delegator has two stubs,
+  nothing else. Each drafter has only `stage_write,ls,read`. Nothing
+  anywhere can `bash` or `write` directly.
+- **Nothing touches disk until approval.** Drafts live in parent
+  memory (path + content harvested from NDJSON) until the reviewer
+  approves; revisions replace the in-memory entry without ever
+  writing a rejected draft.
+- **One cost meter, one session.** RPC keeps the delegator's
+  conversation continuous; cost accumulates from each `message_end`
+  across all phases.
+
+Reference: `.pi/extensions/delegated-writer.ts` (orchestrator) +
+`.pi/child-tools/run-deferred-writer.ts` (dispatch stub).
+
+## Reviewer with revise-loop
+
+The second stub in the orchestrator pattern is a reviewer. Shape:
+
+```ts
+pi.registerTool({
+  name: "review",
+  label: "Review",
+  description: "Decide whether a drafted file is good as-is or needs revision. …",
+  parameters: Type.Object({
+    file_path: Type.String({ description: "Relative path of the drafted file being reviewed." }),
+    verdict: StringEnum(["approve", "revise"] as const, {
+      description: "approve = promote this draft; revise = send it back to the drafter with feedback",
+    }),
+    feedback: Type.Optional(Type.String({
+      description: "REQUIRED when verdict='revise'. Concrete, actionable feedback for the drafter.",
+    })),
+  }),
+  async execute(_id, params) {
+    return { content: [{ type: "text", text: `Reviewed ${params.file_path}: ${params.verdict}` }], details: {} };
+  },
+});
+```
+
+Loop in the parent:
+
+1. Dispatch drafter with the task, harvest `{path, content}`.
+2. Feed `(path, content)` back to the delegator: "Call `review` for
+   this file."
+3. On `approve`: mark the draft promotable.
+4. On `revise`: re-dispatch the drafter with the original task +
+   `"Revision feedback: \${feedback}"` appended. Cap at 3 iterations
+   per subtask — past that, bail out with a `notify` and *still
+   surface the accumulated cost* (see `defaults.md` → *Cost
+   tracking*).
+5. No `ctx.ui.confirm` anywhere on the success path — the reviewer
+   LLM is the gate.
+
+Reference: `.pi/child-tools/review.ts` (correctly imports
+`StringEnum` from `@mariozechner/pi-ai` and returns `details: {}`).
 
 ## Top failure modes
 
