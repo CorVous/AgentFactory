@@ -145,10 +145,10 @@ profile_grade_polish() {
   # thought about size before notifying.
   if [[ ${#EXT_FILES[@]} -gt 0 ]] \
      && { grep_any_ere '\.slice\(0, *[0-9]+\)' "${EXT_FILES[@]}" \
-          || grep_any "Buffer.byteLength" "${EXT_FILES[@]}"; }; then
-    mark_p1 "summary bounded (.slice(0, N) or Buffer.byteLength)" pass
+          || grep_any_ere 'Buffer\.byteLength\(' "${EXT_FILES[@]}"; }; then
+    mark_p0 "summary bounded (.slice(0, N) or Buffer.byteLength)" pass
   else
-    mark_p1 "summary bounded (.slice(0, N) or Buffer.byteLength)" fail
+    mark_p0 "summary bounded (.slice(0, N) or Buffer.byteLength)" fail
   fi
 
   if blob_has_ere '[`"'\'']--thinking[`"'\''][^a-zA-Z]+[`"'\'']off[`"'\'']|--thinking off' && blob_has "--no-session"; then
