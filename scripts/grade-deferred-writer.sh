@@ -406,17 +406,26 @@ elif [[ ${#EXT_FILES[@]} -gt 0 && -n "$CMD_NAME" ]]; then
   EVT_COUNT=$(wc -l < "$LOG/load.ndjson" 2>/dev/null | awk '{print $1+0}')
   SAW_AGENT_START=$(grep -c '"type":"agent_start"' "$LOG/load.ndjson" 2>/dev/null; true)
   SAW_AGENT_START="${SAW_AGENT_START:-0}"
-  if [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -le 3 ]]; then
+  if [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -ge 1 && ${EVT_COUNT:-0} -le 3 ]]; then
     LOAD_STATUS="pass"
     say "- [x] command /$CMD_NAME registered (no LLM call)"
-  elif [[ $LOAD_EXIT -ne 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -le 3 ]]; then
-    # Command was registered and dispatched — pi short-circuited — but
-    # the handler exited nonzero (e.g. a 30s timeout because the handler
-    # did heavy work on empty args instead of notifying Usage and
-    # returning). Registration is fine; the handler has a bug.
+  elif [[ $LOAD_EXIT -ne 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -ge 1 && ${EVT_COUNT:-0} -le 3 ]]; then
+    # Command was registered and dispatched — pi emitted the session
+    # header and short-circuited the slash command — but the handler
+    # exited nonzero. Registration is fine; the handler has a bug.
     LOAD_STATUS="partial"
     LOAD_NOTE="command registered but handler didn't short-circuit on empty args (exit $LOAD_EXIT)"
     say "- [~] command /$CMD_NAME registered, but handler ran heavy work on empty args (exit $LOAD_EXIT)"
+  elif [[ ${EVT_COUNT:-0} -eq 0 ]]; then
+    # Zero events means pi never emitted the session header — the
+    # extension failed to load (parse error, unresolved import, top-
+    # level throw). That's not a registration issue; the extension
+    # code itself is broken.
+    LOAD_STATUS="fail"
+    STDERR_TAIL=$(tail -5 "$LOG/load.stderr" 2>/dev/null | tr -d '\n' | head -c 200)
+    LOAD_NOTE="extension failed to load: $STDERR_TAIL"
+    say "- [ ] extension failed to load — 0 events emitted"
+    [[ -n "$STDERR_TAIL" ]] && say "      stderr: $STDERR_TAIL"
   elif [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -ge 1 ]]; then
     LOAD_STATUS="fail"
     LOAD_NOTE="extension loaded but /$CMD_NAME was not registered (went to LLM)"
