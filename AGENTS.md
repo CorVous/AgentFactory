@@ -68,20 +68,47 @@ extensions that follow its recipes.
 
 ### Invoking the skill
 
+Preferred: `npm run agent-maker` / `npm run agent-maker:i`. Both wrap
+`scripts/approach-b-framework/agent-maker.sh`, which runs pi in a
+**per-run isolated cwd** under `pi-sandbox/.pi/scratch/runs/<label>/`
+with the pi-agent-builder skill loaded at an absolute path, a narrow
+`--tools read,sandbox_write,sandbox_edit,ls,grep` allowlist, and the
+`cwd-guard.ts` extension that rejects any write/edit outside the run
+cwd. The shared `pi-sandbox/.pi/{extensions,child-tools}/` is never
+touched, so concurrent invocations don't race.
+
+```sh
+# One-shot (task-driven, auto-graded):
+npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 --grade
+
+# Interactive (hands-on skill REPL):
+npm run agent-maker:i              # uses $TASK_MODEL
+npm run agent-maker:i -- -m google/gemini-3-flash-preview
+
+# Batch across $AGENT_BUILDER_TARGETS (one run per model, sequential):
+scripts/approach-b-framework/run-task.sh recon-agent -r my-label
+```
+
+Both npm scripts source `models.env` first, so `$TASK_MODEL` etc. are
+already in scope.
+
+Legacy ad-hoc path (no isolation, no tool scoping — avoid for batch work):
+
 ```sh
 set -a; source models.env; set +a
-# Pick any model from $AGENT_BUILDER_TARGETS, or fall back to $LEAD_MODEL.
 npm run pi -- --provider openrouter --model "$LEAD_MODEL" \
   --skill skills/pi-agent-builder \
   -p "Use the pi-agent-builder skill to <describe the agent>."
 ```
 
-Paths (`skills/pi-agent-builder`, `.pi/extensions/…`, `@prompt.md`) resolve
-from `pi-sandbox/` cwd, since `npm run pi` cds in.
+This runs from `pi-sandbox/` cwd so `skills/pi-agent-builder`,
+`.pi/extensions/…`, and `@prompt.md` paths resolve. Useful for
+exploratory sessions where you want to edit the shared sandbox
+directly.
 
 For prompts with lots of nested quotes, put the prompt in a file under
-`.pi/scratch/` and pass `@.pi/scratch/prompt.md` — cleaner than escaping
-inline `-p "..."`.
+`pi-sandbox/.pi/scratch/` and pass `@.pi/scratch/prompt.md` — cleaner
+than escaping inline `-p "..."`.
 
 ### Where agent code lives
 
@@ -265,17 +292,22 @@ generation), a separate class of issues surfaces:
   re-runs `set -a; source models.env; set +a`. To iterate on a subset
   of `AGENT_BUILDER_TARGETS`, either edit `models.env` directly or
   set the override *after* the source step inside your wrapper.
-- **Models write files anywhere they think "the project" lives.** A
-  single-model run that produces a correct extension can still land
-  it in `/home/user/AgentFactory/.pi/extensions/` (repo root),
+- **Models write files anywhere they think "the project" lives** (historical). A
+  single-model run that produced a "correct" extension could still
+  land it in `/home/user/AgentFactory/.pi/extensions/` (repo root),
   `/home/user/.pi/agent/extensions/` (global), or
   `pi-sandbox/<stray>.md` (sandbox root) — none of which is the
-  canonical `pi-sandbox/.pi/extensions/`. Multi-model harnesses need
-  to scan broadly (`find -newer`) to capture artifacts, and to scrub
-  all three locations between runs (`git clean -fdq pi-sandbox/` +
-  `rm -rf $REPO/.pi` + targeted deletes under `~/.pi/agent/`). A
-  narrow wipe that trusts models to use the intended path leaks state
-  between iterations.
+  canonical `pi-sandbox/.pi/extensions/`. Resolved for the
+  agent-maker path by `pi-sandbox/.pi/child-tools/cwd-guard.ts`,
+  a pi extension loaded via `-e` that registers `sandbox_write` /
+  `sandbox_edit` tools with path validation against
+  `$PI_SANDBOX_ROOT`, paired with a `--tools` allowlist that excludes
+  the built-in `write` / `edit`. Each run gets its own cwd under
+  `pi-sandbox/.pi/scratch/runs/<label>/` so escape attempts surface
+  as tool errors, not silent writes to shared state. The legacy
+  `npm run pi` path (direct skill invocation without agent-maker)
+  still has the wide tool surface — use it only for interactive
+  exploration, not batch runs.
 - **Claude Code's `Monitor` tool can't be cancelled programmatically
   in this environment** — the Monitor description mentions `TaskStop`
   but it isn't surfaced as an available tool, so monitors run until
