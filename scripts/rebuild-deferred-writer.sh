@@ -15,10 +15,12 @@
 set -euo pipefail
 
 ROUND_LABEL=""
-while getopts "r:" opt; do
+MODEL_OVERRIDE=""
+while getopts "r:m:" opt; do
   case "$opt" in
     r) ROUND_LABEL="$OPTARG" ;;
-    *) echo "Usage: $0 [-r round-label]" >&2; exit 2 ;;
+    m) MODEL_OVERRIDE="$OPTARG" ;;
+    *) echo "Usage: $0 [-r round-label] [-m model-id]" >&2; exit 2 ;;
   esac
 done
 
@@ -72,7 +74,11 @@ if [[ ! -x "$GRADER" ]]; then
   exit 1
 fi
 
-IFS=',' read -ra MODELS <<< "$AGENT_BUILDER_TARGETS"
+if [[ -n "$MODEL_OVERRIDE" ]]; then
+  MODELS=("$MODEL_OVERRIDE")
+else
+  IFS=',' read -ra MODELS <<< "$AGENT_BUILDER_TARGETS"
+fi
 
 SUMMARY="$ROUND_DIR/summary.md"
 printf "# Round %s\n\n" "$ROUND_LABEL" > "$SUMMARY"
@@ -83,7 +89,7 @@ printf "|---|---|---|---|---|---|\n" >> "$SUMMARY"
 for MODEL in "${MODELS[@]}"; do
   MODEL_SLUG="${MODEL//\//_}"
   LOG="$ROUND_DIR/$MODEL_SLUG"
-  mkdir -p "$LOG" "$LOG/artifacts/extensions" "$LOG/artifacts/child-tools"
+  mkdir -p "$LOG" "$LOG/artifacts/extensions" "$LOG/artifacts/child-tools" "$LOG/artifacts/stray"
 
   echo
   echo "================================================================"
@@ -91,14 +97,24 @@ for MODEL in "${MODELS[@]}"; do
   echo "    log=$LOG"
   echo "================================================================"
 
-  # Fresh slate. Models often write files OUTSIDE .pi/extensions and
-  # .pi/child-tools — docs, demos, scratch — which would leak into the
-  # next model's run. Normalize via git: drop all untracked files under
-  # pi-sandbox/ (respecting .gitignore so scratch/ survives), restore
-  # any modified tracked file, THEN re-wipe the two target dirs.
+  # Fresh slate across EVERY location a model might try to write to:
+  # - pi-sandbox/ (the intended project root) — clean + restore via git
+  # - /home/user/AgentFactory/.pi/ (repo root; models sometimes confuse
+  #   "project" = repo vs sandbox)
+  # - /home/user/.pi/agent/extensions/ + /home/user/.pi/child-tools/
+  #   (the global pi dirs) — but only the buffered-writer-shaped files
+  #   we know models produce, so we don't delete the user's own setup.
   git -C "$REPO" clean -fdq -- pi-sandbox/ || true
   git -C "$REPO" checkout -- pi-sandbox/ 2>/dev/null || true
+  rm -rf "$REPO/.pi" 2>/dev/null || true
+  find /home/user/.pi/agent/extensions /home/user/.pi/child-tools \
+    -maxdepth 2 -type f \
+    \( -iname '*buffered*' -o -iname '*deferred*' -o -iname '*stage*write*' \) \
+    -delete 2>/dev/null || true
   rm -rf "$EXT_DIR"/* "$CHILD_DIR"/* 2>/dev/null || true
+
+  # Marker used after pi exits to find every new .ts file written anywhere.
+  touch "$LOG/.run-start"
 
   # Invoke pi. Let pi's own tools produce files; we rely on pi's write tool
   # to actually place them under pi-sandbox/.pi/.
@@ -129,7 +145,7 @@ for MODEL in "${MODELS[@]}"; do
   set -e
   echo "pi exit code: $PI_EXIT" > "$LOG/pi-exit.txt"
 
-  # Snapshot whatever pi produced.
+  # Snapshot whatever pi produced at the *intended* paths.
   if [[ -d "$EXT_DIR" ]]; then
     cp -a "$EXT_DIR/." "$LOG/artifacts/extensions/" 2>/dev/null || true
   fi
@@ -137,17 +153,39 @@ for MODEL in "${MODELS[@]}"; do
     cp -a "$CHILD_DIR/." "$LOG/artifacts/child-tools/" 2>/dev/null || true
   fi
 
-  # Also capture anything pi wrote elsewhere under .pi/ (some models may
-  # invent their own layout). Limit to files that weren't in the backup.
-  (
-    cd "$SANDBOX"
-    find .pi -type f \
-      -not -path ".pi/scratch/*" \
-      -not -path ".pi/sessions/*" \
-      -not -path ".pi/extensions/*" \
-      -not -path ".pi/child-tools/*" \
-      -printf "%p\n" 2>/dev/null
-  ) > "$LOG/extra-files.txt" || true
+  # Also capture EVERY new .ts/.md/.sh file written anywhere plausible.
+  # Models often pick the wrong project root; we still want to grade the
+  # code they produced and log the layout mistake. `find -newer` picks up
+  # everything touched since the .run-start marker above, across:
+  # - the repo root (AgentFactory/)
+  # - the repo-root .pi/ (if the model treated repo root as project)
+  # - the global ~/.pi/ (if the model treated global as target)
+  {
+    find "$REPO" -newer "$LOG/.run-start" -type f \
+      \( -name '*.ts' -o -name '*.md' -o -name '*.sh' \) \
+      -not -path "*/.git/*" \
+      -not -path "*/node_modules/*" \
+      -not -path "*/scratch/*" \
+      2>/dev/null
+    find /home/user/.pi -newer "$LOG/.run-start" -type f \
+      \( -name '*.ts' -o -name '*.md' \) \
+      2>/dev/null
+  } > "$LOG/new-files.txt"
+  # Copy any *.ts new files that weren't already captured at the intended
+  # paths into artifacts/stray/, preserving absolute-ish paths so the
+  # layout mistake stays legible.
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    # Skip files already in the intended snapshot dirs.
+    case "$f" in
+      "$EXT_DIR"/*|"$CHILD_DIR"/*) continue ;;
+    esac
+    [[ "$f" == *.ts ]] || continue
+    REL="${f#/}"
+    DEST="$LOG/artifacts/stray/$REL"
+    mkdir -p "$(dirname "$DEST")"
+    cp -a "$f" "$DEST" 2>/dev/null || true
+  done < "$LOG/new-files.txt"
 
   # Grade it.
   set +e

@@ -25,12 +25,34 @@ fi
 
 EXT_FILES=()
 CHILD_FILES=()
+STRAY_FILES=()
 if [[ -d "$ART/extensions" ]]; then
   while IFS= read -r f; do EXT_FILES+=("$f"); done < <(find "$ART/extensions" -type f -name '*.ts' 2>/dev/null)
 fi
 if [[ -d "$ART/child-tools" ]]; then
   while IFS= read -r f; do CHILD_FILES+=("$f"); done < <(find "$ART/child-tools" -type f -name '*.ts' 2>/dev/null)
 fi
+if [[ -d "$ART/stray" ]]; then
+  while IFS= read -r f; do STRAY_FILES+=("$f"); done < <(find "$ART/stray" -type f -name '*.ts' 2>/dev/null)
+fi
+
+# Classify strays: any stray with registerCommand -> promote to EXT_FILES;
+# any with registerTool + stage_write -> promote to CHILD_FILES. This lets
+# us grade the content even when the model picked wrong paths. The
+# "layout" check below separately records the placement mistake.
+LAYOUT_OK=1
+LAYOUT_NOTE=""
+for f in "${STRAY_FILES[@]}"; do
+  if grep -q "registerCommand" "$f" 2>/dev/null; then
+    EXT_FILES+=("$f")
+    LAYOUT_OK=0
+    LAYOUT_NOTE="$LAYOUT_NOTE|extension found outside .pi/extensions: ${f#$ART/stray/}"
+  elif grep -q "registerTool" "$f" 2>/dev/null && grep -q "stage_write\|stage-write" "$f" 2>/dev/null; then
+    CHILD_FILES+=("$f")
+    LAYOUT_OK=0
+    LAYOUT_NOTE="$LAYOUT_NOTE|child-tool found outside .pi/child-tools: ${f#$ART/stray/}"
+  fi
+done
 
 ALL_FILES=("${EXT_FILES[@]}" "${CHILD_FILES[@]}")
 
@@ -52,10 +74,15 @@ say() { echo "$@"; }
 say "# Grade — $MODEL"
 say
 say "Artifacts:"
-say "- extensions/: ${#EXT_FILES[@]} file(s)"
+say "- extensions (+promoted strays): ${#EXT_FILES[@]} file(s)"
 for f in "${EXT_FILES[@]}"; do say "  - ${f#$ART/}"; done
-say "- child-tools/: ${#CHILD_FILES[@]} file(s)"
+say "- child-tools (+promoted strays): ${#CHILD_FILES[@]} file(s)"
 for f in "${CHILD_FILES[@]}"; do say "  - ${f#$ART/}"; done
+if [[ $LAYOUT_OK -eq 0 ]]; then
+  say "- layout issues:"
+  IFS='|' read -ra LAYOUT_MSGS <<< "${LAYOUT_NOTE#|}"
+  for m in "${LAYOUT_MSGS[@]}"; do say "  - $m"; done
+fi
 say
 
 P0_TOTAL=0 P0_PASS=0
@@ -107,6 +134,19 @@ elif [[ ${#CHILD_FILES[@]} -ge 1 ]]; then
   mark_p0 "Two files produced (extension + child-tool)" fail "extension missing"
 else
   mark_p0 "Two files produced (extension + child-tool)" fail "no .ts output at all"
+fi
+
+# Layout: are the files at the canonical paths (pi-sandbox/.pi/extensions
+# and .pi/child-tools), or did the model write them elsewhere?
+if [[ $LAYOUT_OK -eq 1 && (${#EXT_FILES[@]} -gt 0 || ${#CHILD_FILES[@]} -gt 0) ]]; then
+  mark_p0 "files placed at canonical .pi/extensions + .pi/child-tools paths" pass
+elif [[ ${#EXT_FILES[@]} -gt 0 || ${#CHILD_FILES[@]} -gt 0 ]]; then
+  mark_p0 "files placed at canonical .pi/extensions + .pi/child-tools paths" fail "files ended up in stray locations"
+else
+  mark_p0 "files placed at canonical .pi/extensions + .pi/child-tools paths" fail "no files produced"
+fi
+
+if [[ ${#EXT_FILES[@]} -eq 0 && ${#CHILD_FILES[@]} -eq 0 ]]; then
   # With no artifacts, everything else is a fail — emit compact summary and exit.
   cat > "$JSON" <<EOF
 {
