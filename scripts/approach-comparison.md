@@ -153,3 +153,103 @@ No changes to either track's code. Follow-up PR against Track B for
 the regression-preserving fix, then merge Track B to `main`. Track A's
 branch stays unmerged — no deletion PR needed, since
 `scripts/approach-a-monolithic/` was never on `main`.
+
+## Round 2 — Writer regression check (2026-04-23)
+
+Post-merge follow-up: the root plan's step 5 ("`run-task.sh deferred-writer`
+should produce the same grades as `scripts/grade-deferred-writer.sh`
+on the reference implementation") was deferred during round 1. This
+section closes that gap.
+
+### Fixture
+
+Hand-built under `pi-sandbox/.pi/scratch/regression/writer-ref/` from
+the committed reference files:
+
+- `artifacts/extensions/{deferred-writer,delegated-writer}.ts` —
+  copied from `pi-sandbox/.pi/extensions/`.
+- `artifacts/child-tools/{stage-write,review,run-deferred-writer}.ts`
+  — copied from `pi-sandbox/.pi/child-tools/`.
+
+### Run
+
+```sh
+SKIP_LOAD=1 SKIP_BEH=1 \
+  scripts/approach-b-framework/grade-task.sh deferred-writer \
+    pi-sandbox/.pi/scratch/regression/writer-ref ref-writer > b.md
+SKIP_LOAD=1 SKIP_BEH=1 \
+  scripts/grade-deferred-writer.sh \
+    pi-sandbox/.pi/scratch/regression/writer-ref ref-writer > a.md
+```
+
+Both exited 0. Load + behavioral skipped (env guards).
+
+### Diff by anchor label
+
+Track A emitted 22 anchor bullets (18 P0 + 4 P1); Track B emitted 23
+(19 P0 + 4 P1). Verdicts on shared anchors:
+
+| Anchor label (A's wording)                                            | A       | B       | Class      |
+|-----------------------------------------------------------------------|---------|---------|------------|
+| Two files produced (extension + child-tool)                           | PASS    | PASS    | IDENTICAL  |
+| files placed at canonical .pi/extensions + .pi/child-tools paths      | PASS    | PASS    | IDENTICAL  |
+| registerCommand in extension                                          | PASS    | PASS    | IDENTICAL  |
+| stage_write tool defined in child-tool file                           | PASS    | PASS    | IDENTICAL  |
+| registerTool returns {content, details}                               | PASS    | PASS    | IDENTICAL  |
+| --no-extensions on spawn                                              | PASS    | PASS    | IDENTICAL  |
+| --mode json on spawn                                                  | PASS    | PASS    | IDENTICAL  |
+| --tools allowlist is stage_write (+ls) only, no read/write/bash/etc   | **FAIL**| **FAIL**| IDENTICAL  |
+| --provider openrouter + --model from env                              | PASS    | PASS    | IDENTICAL  |
+| stdio: ["ignore", "pipe", "pipe"]                                     | PASS    | PASS    | IDENTICAL  |
+| sandboxRoot captured + cwd pinned on spawn                            | PASS    | PASS    | IDENTICAL  |
+| hard timeout + SIGKILL on child                                       | PASS    | PASS    | IDENTICAL  |
+| NDJSON parsed line-by-line *for tool_execution_start* (A) / *from child stdout* (B) | PASS | PASS | COSMETIC |
+| harvest from e.args.path/content (not e.toolCall.input)               | PASS    | PASS    | IDENTICAL  |
+| path validation (absolute / .. / exists)                              | PASS    | PASS    | IDENTICAL  |
+| sandbox-root escape check (startsWith)                                | PASS    | PASS    | IDENTICAL  |
+| ctx.ui.confirm*)* before disk write (A) / ctx.ui.confirm before disk write (B) | PASS | PASS | COSMETIC |
+| fs.writeFileSync + mkdirSync recursive on promote                     | PASS    | PASS    | IDENTICAL  |
+| notify truncation                                                     | PASS    | PASS    | IDENTICAL  |
+| sha256 post-write verify                                              | PASS    | PASS    | IDENTICAL  |
+| --thinking off + --no-session on drafter                              | PASS    | PASS    | IDENTICAL  |
+| notifies at phase boundaries (>=4 calls)                              | PASS    | PASS    | IDENTICAL  |
+| harvest source = tool_execution_start event                           | —       | PASS    | B-ONLY     |
+
+Shared-anchor verdicts: all match. `--tools allowlist` fails on both
+sides for the same underlying reason — the reference `deferred-writer.ts`
+registers `stage_write,ls,read` in its drafter allowlist, and both
+rubrics forbid `read`. That's a real observation about the reference
+code, not a grader bug.
+
+### Classification
+
+- **Zero SUBSTANTIVE rows** — no case where the two graders disagree on
+  the same anchor's pass/fail.
+- **Two COSMETIC-label differences** where Track B's wording is
+  strictly cleaner:
+  - A's `ctx.ui.confirm) before disk write` has a stray close-paren
+    left over from ad-hoc regex construction. B's `ctx.ui.confirm
+    before disk write` drops it.
+  - A's `NDJSON parsed line-by-line for tool_execution_start`
+    conflates the transport check (line-by-line parsing) with the
+    source check (which event type). B splits these into two bullets
+    so the same `lib/core-rails.sh` check can be reused by the recon
+    profile (which harvests from `message_end`, not
+    `tool_execution_start`). Same verdict on writer code, but the
+    factoring is re-usable.
+- **One B-ONLY anchor** (`harvest source = tool_execution_start
+  event`): the split mentioned above. It's strictly additive — A
+  tests the same property implicitly inside its combined NDJSON
+  bullet. No anchor was LOST by the decomposition.
+
+### Verdict
+
+**No regression.** Track B's decomposition preserves every signal
+Track A produces on the known-good writer case and strictly improves
+two labels. Step B (Gemini coverage) proceeds.
+
+### Files touched
+
+- This section of `scripts/approach-comparison.md`.
+- Scratch-only: `pi-sandbox/.pi/scratch/regression/{writer-ref/
+  artifacts/,a.md,b.md,writer-ref/grade.json}` (gitignored).
