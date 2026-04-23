@@ -103,6 +103,18 @@ Load the `pi-agent-builder` skill instead when:
 `packaging.md`, `production.md`, `skills-and-context.md`,
 `reading-short-prompts.md`) — use them for from-scratch authorship.
 
+## Naming conventions
+
+Part names encode intent. Pick the bucket first; name the tool
+second. If no bucket fits, raise it — the library's coherence is
+worth the pause.
+
+| Prefix / name | Semantics | Examples |
+| --- | --- | --- |
+| `stage_*` | Child proposes a side effect; parent holds the commit. The stub returns immediately; the parent decides later whether to persist. | `stage_write`. Future candidates: `stage_exec`, `stage_http_call`. |
+| `emit_*` | Structured-output harvest; no side effect deferred. The parent receives a named piece of structured text to display / persist / forward. | `emit_summary`. Future candidates: `emit_finding`, `emit_metric`. |
+| role name | Purpose-specific stub. Used when no prefix family fits, typically because the tool is single-use inside one pattern. | `review`, `run_deferred_writer`. Future candidate: `ask_user`. |
+
 ## Anti-patterns
 
 - **Inventing a new part in a user session.** The library is
