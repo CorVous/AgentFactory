@@ -409,6 +409,14 @@ elif [[ ${#EXT_FILES[@]} -gt 0 && -n "$CMD_NAME" ]]; then
   if [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -le 3 ]]; then
     LOAD_STATUS="pass"
     say "- [x] command /$CMD_NAME registered (no LLM call)"
+  elif [[ $LOAD_EXIT -ne 0 && $SAW_AGENT_START -eq 0 && ${EVT_COUNT:-0} -le 3 ]]; then
+    # Command was registered and dispatched — pi short-circuited — but
+    # the handler exited nonzero (e.g. a 30s timeout because the handler
+    # did heavy work on empty args instead of notifying Usage and
+    # returning). Registration is fine; the handler has a bug.
+    LOAD_STATUS="partial"
+    LOAD_NOTE="command registered but handler didn't short-circuit on empty args (exit $LOAD_EXIT)"
+    say "- [~] command /$CMD_NAME registered, but handler ran heavy work on empty args (exit $LOAD_EXIT)"
   elif [[ $LOAD_EXIT -eq 0 && $SAW_AGENT_START -ge 1 ]]; then
     LOAD_STATUS="fail"
     LOAD_NOTE="extension loaded but /$CMD_NAME was not registered (went to LLM)"
