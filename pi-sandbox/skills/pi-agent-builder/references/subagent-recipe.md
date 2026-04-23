@@ -170,6 +170,39 @@ Sub-agent outputs can be large. Strategies:
 - **Write the full output to disk** and return the path plus a summary. The LLM can `read` it if it needs detail.
 - **Stream progress** via `onUpdate` so the user sees activity.
 
+## Confining sub-agent writes (cwd-guard)
+
+Two reusable shadow-tool patterns exist in this repo; they solve
+different problems and are not interchangeable:
+
+| Child tool                                    | When to use                                                                 |
+|-----------------------------------------------|------------------------------------------------------------------------------|
+| `pi-sandbox/.pi/child-tools/stage-write.ts`   | The parent needs to **preview** every write before it touches disk. Tool stub stages in parent memory; no fs I/O happens until the parent promotes. Pair with `--tools stage_write,ls,read`. |
+| `pi-sandbox/.pi/child-tools/cwd-guard.ts`     | The child should be allowed to write freely but only inside a **scoped directory**. Registers `sandbox_write` and `sandbox_edit` that reject any path outside `$PI_SANDBOX_ROOT`. Pair with `--tools read,sandbox_write,sandbox_edit,ls,grep`. |
+
+Both ship as committed child-tools; prefer loading them over
+reimplementing the pattern. Loading cwd-guard into a sub-pi:
+
+```ts
+await spawn(ctx, {
+  args: [
+    "-e", "/abs/path/to/pi-sandbox/.pi/child-tools/cwd-guard.ts",
+    "--tools", "read,sandbox_write,sandbox_edit,ls,grep",
+    "--no-extensions",
+    "--mode", "json",
+    "-p", promptForChild,
+  ],
+  env: { PI_SANDBOX_ROOT: childCwd }, // absolute path the child is pinned to
+  cwd: childCwd,
+});
+```
+
+The child cannot escape `childCwd` even if its prompt asks it to —
+`sandbox_write` rejects absolute paths and `..` that resolve outside
+the root, and the built-in `write`/`edit` are not in the allowlist.
+Use this instead of rolling your own path-validation inside the child
+extension.
+
 ## Orchestrator-over-extension (stub-tool harvest, one level up)
 
 The stub-tool pattern (`stage_write` harvesting path+content from the

@@ -298,7 +298,7 @@ generation), a separate class of issues surfaces:
   `/home/user/.pi/agent/extensions/` (global), or
   `pi-sandbox/<stray>.md` (sandbox root) — none of which is the
   canonical `pi-sandbox/.pi/extensions/`. Resolved for the
-  agent-maker path by `scripts/approach-b-framework/cwd-guard.ts`,
+  agent-maker path by `pi-sandbox/.pi/child-tools/cwd-guard.ts`,
   a pi extension loaded via `-e` that registers `sandbox_write` /
   `sandbox_edit` tools with path validation against
   `$PI_SANDBOX_ROOT`, paired with a `--tools` allowlist that excludes
