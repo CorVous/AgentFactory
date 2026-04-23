@@ -41,10 +41,14 @@ In addition to the three tiers, `models.env` exposes
 `pi-agent-builder` skill is expected to work well on (the skill should
 produce a correct, safe pi extension from a short natural-language
 prompt on every one of them, not just one). Current targets: **Haiku
-4.5** (`anthropic/claude-haiku-4.5`), **Gemini 3 Flash Preview**
-(`google/gemini-3-flash-preview`), and **GLM 5.1** (`z-ai/glm-5.1`).
-When refining the skill, test against all three; when invoking pi,
-pick any one and pass it via `--model`.
+4.5** (`anthropic/claude-haiku-4.5`) and **Gemini 3 Flash Preview**
+(`google/gemini-3-flash-preview`). When refining the skill, test
+against both; when invoking pi, pick either and pass it via `--model`.
+**GLM 5.1** (`z-ai/glm-5.1`) was dropped as a target on 2026-04-23:
+too slow and expensive for iterative skill-harness runs at the current
+skill size. Revisit once the skill is distilled enough that a
+small-to-mid model produces a correct extension in a few turns rather
+than the dozens GLM needed.
 
 Source the file before launching pi so the tier vars are in scope:
 
