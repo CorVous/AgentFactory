@@ -81,7 +81,24 @@ relative to ${sandboxRoot}. Reply DONE when finished.`;
     const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
     child.on("error", (err) => { /* resolve with clean failure */ });
 
-    // … (harvest NDJSON, validate, preview with ctx.ui.confirm, fs.writeFileSync on approval)
+    // 7. The close-handler must be `async` because it awaits
+    //    ctx.ui.confirm and fs operations. Writing
+    //    `child.on("close", (code) => { const ok = await ... })`
+    //    is a ParseError at module load — pi never emits even the
+    //    session header, and the extension fails to register at all.
+    //    Any callback containing `await` must be declared async; the
+    //    `child.on("error", ...)` handler above stays sync because
+    //    it doesn't await anything.
+    child.on("close", async (code) => {
+      clearTimeout(timer);
+      // … parse NDJSON, validate staged entries, build preview …
+      const ok = await ctx.ui.confirm(`Promote N file(s)?`, preview);
+      if (!ok) {
+        ctx.ui.notify("Cancelled; nothing written.", "info");
+        return;
+      }
+      // … fs.mkdirSync + fs.writeFileSync + sha256 verify …
+    });
   },
 });
 ```
@@ -97,6 +114,16 @@ was omitted. Notes:
   drafter even when the user typed `/deferred-writer` with no task,
   spending the user's budget on a generic prompt they didn't
   author.
+- **Step 7 (async close-handler) matters because pi's extension
+  loader parses the whole file before registering anything.** A
+  `(code) => { const ok = await ctx.ui.confirm(...) }` callback
+  is a ParseError at load time, not a runtime error — pi emits zero
+  NDJSON events, the extension never registers, and the slash
+  command falls through to the LLM. *Every callback that contains
+  `await` must be declared `async`.* The `on("error", ...)` handler
+  stays sync because it doesn't await; the `on("close", ...)`
+  handler must be async because it awaits both `ctx.ui.confirm`
+  and the write/verify loop.
 - **`"openrouter"` is a string literal**, not `process.env.PI_PROVIDER
   || "openrouter"` — defaulting to an optional env var means a
   missing env silently resolves to the wrong provider.
