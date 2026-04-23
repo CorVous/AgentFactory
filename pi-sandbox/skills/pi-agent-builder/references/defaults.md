@@ -201,8 +201,9 @@ Every child LLM gets the minimum tool surface for its role; "just in
 case" is not a reason to add a tool.
 
 - One-shot children: pass `--tools <comma-list>` with exactly the
-  verbs the role needs. Examples: drafter → `stage_write,ls,read`;
-  reviewer → `review`; dispatcher → `run_deferred_writer`.
+  verbs the role needs. Examples: drafter → `stage_write,ls` (no
+  `read` — the drafter produces new files, it does not read existing
+  ones); reviewer → `review`; dispatcher → `run_deferred_writer`.
 - RPC children: see *Persistent RPC sub-agents* above — pass the
   union of per-phase tools and enforce phase narrowing via the
   prompt that opens each phase.

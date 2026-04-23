@@ -206,8 +206,8 @@ Shape:
 Key properties this pattern preserves:
 
 - **Narrow tool surface at every layer.** Delegator has two stubs,
-  nothing else. Each drafter has only `stage_write,ls,read`. Nothing
-  anywhere can `bash` or `write` directly.
+  nothing else. Each drafter has only `stage_write,ls`. Nothing
+  anywhere can `bash`, `read`, or `write` directly.
 - **Nothing touches disk until approval.** Drafts live in parent
   memory (path + content harvested from NDJSON) until the reviewer
   approves; revisions replace the in-memory entry without ever
