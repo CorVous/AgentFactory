@@ -8,7 +8,7 @@ name, the grader will miss it — that is a skill defect, not a grader bug.
 
 The reference implementation lives at
 `pi-sandbox/.pi/extensions/deferred-writer.ts` +
-`pi-sandbox/.pi/child-tools/stage-write.ts` (not present during grading; the
+`pi-sandbox/.pi/components/stage-write.ts` (not present during grading; the
 test wipes them).
 
 ## Structural (P0)

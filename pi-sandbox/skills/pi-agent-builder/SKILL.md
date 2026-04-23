@@ -44,12 +44,12 @@ export default function (pi: ExtensionAPI) {
 | Location | Behavior |
 |---|---|
 | `.pi/extensions/<n>.ts` (project-local) | **Default.** Auto-discovered when pi's cwd is this project; tracked in git so it ships with the repo |
-| `.pi/child-tools/<n>.ts` (project-local) | Child-only; loaded by a parent extension via `pi -e <abs path>`. Not auto-discovered, so safe for stubs that shadow built-ins (e.g. `stage_write` replacing `write`). |
+| `.pi/components/<n>.ts` (project-local) | Curated reusable child-only parts; loaded by a parent extension via `pi -e <abs path>`. Not auto-discovered, so safe for stubs that shadow built-ins (e.g. `stage_write` replacing `write`). |
 | `~/.pi/agent/extensions/<n>.ts` | Global, for user-installed extensions. **Not** where to put an extension you are generating *for a user* — their repo is not your HOME. |
 | `pi -e ./path.ts` | Quick test; **not** hot-reloadable |
 | Pi package (npm/git) | Installed via `pi install npm:@scope/name` |
 
-**When in doubt, write to `.pi/extensions/` and `.pi/child-tools/` under the project's sandbox directory** (i.e. relative to pi's current cwd, NOT `$HOME`). An extension that writes to `~/.pi/agent/extensions/` when generating code for a project leaks into the user's global config and is invisible inside their repo — the opposite of what "build me an extension for X project" means.
+**When in doubt, write to `.pi/extensions/` and `.pi/components/` under the project's sandbox directory** (i.e. relative to pi's current cwd, NOT `$HOME`). An extension that writes to `~/.pi/agent/extensions/` when generating code for a project leaks into the user's global config and is invisible inside their repo — the opposite of what "build me an extension for X project" means.
 
 ## The five things an extension can do
 

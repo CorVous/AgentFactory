@@ -56,7 +56,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
 SKILL="$REPO/pi-sandbox/skills/pi-agent-builder"
-GUARD="$REPO/pi-sandbox/.pi/child-tools/cwd-guard.ts"
+GUARD="$REPO/pi-sandbox/.pi/components/cwd-guard.ts"
 RUNS_ROOT="$SANDBOX/.pi/scratch/runs"
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then

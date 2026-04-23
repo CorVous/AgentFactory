@@ -74,7 +74,7 @@ Preferred: `npm run agent-maker` / `npm run agent-maker:i`. Both wrap
 with the pi-agent-builder skill loaded at an absolute path, a narrow
 `--tools read,sandbox_write,sandbox_edit,ls,grep` allowlist, and the
 `cwd-guard.ts` extension that rejects any write/edit outside the run
-cwd. The shared `pi-sandbox/.pi/{extensions,child-tools}/` is never
+cwd. The shared `pi-sandbox/.pi/{extensions,components}/` is never
 touched, so concurrent invocations don't race.
 
 ```sh
@@ -115,7 +115,7 @@ than escaping inline `-p "..."`.
 | Location (from `pi-sandbox/` cwd) | Behavior |
 | --- | --- |
 | `.pi/extensions/<name>.ts` | Project-local, auto-discovered by pi |
-| `.pi/child-tools/<name>.ts` | Child-only; loaded via `pi -e <abs path>` from a parent extension. NOT auto-discovered by the parent pi session, so safe to register tools that shadow built-ins (e.g. a stub `stage_write` in place of the real `write`). |
+| `.pi/components/<name>.ts` | Curated reusable child-only parts; loaded via `pi -e <abs path>` from a parent extension. NOT auto-discovered by the parent pi session, so safe to register tools that shadow built-ins (e.g. a stub `stage_write` in place of the real `write`). |
 | `~/.pi/agent/extensions/<name>.ts` | Global, hot-reloadable via `/reload` |
 | `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
 
@@ -142,15 +142,15 @@ pattern. Docs under `pi-sandbox/skills/pi-agent-builder/references/`
 cite them by path; do not edit them without updating the references.
 
 - **Single-task drafter** — `pi-sandbox/.pi/extensions/deferred-writer.ts`
-  paired with `pi-sandbox/.pi/child-tools/stage-write.ts`. A
+  paired with `pi-sandbox/.pi/components/stage-write.ts`. A
   `/deferred-writer <task>` slash command spawns one drafter child
   whose only write channel is a stub `stage_write` tool. Inputs are
   harvested from the parent's NDJSON event stream, buffered in parent
   memory, previewed via `ctx.ui.confirm`, and `fs.writeFileSync`'d
   into `pi-sandbox/` only on approval.
 - **Orchestrator-over-extension** — `pi-sandbox/.pi/extensions/delegated-writer.ts`
-  paired with `pi-sandbox/.pi/child-tools/run-deferred-writer.ts` and
-  `pi-sandbox/.pi/child-tools/review.ts`. A `/delegated-writer <task>`
+  paired with `pi-sandbox/.pi/components/run-deferred-writer.ts` and
+  `pi-sandbox/.pi/components/review.ts`. A `/delegated-writer <task>`
   slash command spawns one *persistent RPC* delegator LLM with two
   stub tools (`run_deferred_writer` dispatches a drafter; `review`
   approves or revises a draft). The parent harvests both stub calls
@@ -298,7 +298,7 @@ generation), a separate class of issues surfaces:
   `/home/user/.pi/agent/extensions/` (global), or
   `pi-sandbox/<stray>.md` (sandbox root) — none of which is the
   canonical `pi-sandbox/.pi/extensions/`. Resolved for the
-  agent-maker path by `pi-sandbox/.pi/child-tools/cwd-guard.ts`,
+  agent-maker path by `pi-sandbox/.pi/components/cwd-guard.ts`,
   a pi extension loaded via `-e` that registers `sandbox_write` /
   `sandbox_edit` tools with path validation against
   `$PI_SANDBOX_ROOT`, paired with a `--tools` allowlist that excludes
@@ -348,9 +348,13 @@ generation), a separate class of issues surfaces:
   auto-discovery stays scoped.
   - `pi-sandbox/.pi/extensions/` — project-local pi extensions
     (auto-discovered when cwd = `pi-sandbox/`, tracked in git).
-  - `pi-sandbox/.pi/child-tools/` — tools meant to be loaded into
+  - `pi-sandbox/.pi/components/` — curated reusable child-only parts
+    (cwd-guard, stage-write, review, run-deferred-writer) loaded into
     child pi processes via `pi -e <abs path>`, not auto-discovered by
-    the parent. See `stage-write.ts` for the pattern.
+    the parent. See `stage-write.ts` for the pattern. Distinct from
+    pi's per-cwd `.pi/child-tools/` convention (which a generated
+    extension writes to under its own cwd); this directory is the
+    repo's *curated* library.
   - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
     anything you don't want to check in. Gitignored.
   - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how

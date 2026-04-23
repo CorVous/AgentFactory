@@ -5,7 +5,7 @@
 // these names and excludes the built-in write/edit, so the outer
 // agent-maker model has no escape path out of the run cwd.
 //
-// Pattern mirrors pi-sandbox/.pi/child-tools/stage-write.ts.
+// Pattern mirrors pi-sandbox/.pi/components/stage-write.ts.
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";

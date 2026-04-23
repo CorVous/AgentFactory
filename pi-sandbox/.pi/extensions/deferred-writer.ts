@@ -16,7 +16,7 @@ const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "child-tools",
+  "components",
   "stage-write.ts",
 );
 

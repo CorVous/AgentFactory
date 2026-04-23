@@ -13,7 +13,7 @@
 # Outputs land under pi-sandbox/.pi/scratch/runs/<round>/<model-slug>/
 # with a sibling summary.md at pi-sandbox/.pi/scratch/runs/<round>/
 # summary.md. Each model runs in its own isolated cwd via agent-maker;
-# the shared pi-sandbox/.pi/{extensions,child-tools}/ are not touched,
+# the shared pi-sandbox/.pi/{extensions,components}/ are not touched,
 # so multiple run-task.sh invocations can coexist if given distinct
 # -r labels (or run in parallel via xargs -P across agent-maker).
 
