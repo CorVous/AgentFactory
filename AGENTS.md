@@ -287,6 +287,23 @@ generation), a separate class of issues surfaces:
   `timeout_ms` close to the expected runtime rather than the max
   (keeps stale-event latency low), and don't start a new monitor
   on top of a stale one for an unrelated test.
+- **Don't hand Claude Code a plan that says "copy a big file verbatim,
+  then edit sections" and expect it to emit the result in a single
+  `Write` call.** We hit this with `scripts/grade-deferred-writer.sh`
+  (571 lines / 23 KB of escape-heavy bash — nested quote regexes,
+  heredocs, `awk -F:` + `printf`-built JSON). Every attempt crashed
+  at the same point: the small rubric committed fine, then the
+  grader copy died mid-`Write`. The failure is some mix of
+  per-response output-token ceiling, JSON-escape corruption of the
+  tool-call argument under length, and plain attention divergence
+  on "copy exactly 400 lines, change nothing." The fix is to keep
+  the body off the model's output stream entirely: `cp <src> <dst>`
+  via Bash, then one `Edit` per swap-map row with
+  `old_string`/`new_string` scoped to <30 lines. `sed -i` is **not**
+  a substitute — regex-heavy bash fights `sed`'s own quote escaping
+  in a different but equally bad way. Treat "re-emit a >~300-line
+  transformed copy via a single `Write`" as the anti-pattern and
+  always decompose it into `cp` + targeted `Edit`s.
 
 ## Repo layout
 
