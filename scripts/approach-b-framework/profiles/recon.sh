@@ -139,7 +139,7 @@ profile_grade_side_effects() {
 }
 
 profile_grade_polish() {
-  say "## P1 polish"
+  say "## Output discipline"
   # Bounded-summary anchor: either a .slice(0, N) on the harvested
   # content OR a Buffer.byteLength check. Either proves the model
   # thought about size before notifying.
@@ -151,6 +151,7 @@ profile_grade_polish() {
     mark_p0 "summary bounded (.slice(0, N) or Buffer.byteLength)" fail
   fi
 
+  say "## P1 polish"
   if blob_has_ere '[`"'\'']--thinking[`"'\''][^a-zA-Z]+[`"'\'']off[`"'\'']|--thinking off' && blob_has "--no-session"; then
     mark_p1 "--thinking off + --no-session on recon child" pass
   else
