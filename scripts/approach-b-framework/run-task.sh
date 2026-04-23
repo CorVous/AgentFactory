@@ -163,7 +163,7 @@ for MODEL in "${MODELS[@]}"; do
       2>/dev/null
     find /home/user/.pi -newer "$LOG/.run-start" -type f \
       \( -name '*.ts' -o -name '*.md' \) \
-      2>/dev/null
+      2>/dev/null || true
   } > "$LOG/new-files.txt"
 
   while IFS= read -r f; do
