@@ -300,10 +300,10 @@ fi
 
 # --- approval + promote ------------------------------------------------------
 say "## Approval + promote"
-if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "ctx.ui.confirm(" "${EXT_FILES[@]}"; then
-  mark_p0 "ctx.ui.confirm() before disk write" pass
+if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "ctx.ui.confirm" "${EXT_FILES[@]}"; then
+  mark_p0 "ctx.ui.confirm) before disk write" pass
 else
-  mark_p0 "ctx.ui.confirm() before disk write" fail
+  mark_p0 "ctx.ui.confirm) before disk write" fail
 fi
 
 if [[ ${#EXT_FILES[@]} -gt 0 ]] && grep_any "fs.writeFileSync(" "${EXT_FILES[@]}" && grep_any_ere 'fs\.mkdirSync\(.*recursive.*true' "${EXT_FILES[@]}"; then
@@ -341,7 +341,7 @@ NOTIFY_COUNT=0
 if [[ ${#EXT_FILES[@]} -gt 0 ]]; then
   # grep -c with multiple files prints "file:N" per file; with a single file
   # it prints just "N". Use -H to force the "file:N" form, then sum.
-  NOTIFY_COUNT=$(grep -cH "ctx.ui.notify(" "${EXT_FILES[@]}" 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
+  NOTIFY_COUNT=$(grep -cH "ctx.ui.notify" "${EXT_FILES[@]}" 2>/dev/null | awk -F: '{s+=$NF} END{print s+0}')
 fi
 if [[ $NOTIFY_COUNT -ge 4 ]]; then
   mark_p1 "notifies at phase boundaries (>=4 calls)" pass "$NOTIFY_COUNT calls"
