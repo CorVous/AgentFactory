@@ -7,6 +7,16 @@ description: Build Pi coding agent extensions and sub-agents in TypeScript. Use 
 
 This skill teaches you to build high-quality extensions and sub-agents for the **Pi coding agent** (`@mariozechner/pi-coding-agent`). Pi is deliberately minimal — it ships a small tool set and defers sub-agents, plan mode, permission gates, browser automation, and similar features to extensions. Your job is to build those extensions well.
 
+> **Before authoring from scratch: check `pi-agent-assembler`.**
+> If the user's request fits one of its documented patterns (recon,
+> drafter-with-approval, confined-drafter, orchestrator), prefer
+> that skill — it composes already-tested parts and is faster and
+> safer for common shapes. Use THIS skill for from-scratch
+> authorship when the assembler flagged a gap, or for shapes the
+> assembler doesn't cover (custom UI widgets, compaction
+> strategies, event-only extensions, context injection, session
+> persistence, pi packages).
+
 The cardinal rule: **when in doubt, read Pi's own docs and source.** Pi is self-documenting — `~/.nvm/.../pi-coding-agent/README.md`, `docs/extensions.md`, `docs/compaction.md`, and `examples/extensions/` are the ground truth. If an API detail isn't in this skill, grep the installed package before guessing.
 
 ## When to use this skill
