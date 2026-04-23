@@ -276,6 +276,17 @@ generation), a separate class of issues surfaces:
   `rm -rf $REPO/.pi` + targeted deletes under `~/.pi/agent/`). A
   narrow wipe that trusts models to use the intended path leaks state
   between iterations.
+- **Claude Code's `Monitor` tool can't be cancelled programmatically
+  in this environment** — the Monitor description mentions `TaskStop`
+  but it isn't surfaced as an available tool, so monitors run until
+  their `timeout_ms` or their script exits. When the background job
+  they're watching finishes via a separate completion notification,
+  the monitor keeps running until its own timeout fires and then
+  emits a stale `[Monitor timed out]` event. These trailing events
+  are cosmetic — ignore them. Mitigations: arm the monitor with a
+  `timeout_ms` close to the expected runtime rather than the max
+  (keeps stale-event latency low), and don't start a new monitor
+  on top of a stale one for an unrelated test.
 
 ## Repo layout
 
