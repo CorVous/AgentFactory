@@ -62,9 +62,25 @@ gitignored `.env` instead.
 
 ## Creating pi agents
 
-Pi ships no sub-agent feature by default. Use pi itself with the bundled
-`pi-agent-builder` skill — pi reads the skill on demand and generates
-extensions that follow its recipes.
+Pi ships no sub-agent feature by default. Use pi itself with one of
+two bundled skills; they split on "compose vs author":
+
+- **`pi-agent-assembler`** — composes already-tested parts from
+  `pi-sandbox/.pi/components/` (cwd-guard, stage-write, review)
+  into agents matching one of four patterns: `recon`,
+  `drafter-with-approval`, `confined-drafter`, `orchestrator`. If
+  the user's request maps to a pattern, this is the faster,
+  safer path. If no pattern fits, the skill emits a GAP message
+  and stops — that's the signal to fall back to the builder.
+- **`pi-agent-builder`** — from-scratch authorship. Use when the
+  assembler flagged a gap, or for shapes the assembler doesn't
+  cover (custom UI widgets, compaction strategies, event-only
+  extensions, context injection, session persistence, pi
+  packages).
+
+Pick per-run via `-s <skill-name>` on `agent-maker.sh`. Default is
+`pi-agent-builder` for now — shift to assembler-first once it's
+settled.
 
 ### Invoking the skill
 
@@ -80,6 +96,11 @@ touched, so concurrent invocations don't race.
 ```sh
 # One-shot (task-driven, auto-graded):
 npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 --grade
+
+# Same, via the assembler skill (preferred when the task matches
+# a documented pattern — recon, drafter-with-approval, etc.):
+npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 \
+  -s pi-agent-assembler --grade
 
 # Interactive (hands-on skill REPL):
 npm run agent-maker:i              # uses $TASK_MODEL
