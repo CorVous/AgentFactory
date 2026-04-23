@@ -214,10 +214,22 @@ zero artifacts on disk.
   its own file *outside* the auto-discovered extensions path (e.g.
   `.pi/child-tools/stage-write.ts`). Its `execute` body is a no-op that
   just returns `{ content: [{ type: "text", text: "Drafted …" }], details: {} }`.
-- Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls,read`.
-  The child can read the real project (via `ls`/`read` on absolute paths
-  under `sandboxRoot`) but has no `write` tool — `stage_write` is its
-  only channel for producing files.
+  **The file must use the same factory shape as an extension** —
+  `export default function (pi: ExtensionAPI) { pi.registerTool({ ... }); }` —
+  NOT a bare `const stage_write: Tool = { … }; export default stage_write;`.
+  Pi's `-e <path>` loader expects a default-exported function; a
+  default-exported object silently registers nothing and the child LLM
+  then has no way to call the stub. This is a subtle failure mode:
+  the parent spawns cleanly, the child runs, but no `tool_execution_start`
+  for `stage_write` ever fires and the parent receives zero staged writes.
+- Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls`.
+  The child can walk the sandbox via `ls` on absolute paths under
+  `sandboxRoot` to pick destinations, but has no `write` tool — `stage_write`
+  is its only channel for producing files. **Do NOT add `read`** to the
+  allowlist: the drafter is not meant to be reading existing file contents,
+  and every built-in it gets weakens the "stage_write is the only write
+  channel" guarantee. If the drafter genuinely needs prior-file context
+  to do its job, surface it in the prompt instead — don't hand it `read`.
 - In `--mode json` the child emits `{"type":"tool_execution_start",
   "toolName":"stage_write", "args": {"path": "...", "content": "..."}}`
   for every call. The parent harvests `e.args.path` and `e.args.content`
