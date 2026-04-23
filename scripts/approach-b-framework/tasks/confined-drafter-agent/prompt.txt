@@ -1,0 +1,1 @@
+Write me an agent that takes a task description and creates a new TypeScript file implementing it. The agent should write the file directly into a sandboxed directory — no approval gate needed, it's for scripted batch runs.
