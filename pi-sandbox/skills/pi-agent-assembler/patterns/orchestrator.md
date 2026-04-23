@@ -8,7 +8,11 @@ for dispatch, `review` for verdicts); the parent harvests both from
 NDJSON and drives the real pipeline.
 
 This is the most complex pattern here. Prefer a simpler pattern
-unless the prompt explicitly asks for orchestration.
+unless the prompt explicitly asks for orchestration. In particular,
+if the user's real shape is "one survey + one draft" (look at what's
+there, then write the missing piece), reach for `scout-then-draft`
+first — orchestrator's delegator LLM and revise loop are overkill
+for that case.
 
 ## Short-prompt signals that match
 

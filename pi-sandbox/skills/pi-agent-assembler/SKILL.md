@@ -1,6 +1,6 @@
 ---
 name: pi-agent-assembler
-description: Composes documented, pre-tested parts from a committed library into Pi agents. Use this skill whenever the user wants to create a pi-coding-agent extension, sub-agent, slash command, or lifecycle hook and the request can be covered by one of the known patterns (recon / drafter-with-approval / confined-drafter / orchestrator). Trigger on phrases like "pi extension", "pi agent", "pi sub-agent", "registerTool", "ExtensionAPI", ".pi/extensions/", ".pi/components/", "recon", "drafter", "stage write", "emit summary", "orchestrator", or any ask to extend pi with behavior that fits a known shape. This skill does NOT author from scratch — if no pattern matches, it STOPS and emits a GAP message so the user can fall back to `pi-agent-builder`.
+description: Composes documented, pre-tested parts from a committed library into Pi agents. Use this skill whenever the user wants to create a pi-coding-agent extension, sub-agent, slash command, or lifecycle hook and the request can be covered by one of the known patterns (recon / drafter-with-approval / confined-drafter / scout-then-draft / orchestrator). Trigger on phrases like "pi extension", "pi agent", "pi sub-agent", "registerTool", "ExtensionAPI", ".pi/extensions/", ".pi/components/", "recon", "drafter", "stage write", "emit summary", "scout", "orchestrator", or any ask to extend pi with behavior that fits a known shape. This skill does NOT author from scratch — if no pattern matches, it STOPS and emits a GAP message so the user can fall back to `pi-agent-builder`.
 ---
 
 # Pi Agent Assembler
@@ -69,6 +69,7 @@ TypeScript skeleton with TODO-marked insertion points.
 | `patterns/recon.md` | **Read-only survey.** Child walks a directory / codebase and emits one or more structured summaries via `emit_summary`. No side effects. |
 | `patterns/drafter-with-approval.md` | **Single drafter + user gate.** Child stages writes in parent memory via `stage_write`; parent previews via `ctx.ui.confirm` and promotes approved drafts. Canonical: `deferred-writer.ts`. |
 | `patterns/confined-drafter.md` | **Single drafter, no approval gate.** Child writes freely but only inside a scoped cwd via `cwd-guard.ts`. Use when a human-confirm loop would hurt more than it helps (batch / scripted runs, agent-maker). |
+| `patterns/scout-then-draft.md` | **Recon + drafter composed in one handler.** Child 1 surveys via `emit_summary`; parent assembles a handoff brief; child 2 drafts via `stage_write` with the brief in-prompt; parent previews via `ctx.ui.confirm`. No delegator LLM. |
 | `patterns/orchestrator.md` | **Delegator over drafters + LLM review.** One RPC delegator LLM dispatches drafters (via `run_deferred_writer` stub) and reviews drafts (via `review.ts`); parent harvests both stubs from NDJSON. Canonical: `delegated-writer.ts`. |
 
 ## How to use this skill
@@ -79,7 +80,9 @@ Follow `procedure.md` exactly:
 2. **Pick parts** — the pattern's parts list is authoritative.
 3. **Verify cwd-guard** is first in the parts list for every
    write-capable child (recon's child is read-only + `emit_summary`,
-   so it loads `emit-summary.ts` in cwd-guard's place).
+   so it loads `emit-summary.ts` in cwd-guard's place; in
+   scout-then-draft, the recon child skips cwd-guard and the
+   drafter child loads it).
 4. **Emit glue** from the pattern's skeleton, filling TODO slots.
 5. **If step 1 is not a confident match, STOP and emit the GAP
    message** exactly as given in `procedure.md`.
