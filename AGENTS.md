@@ -36,6 +36,16 @@ wiring a new agent, match the tier to the job:
 | `LEAD_MODEL` | Team Lead / Task Overseer | Reviews worker output, assigns follow-ups, keeps the plan on track. Runs often; solid reasoning but not frontier. |
 | `TASK_MODEL` | Code Rabbit / Worker | Bulk task execution. Runs constantly; optimize for cost-per-token at acceptable quality. |
 
+In addition to the three tiers, `models.env` exposes
+`AGENT_BUILDER_TARGETS` — a comma-separated list of models the
+`pi-agent-builder` skill is expected to work well on (the skill should
+produce a correct, safe pi extension from a short natural-language
+prompt on every one of them, not just one). Current targets: **Haiku
+4.5** (`anthropic/claude-haiku-4.5`), **Gemini 3 Flash Preview**
+(`google/gemini-3-flash-preview`), and **GLM 5.1** (`z-ai/glm-5.1`).
+When refining the skill, test against all three; when invoking pi,
+pick any one and pass it via `--model`.
+
 Source the file before launching pi so the tier vars are in scope:
 
 ```sh
@@ -56,6 +66,7 @@ extensions that follow its recipes.
 
 ```sh
 set -a; source models.env; set +a
+# Pick any model from $AGENT_BUILDER_TARGETS, or fall back to $LEAD_MODEL.
 npm run pi -- --provider openrouter --model "$LEAD_MODEL" \
   --skill skills/pi-agent-builder \
   -p "Use the pi-agent-builder skill to <describe the agent>."
