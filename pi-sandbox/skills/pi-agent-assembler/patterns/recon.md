@@ -1,8 +1,8 @@
 # Pattern: `recon`
 
 **When to use:** user wants a read-only survey of a directory,
-codebase, or fixture. The child walks the inputs and emits a
-bounded text summary; nothing is written.
+codebase, or fixture. The child walks the inputs and emits bounded,
+structured summaries via `emit_summary`; nothing is written.
 
 ## Short-prompt signals that match
 
@@ -17,22 +17,35 @@ The child remains read-only.
 
 ## Parts
 
-None from the write library. Recon deliberately does NOT load
-cwd-guard — the child has no write tool at all.
+In load order on the child:
+
+1. `emit-summary.ts` — the stub the child calls with `{title, body}`
+   to hand a structured summary back to the parent. The child MUST
+   NOT produce summaries as free-form assistant text — the parent
+   harvests `emit_summary` calls from the NDJSON event stream and
+   has no robust way to use text-in-message.
+
+`cwd-guard.ts` is deliberately **not** loaded. Recon children have
+no write channel at all; the `--tools` allowlist is read-only plus
+`emit_summary` (the stub has no filesystem contact). Adding
+cwd-guard would only pollute the tool surface.
 
 The parent's role:
 
-- Spawn a child with a read-only `--tools` allowlist.
-- Harvest the child's final assistant text from `message_end`
-  events.
-- Enforce a byte-length cap on the summary (`.slice(0, N)` or
-  `Buffer.byteLength`).
-- Write the summary to `.pi/scratch/<name>.md` (parent-side, using
-  the built-in `write` — the parent isn't sandboxed by cwd-guard).
+- Spawn a child with a read-only `--tools` allowlist plus
+  `emit_summary`.
+- Harvest `{title, body}` from every `tool_execution_start` event
+  where `toolName === "emit_summary"`.
+- Enforce a byte-length cap on each body (and optionally a total
+  cap across all summaries).
+- Concatenate (or pick one) and write the result to
+  `.pi/scratch/<name>-summary.md` with the parent's built-in
+  `fs.writeFileSync` — the parent isn't sandboxed by cwd-guard.
 
 ## `--tools` allowlist
 
-Exactly read-only verbs: `ls,read,grep,glob`.
+Exactly read-only verbs plus the emit stub:
+`ls,read,grep,glob,emit_summary`.
 
 Forbidden: `write`, `edit`, `stage_write`, `bash`. The allowlist
 is what makes this pattern "recon" — anything that can mutate
@@ -54,10 +67,17 @@ auto-discovered by pi and won't register.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const PHASE_TIMEOUT_MS = 120_000;
 const SUMMARY_BYTE_CAP = 8_000;
+const TOTAL_BYTE_CAP = 32_000;
+
+const EMIT_SUMMARY = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "emit-summary.ts",
+);
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("TODO:CMD_NAME", {
@@ -73,6 +93,10 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("TASK_MODEL env var not set. Source models.env.", "error");
         return;
       }
+      if (!fs.existsSync(EMIT_SUMMARY)) {
+        ctx.ui.notify(`emit-summary missing at ${EMIT_SUMMARY}`, "error");
+        return;
+      }
       const sandboxRoot = path.resolve(process.cwd());
       const targetAbs = path.resolve(sandboxRoot, target);
       if (targetAbs !== sandboxRoot && !targetAbs.startsWith(sandboxRoot + path.sep)) {
@@ -81,18 +105,22 @@ export default function (pi: ExtensionAPI) {
       }
 
       const agentPrompt =
-        `You are a RECON AGENT. Survey ${targetAbs} and produce a bounded ` +
-        `summary. Use only 'ls', 'read', 'grep', 'glob' (no write, no edit, ` +
-        `no bash). Return a concise report (<= ${SUMMARY_BYTE_CAP} bytes) ` +
-        `naming the files/directories you actually saw. ` +
-        `TODO:AGENT_PROMPT`;
+        `You are a RECON AGENT. Survey ${targetAbs} and produce bounded ` +
+        `summaries. Use only 'ls', 'read', 'grep', 'glob' (no write, no edit, ` +
+        `no bash). Instead of producing a final assistant message, call ` +
+        `emit_summary({title, body}) with a short title and a body <= ${SUMMARY_BYTE_CAP} ` +
+        `bytes naming the files/directories you actually saw. Call it once for ` +
+        `the overall directory survey; call it a second time only if you have ` +
+        `a distinct, differently-scoped view to report. ` +
+        `TODO:AGENT_PROMPT Reply DONE and stop.`;
 
-      let summary = "";
+      const summaries: Array<{ title: string; body: string }> = [];
       const child = spawn(
         "pi",
         [
+          "-e", EMIT_SUMMARY,
           "--mode", "json",
-          "--tools", "ls,read,grep,glob",
+          "--tools", "ls,read,grep,glob,emit_summary",
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -120,18 +148,18 @@ export default function (pi: ExtensionAPI) {
           if (!line.trim()) continue;
           let e: Record<string, unknown>;
           try { e = JSON.parse(line); } catch { continue; }
-          if (e.type === "tool_execution_start") {
+          if (e.type === "tool_execution_start" && e.toolName === "emit_summary") {
+            toolCalls++;
+            const a = e.args as Record<string, unknown> | undefined;
+            const title = typeof a?.title === "string" ? a.title : "";
+            const body = typeof a?.body === "string" ? a.body : "";
+            if (title && body) {
+              summaries.push({ title, body });
+              ctx.ui.notify(`Recon → emit_summary "${title}" (${Buffer.byteLength(body, "utf8")} bytes)`, "info");
+            }
+          } else if (e.type === "tool_execution_start") {
             toolCalls++;
             ctx.ui.notify(`Recon → ${e.toolName}`, "info");
-          } else if (e.type === "message_end") {
-            const msg = e.message as { role?: string; content?: unknown } | undefined;
-            if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-              for (const part of msg.content as Array<{ type?: string; text?: string }>) {
-                if (part?.type === "text" && typeof part.text === "string") {
-                  summary = part.text;
-                }
-              }
-            }
           }
         }
       });
@@ -146,22 +174,29 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Recon timed out after ${PHASE_TIMEOUT_MS / 1000}s.`, "error");
         return;
       }
-      if (!summary) {
-        ctx.ui.notify(`Recon produced no summary. Stderr: ${stderr.slice(-1000)}`, "error");
+      if (summaries.length === 0) {
+        ctx.ui.notify(`Recon produced no emit_summary calls. Stderr: ${stderr.slice(-1000)}`, "error");
         return;
       }
 
-      // Bounded summary. TODO:VALIDATION — add task-specific checks here.
-      if (Buffer.byteLength(summary, "utf8") > SUMMARY_BYTE_CAP) {
-        summary = summary.slice(0, SUMMARY_BYTE_CAP) + "\n…(truncated)";
+      // Per-summary byte cap, then total-length cap on the concatenation.
+      // TODO:VALIDATION — add task-specific checks here.
+      const capped = summaries.map((s) => {
+        const bytes = Buffer.byteLength(s.body, "utf8");
+        const body = bytes > SUMMARY_BYTE_CAP ? s.body.slice(0, SUMMARY_BYTE_CAP) + "\n…(truncated)" : s.body;
+        return `## ${s.title}\n\n${body}`;
+      });
+      let combined = capped.join("\n\n---\n\n");
+      if (Buffer.byteLength(combined, "utf8") > TOTAL_BYTE_CAP) {
+        combined = combined.slice(0, TOTAL_BYTE_CAP) + "\n…(truncated)";
       }
 
       const outDir = path.resolve(sandboxRoot, ".pi/scratch");
       fs.mkdirSync(outDir, { recursive: true });
       const outPath = path.join(outDir, "TODO:CMD_NAME-summary.md");
-      fs.writeFileSync(outPath, summary, "utf8");
+      fs.writeFileSync(outPath, combined, "utf8");
       ctx.ui.notify(
-        `Recon complete (${toolCalls} tool call(s), ${Buffer.byteLength(summary, "utf8")} bytes). Summary: ${outPath}`,
+        `Recon complete (${toolCalls} tool call(s), ${summaries.length} summary/summaries, ${Buffer.byteLength(combined, "utf8")} bytes). Summary: ${outPath}`,
         "info",
       );
     },
@@ -176,15 +211,22 @@ contains each of these anchors:
 
 - `registerCommand("TODO:CMD_NAME"` — replaced with the chosen
   slash command name.
-- `"--tools", "ls,read,grep,glob"` — read-only allowlist, no
-  writers.
+- `-e <abs path ending in components/emit-summary.ts>` on the spawn
+  args. Resolve the path relative to the parent extension's own
+  `import.meta.url`, NOT from `$HOME` or cwd.
+- `"--tools", "ls,read,grep,glob,emit_summary"` — read-only verbs
+  plus the emit stub. No `write`, `edit`, `stage_write`, or `bash`.
 - `"--no-extensions"` on the spawn args.
+- NDJSON parser matches on
+  `e.type === "tool_execution_start" && e.toolName === "emit_summary"`
+  and reads `title` / `body` from `e.args`. The parent must NOT
+  rely on `message_end` assistant text for the summary content.
 - `setTimeout(…, PHASE_TIMEOUT_MS)` + `child.kill("SIGKILL")` — hard
   timeout.
-- `Buffer.byteLength(summary, "utf8") > SUMMARY_BYTE_CAP` — a
-  byte-length cap on the harvested summary.
-- `fs.writeFileSync(outPath, summary, "utf8")` — parent writes the
-  summary (not the child).
-- NO `-e <…stage-write…>`, NO `-e <…cwd-guard…>`. Recon loads
-  neither.
+- Per-summary cap: `Buffer.byteLength(body, "utf8") > SUMMARY_BYTE_CAP`
+  (or `.slice(0, SUMMARY_BYTE_CAP)` on each body).
+- `fs.writeFileSync(outPath, combined, "utf8")` — parent writes the
+  summary (not the child). Path scoped to `.pi/scratch/`.
+- NO `-e <…stage-write…>`, NO `-e <…cwd-guard…>`. Recon loads only
+  `emit-summary.ts`.
 - NO `ctx.ui.confirm` call. Recon has no side effect to gate.

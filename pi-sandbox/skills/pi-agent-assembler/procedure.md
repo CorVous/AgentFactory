@@ -11,9 +11,10 @@ examples):
 
 | User says… | Pattern |
 | --- | --- |
-| "summarize", "read", "survey", "what's in", "audit", "explore", "map out", "index" | `recon` |
+| "summarize", "read", "survey", "what's in", "audit", "explore", "map out", "index" (and no draft / write step follows) | `recon` |
 | "write X for me — I want to review before it saves", "draft a file and show me", "stage, then approve", "preview before writing" | `drafter-with-approval` |
 | "write X into `<dir>`", "generate a file", "create a project at", "no approval needed", batch / scripted run | `confined-drafter` |
+| "look at X, then write Y", "survey the project and add a Z", "given what's there, produce the missing W", "read the directory and generate a README summarizing it" | `scout-then-draft` |
 | "break this into sub-tasks and have an LLM check each", "dispatch several drafters then review", "orchestrator that reviews" | `orchestrator` |
 
 A confident match = the user's prompt contains at least one signal
@@ -21,9 +22,11 @@ from the pattern's "when to use" sentence (see each pattern's
 top-of-file paragraph).
 
 If multiple patterns match, prefer the **simpler** one (`recon` <
-`confined-drafter` < `drafter-with-approval` < `orchestrator`). Only
-promote to orchestrator when the user explicitly mentions multiple
-sub-tasks or review.
+`confined-drafter` < `drafter-with-approval` < `scout-then-draft` <
+`orchestrator`). Only promote to `scout-then-draft` when both a
+survey AND a draft step appear in the ask; only promote to
+`orchestrator` when the user explicitly mentions multiple sub-tasks
+or LLM review.
 
 If NO pattern matches, go straight to step 5.
 
