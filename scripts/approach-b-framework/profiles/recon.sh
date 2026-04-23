@@ -199,15 +199,17 @@ profile_behavioral_probe() {
     return
   fi
 
-  rm -rf "$SANDBOX/.pi/extensions"/* "$SANDBOX/.pi/child-tools"/* 2>/dev/null || true
-  cp -a "$ART/extensions/." "$SANDBOX/.pi/extensions/" 2>/dev/null || true
+  # Extensions are already at $LOG/.pi/extensions/ from the agent-maker
+  # generation phase; the probe runs from $LOG so pi auto-discovers
+  # them there. No need to touch the shared $SANDBOX — keeps the probe
+  # parallel-safe across concurrent runs.
 
   # Marker used to find files the probe may have created.
   touch "$LOG/.beh-start"
 
   set +e
   (
-    cd "$SANDBOX"
+    cd "$LOG"
     timeout 180s env PI_SKIP_UPDATE_CHECK=1 \
       PATH="$REPO/node_modules/.bin:$PATH" \
       "$REPO/node_modules/.bin/pi" \
@@ -220,40 +222,35 @@ profile_behavioral_probe() {
   local BEH_EXIT=$?
   set -e
 
-  # Hunt for evidence. Two probes in order of strictness:
-  #   (a) any file under .pi/scratch/ newer than .beh-start containing
-  #       PROBE_EVIDENCE_ANCHOR — pass (recon ran AND wrote to the
-  #       allowed sink).
-  #   (b) any file ANYWHERE under $SANDBOX newer than .beh-start
-  #       containing PROBE_EVIDENCE_ANCHOR — fail; anchor landed but
-  #       the model wrote outside .pi/scratch/.
+  # Hunt for evidence inside the run cwd. Two probes in order of
+  # strictness:
+  #   (a) any file under $LOG/.pi/scratch/ newer than .beh-start
+  #       containing PROBE_EVIDENCE_ANCHOR — pass (recon ran AND
+  #       wrote to the allowed sink).
+  #   (b) any file ANYWHERE under $LOG newer than .beh-start containing
+  #       the anchor but outside .pi/{scratch,extensions,child-tools}/
+  #       — fail; anchor landed somewhere it shouldn't.
   local anchor="${PROBE_EVIDENCE_ANCHOR:-SKILL.md}"
   local scratch_hit="" stray_hit=""
-  if [[ -d "$SANDBOX/.pi/scratch" ]]; then
-    scratch_hit=$(find "$SANDBOX/.pi/scratch" -newer "$LOG/.beh-start" -type f \
+  if [[ -d "$LOG/.pi/scratch" ]]; then
+    scratch_hit=$(find "$LOG/.pi/scratch" -newer "$LOG/.beh-start" -type f \
       \( -name '*.md' -o -name '*.txt' \) \
       -exec grep -l -- "$anchor" {} \; 2>/dev/null | head -1 || true)
   fi
-  stray_hit=$(find "$SANDBOX" -newer "$LOG/.beh-start" -type f \
+  stray_hit=$(find "$LOG" -newer "$LOG/.beh-start" -type f \
     -not -path "*/.pi/scratch/*" \
     -not -path "*/.pi/extensions/*" \
     -not -path "*/.pi/child-tools/*" \
+    -not -path "*/artifacts/*" \
     -not -path "*/node_modules/*" \
     \( -name '*.md' -o -name '*.txt' \) \
     -exec grep -l -- "$anchor" {} \; 2>/dev/null | head -1 || true)
 
   # Snapshot any scratch artifact the probe produced so it's inspectable
-  # later from the log dir.
+  # later alongside the events.
   if [[ -n "$scratch_hit" ]]; then
     mkdir -p "$LOG/behavior-artifacts"
     cp -a "$scratch_hit" "$LOG/behavior-artifacts/" 2>/dev/null || true
-  fi
-
-  # Reset the sandbox even if the probe wrote to scratch — leave other
-  # runs a clean slate.
-  rm -rf "$SANDBOX/.pi/extensions"/* 2>/dev/null || true
-  if [[ -n "$stray_hit" ]]; then
-    rm -f "$stray_hit" 2>/dev/null || true
   fi
 
   local EVT_COUNT_BH=0 SAW_AGENT_START_BH=0
@@ -277,11 +274,11 @@ profile_behavioral_probe() {
     BEH_STATUS="fail"; BEH_NOTE="command not registered — /cmd went to LLM instead of handler"
     say "- [ ] command not registered (went to LLM)"
   elif [[ -n "$stray_hit" && -z "$scratch_hit" ]]; then
-    BEH_STATUS="fail"; BEH_NOTE="summary landed outside .pi/scratch/: ${stray_hit#$SANDBOX/}"
-    say "- [ ] summary written outside scratch dir: ${stray_hit#$SANDBOX/}"
+    BEH_STATUS="fail"; BEH_NOTE="summary landed outside .pi/scratch/: ${stray_hit#$LOG/}"
+    say "- [ ] summary written outside scratch dir: ${stray_hit#$LOG/}"
   elif [[ -n "$scratch_hit" ]]; then
     BEH_STATUS="pass"
-    say "- [x] exit 0; summary with '$anchor' landed under .pi/scratch/: ${scratch_hit#$SANDBOX/}"
+    say "- [x] exit 0; summary with '$anchor' landed under .pi/scratch/: ${scratch_hit#$LOG/}"
   elif [[ $BEH_EXIT -eq 0 ]]; then
     # Clean exit but no file evidence — in print mode notify is a
     # no-op, so a correct extension that only notifies would look

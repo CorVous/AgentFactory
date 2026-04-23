@@ -189,13 +189,14 @@ profile_behavioral_probe() {
     return
   fi
 
-  rm -rf "$SANDBOX/.pi/extensions"/* "$SANDBOX/.pi/child-tools"/* 2>/dev/null || true
-  cp -a "$ART/extensions/." "$SANDBOX/.pi/extensions/" 2>/dev/null || true
-  cp -a "$ART/child-tools/." "$SANDBOX/.pi/child-tools/" 2>/dev/null || true
+  # Extensions + child-tools are already at $LOG/.pi/{extensions,child-tools}/
+  # from the agent-maker generation phase; the probe runs from $LOG so pi
+  # auto-discovers them there. Keeps the probe parallel-safe and leaves
+  # the shared $SANDBOX untouched.
 
   set +e
   (
-    cd "$SANDBOX"
+    cd "$LOG"
     timeout 180s env PI_SKIP_UPDATE_CHECK=1 \
       PATH="$REPO/node_modules/.bin:$PATH" \
       "$REPO/node_modules/.bin/pi" \
@@ -209,8 +210,8 @@ profile_behavioral_probe() {
   set -e
 
   # Defensive — handler SHOULD hit the cancel path and never write.
-  rm -f "$SANDBOX/hello-probe.md" 2>/dev/null || true
-  rm -rf "$SANDBOX/.pi/extensions"/* "$SANDBOX/.pi/child-tools"/* 2>/dev/null || true
+  # If it did write, the file would land in the probe cwd ($LOG).
+  rm -f "$LOG/hello-probe.md" 2>/dev/null || true
 
   local EVT_COUNT_BH=0 SAW_AGENT_START_BH=0
   if [[ -f "$LOG/behavior.ndjson" ]]; then
