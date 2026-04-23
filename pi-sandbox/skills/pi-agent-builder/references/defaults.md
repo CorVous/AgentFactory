@@ -17,48 +17,97 @@ rail in isolation, but for the drafter case, **copy this block
 verbatim** rather than rebuilding it from the rails list:
 
 ```ts
-const sandboxRoot = path.resolve(process.cwd());
-const MODEL = process.env.TASK_MODEL;
-if (!MODEL) {
-  ctx.ui.notify("TASK_MODEL env var not set. Source models.env before launching pi.", "error");
-  return;
-}
+pi.registerCommand("deferred-writer", {
+  description: "Stage file writes for user approval before they hit disk",
+  handler: async (args, ctx) => {
+    // 1. Args check — ALWAYS the first line. Empty or whitespace-only
+    //    input means the user typed the command with no task, so
+    //    notify usage and return. Do NOT fall through to a hardcoded
+    //    default prompt; an agent with no user task has nothing to do.
+    if (!args.trim()) {
+      ctx.ui.notify("Usage: /deferred-writer <task description>", "warning");
+      return;
+    }
 
-const STAGE_WRITE_TOOL = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..", "child-tools", "stage-write.ts",
-);
+    // 2. Env check — error out now if the required tier model isn't
+    //    set. Do not fall back to a hardcoded model ID; that hides
+    //    misconfiguration and sends traffic to a model the user
+    //    didn't pick.
+    const MODEL = process.env.TASK_MODEL;
+    if (!MODEL) {
+      ctx.ui.notify("TASK_MODEL env var not set. Source models.env before launching pi.", "error");
+      return;
+    }
 
-const child = spawn("pi", [
-  "-e", STAGE_WRITE_TOOL,
-  "-p", agentPrompt,
-  "--no-extensions",
-  "--tools", "stage_write,ls",
-  "--provider", "openrouter",
-  "--model", MODEL,
-  "--thinking", "off",
-  "--no-session",
-  "--mode", "json",
-], {
-  stdio: ["ignore", "pipe", "pipe"],
-  cwd: sandboxRoot,
+    // 3. Pin the sandbox root once so the rest of the handler shares
+    //    one definition of "inside the project".
+    const sandboxRoot = path.resolve(process.cwd());
+
+    // 4. Resolve the child-tool path relative to THIS file, not $HOME.
+    //    fileURLToPath + import.meta.url ties the lookup to the
+    //    extension's own location so the layout ships with the project.
+    const STAGE_WRITE_TOOL = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..", "child-tools", "stage-write.ts",
+    );
+
+    // 5. Build the drafter's prompt from `args`. The user's task is
+    //    the drafter's task — do NOT ignore `args` or replace it with
+    //    a hardcoded generic instruction. If you need scaffolding
+    //    around it (role, constraints, format), interpolate, don't
+    //    substitute.
+    const agentPrompt = `You are a DRAFTER. Task: ${args}.
+
+To create a file, call stage_write(path, content). Paths must be
+relative to ${sandboxRoot}. Reply DONE when finished.`;
+
+    // 6. Spawn with the canonical argv + options. Every flag is a
+    //    mandatory rail; see the annotations below.
+    const child = spawn("pi", [
+      "-e", STAGE_WRITE_TOOL,
+      "-p", agentPrompt,
+      "--no-extensions",
+      "--tools", "stage_write,ls",
+      "--provider", "openrouter",
+      "--model", MODEL,
+      "--thinking", "off",
+      "--no-session",
+      "--mode", "json",
+    ], {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: sandboxRoot,
+    });
+
+    const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
+    child.on("error", (err) => { /* resolve with clean failure */ });
+
+    // … (harvest NDJSON, validate, preview with ctx.ui.confirm, fs.writeFileSync on approval)
+  },
 });
-
-const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
-child.on("error", (err) => { /* resolve with clean failure */ });
 ```
 
 Every element of this block is a rail we have lost a run to when it
-was omitted. Specifically: `"openrouter"` is a string literal, not
-`process.env.PI_PROVIDER || "openrouter"` (see the rail below —
-defaulting to an optional env var means a missing env silently
-resolves to the wrong provider). `MODEL` comes from
-`process.env.TASK_MODEL` with an *error exit* on unset, not a
-hardcoded fallback. `"stage_write,ls"` has no `read` (see the
-*Deferred / approval-gated side effects* section below for why). All
-three quoting forms (`"..."`, `` `...` ``, `'...'`) are valid TS,
-but mixing them in one argv is a code-smell — pick one and stay
-consistent so humans reviewing the diff don't have to double-check.
+was omitted. Notes:
+
+- **Step 1 (args check) is mandatory, not optional.** `async (args,
+  ctx)` not `async (_args, ctx)` — the underscore prefix signals
+  "deliberately unused" and is a code-smell here because the whole
+  point of the command is to do what `args` describes. An extension
+  that ignores `args` and hardcodes `agentPrompt` will launch a
+  drafter even when the user typed `/deferred-writer` with no task,
+  spending the user's budget on a generic prompt they didn't
+  author.
+- **`"openrouter"` is a string literal**, not `process.env.PI_PROVIDER
+  || "openrouter"` — defaulting to an optional env var means a
+  missing env silently resolves to the wrong provider.
+- **`MODEL` comes from `process.env.TASK_MODEL`** with an *error exit*
+  on unset, not a hardcoded fallback like `"gpt-4o-mini"`.
+- **`"stage_write,ls"` has no `read`** (see the *Deferred /
+  approval-gated side effects* section below for why).
+- All three quoting forms (`"..."`, `` `...` ``, `'...'`) are valid
+  TS, but mixing them in one argv is a code-smell — pick one and
+  stay consistent so humans reviewing the diff don't have to
+  double-check.
 
 ## For every sub-agent (child `pi` process)
 
