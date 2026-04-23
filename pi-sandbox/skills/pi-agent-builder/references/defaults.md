@@ -211,18 +211,56 @@ zero artifacts on disk.
 ### In-memory variant (preferred)
 
 - Write a small "stub" tool (e.g. `stage_write({ path, content })`) in
-  its own file *outside* the auto-discovered extensions path (e.g.
-  `.pi/child-tools/stage-write.ts`). Its `execute` body is a no-op that
-  just returns `{ content: [{ type: "text", text: "Drafted …" }], details: {} }`.
-  **The file must use the same factory shape as an extension** —
-  `export default function (pi: ExtensionAPI) { pi.registerTool({ ... }); }` —
-  NOT a bare `const stage_write: Tool = { … }; export default stage_write;`.
-  Pi's `-e <path>` loader expects a default-exported function; a
-  default-exported object silently registers nothing and the child LLM
-  then has no way to call the stub. This is a subtle failure mode:
-  the parent spawns cleanly, the child runs, but no `tool_execution_start`
-  for `stage_write` ever fires and the parent receives zero staged writes.
+  its own file *outside* the auto-discovered extensions path. The
+  canonical location is `.pi/child-tools/<n>.ts` under the same
+  project-local `.pi/` directory as the parent extension — NOT a global
+  path under `$HOME`. The stub file must use the factory shape and
+  return `details`:
+
+  ```ts
+  // .pi/child-tools/stage-write.ts
+  import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+  import { Type } from "typebox";
+
+  export default function (pi: ExtensionAPI) {
+    pi.registerTool({
+      name: "stage_write",
+      label: "Stage Write",
+      description: "Draft a file. Content is staged in the parent's memory for user review before being persisted. Use in place of `write`.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Relative destination path inside the project." }),
+        content: Type.String({ description: "Full text content of the file." }),
+      }),
+      async execute(_id, params) {
+        return {
+          content: [{ type: "text", text: `Drafted ${params.path} (${Buffer.byteLength(params.content, "utf8")} bytes). Staged; not yet written.` }],
+          details: {},   // REQUIRED — the AgentToolResult type refuses to compile without it
+        };
+      },
+    });
+  }
+  ```
+
+  **Three traps this block protects against, each of which we have
+  paid for in a real run:**
+  1. A bare `const stage_write: Tool = { ... }; export default stage_write;`
+     loads without error under `pi -e <path>` but registers *nothing* —
+     the child LLM then has no `stage_write` tool, `tool_execution_start`
+     for the name never fires, and the parent collects zero staged
+     writes. The default export MUST be a function.
+  2. Dropping `details` (returning just `{ content: [...] }`) fails the
+     TS `AgentToolResult` constraint at compile time. For a stub with
+     nothing structured to report, `details: {}` is the correct value
+     — not `null`, not the param object, not omitted.
+  3. Resolving the child-tool path via `process.env.HOME` or a global
+     `~/.pi/` prefix ties the parent extension to one user's home
+     directory. Use `path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "child-tools", "stage-write.ts")`
+     inside the parent extension — relative to the parent's own file —
+     so the layout ships with the project and works on any machine.
 - Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls`.
+  The `<abs path to stub tool>` should be computed from the parent
+  extension's own location (see the `fileURLToPath(import.meta.url)`
+  recipe above), not hardcoded and not derived from `$HOME`.
   The child can walk the sandbox via `ls` on absolute paths under
   `sandboxRoot` to pick destinations, but has no `write` tool — `stage_write`
   is its only channel for producing files. **Do NOT add `read`** to the
