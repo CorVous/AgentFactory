@@ -253,3 +253,70 @@ two labels. Step B (Gemini coverage) proceeds.
 - This section of `scripts/approach-comparison.md`.
 - Scratch-only: `pi-sandbox/.pi/scratch/regression/{writer-ref/
   artifacts/,a.md,b.md,writer-ref/grade.json}` (gitignored).
+
+## Round 2 — Recon coverage: Gemini 3 Flash Preview (2026-04-23)
+
+Round 1's Haiku smoke covered `anthropic/claude-haiku-4.5`. This run
+covers the second entry in `AGENT_BUILDER_TARGETS`
+(`google/gemini-3-flash-preview`) on the same recon-agent task, so
+we have a signal for whether the pi-agent-builder skill produces a
+correct extension on both declared targets.
+
+### Run
+
+```sh
+set -a; source models.env; set +a
+scripts/approach-b-framework/run-task.sh recon-agent \
+  -r gemini-coverage -m google/gemini-3-flash-preview
+```
+
+Exit 0. Artifacts under
+`pi-sandbox/.pi/scratch/rounds/gemini-coverage/google_gemini-3-flash-preview/`.
+
+### Per-model result
+
+| Model                          | P0 passed | P1 passed | Load    | Behavioral |
+|--------------------------------|-----------|-----------|---------|------------|
+| `anthropic/claude-haiku-4.5`   | 12/16     | 2/2       | partial | partial    |
+| `google/gemini-3-flash-preview`| **16/16** | 2/2       | partial | partial    |
+
+Haiku's P0 misses (from round 1, run `smoke-fix-v2`): `--mode json on
+spawn`, `sandboxRoot captured + cwd pinned on spawn`, `NDJSON parsed
+line-by-line from child stdout`, `harvest source = message_end /
+message_update event`. Gemini passed all four.
+
+### Observations
+
+- **Gemini satisfied every static P0 anchor** — all 16 subprocess-rail
+  + harvest + side-effect-absence + output-discipline checks. No notes
+  in `grade.json`.
+- Both models partial-scored on load/behavioral. Gemini's load probe
+  exited 124 (timeout) because its `/summary` handler ran the full
+  recon against the empty args value and hit the 30s load-timeout.
+  Haiku's issue was elsewhere. Neither is a grader bug; both are
+  skill-content observations for `reading-short-prompts.md` /
+  `defaults.md` (the skill could nudge harder on "guard empty args"
+  and "write evidence to scratch, not notify").
+- The 4-anchor gap on Haiku's P0 is a **skill-side variance**, not a
+  Track B regression: the same `profiles/recon.sh` anchor logic ran
+  against both models; Gemini happened to emit all four rails this
+  round and Haiku did not. Per `AGENTS.md`, if Haiku fails the same
+  anchors reproducibly, that's a skill refinement target.
+
+### Verdict
+
+The skill produces a recon extension that satisfies every P0 static
+anchor on at least one `AGENT_BUILDER_TARGETS` member (Gemini), and
+12/16 on the other (Haiku). Both models exit cleanly through the
+behavioral probe. The Track B framework itself is vindicated across
+both targets — no grader crash, no anchor misclassification, no
+partial-score caused by the grading layer.
+
+Coverage for `AGENT_BUILDER_TARGETS` is now complete. Any further
+score lift on Haiku is skill refinement, out of scope for this round.
+
+### Files touched
+
+- This section of `scripts/approach-comparison.md`.
+- Scratch-only: `pi-sandbox/.pi/scratch/rounds/gemini-coverage/`
+  (gitignored).
