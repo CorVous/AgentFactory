@@ -4,6 +4,62 @@ Apply every rail in this file to every extension you generate, unless the
 user **explicitly** tells you to skip one. Each rail exists because its
 absence caused a real failure in a real session.
 
+## Canonical drafter spawn (copy this, don't reconstruct it)
+
+When your extension spawns a single-task drafter child (the
+`/deferred-writer` shape), the spawn call must be *exactly* the
+template below. Every flag is mandatory — we have seen models skip
+`--thinking off`, skip `--no-session`, pull provider from an optional
+env fallback, or drop `--model` entirely by pulling it from a
+nonexistent `args.model`. The grader scores each of those as a
+separate miss; the prose-bullet section further down explains each
+rail in isolation, but for the drafter case, **copy this block
+verbatim** rather than rebuilding it from the rails list:
+
+```ts
+const sandboxRoot = path.resolve(process.cwd());
+const MODEL = process.env.TASK_MODEL;
+if (!MODEL) {
+  ctx.ui.notify("TASK_MODEL env var not set. Source models.env before launching pi.", "error");
+  return;
+}
+
+const STAGE_WRITE_TOOL = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "child-tools", "stage-write.ts",
+);
+
+const child = spawn("pi", [
+  "-e", STAGE_WRITE_TOOL,
+  "-p", agentPrompt,
+  "--no-extensions",
+  "--tools", "stage_write,ls",
+  "--provider", "openrouter",
+  "--model", MODEL,
+  "--thinking", "off",
+  "--no-session",
+  "--mode", "json",
+], {
+  stdio: ["ignore", "pipe", "pipe"],
+  cwd: sandboxRoot,
+});
+
+const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
+child.on("error", (err) => { /* resolve with clean failure */ });
+```
+
+Every element of this block is a rail we have lost a run to when it
+was omitted. Specifically: `"openrouter"` is a string literal, not
+`process.env.PI_PROVIDER || "openrouter"` (see the rail below —
+defaulting to an optional env var means a missing env silently
+resolves to the wrong provider). `MODEL` comes from
+`process.env.TASK_MODEL` with an *error exit* on unset, not a
+hardcoded fallback. `"stage_write,ls"` has no `read` (see the
+*Deferred / approval-gated side effects* section below for why). All
+three quoting forms (`"..."`, `` `...` ``, `'...'`) are valid TS,
+but mixing them in one argv is a code-smell — pick one and stay
+consistent so humans reviewing the diff don't have to double-check.
+
 ## For every sub-agent (child `pi` process)
 
 - `--no-extensions` on the child — prevents recursive sub-agents (recursion
@@ -48,10 +104,16 @@ absence caused a real failure in a real session.
   `PLAN_MODEL` for orchestration. Notify an error and return if the env
   var is unset — *do not* silently fall back to a hardcoded model that
   the user didn't pick.
-- `--provider openrouter` (or whatever your project standardizes on)
-  explicitly on every child. A model ID with a provider prefix like
-  `deepseek/deepseek-v3.2` will otherwise route to that provider's
-  direct API, which usually has no API key configured and stalls.
+- `--provider openrouter` as a **literal string** on every child.
+  Not `process.env.PI_PROVIDER`, not `process.env.PROVIDER ||
+  "openrouter"`, and not any other env-var indirection — in this
+  repo, openrouter is the one provider we test against, so hardcode
+  it. An optional env fallback silently resolves to the wrong
+  provider when the env var isn't set, and a model ID with a
+  provider prefix like `deepseek/deepseek-v3.2` will otherwise route
+  to that provider's direct API, which usually has no API key
+  configured and stalls. (If downstream forks need a different
+  provider, they can fork this file.)
 - Pass `--no-session` unless the child's session needs to feed back into
   parent state.
 
