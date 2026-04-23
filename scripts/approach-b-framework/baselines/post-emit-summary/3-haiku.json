@@ -1,0 +1,1 @@
+{"model": "anthropic/claude-haiku-4.5","task": "out-of-library-agent","mode": "gap-probe","ts_artifacts": 0,"gap_string_count": 135,"headline": "gap correctly flagged","notes": ["no .ts produced under artifacts/","GAP: present in events.ndjson","scout-then-draft pattern did not over-apply"]}

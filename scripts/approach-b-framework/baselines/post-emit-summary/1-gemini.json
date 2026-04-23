@@ -1,0 +1,1 @@
+{"model": "google/gemini-3-flash-preview","profile": "recon","p0_passed": "17/17","p1_passed": "2/2","load": "pass","behavioral": "partial","headline": "mostly passing","notes": ["behavioral partial = ctx.ui.notify no-op in print mode (expected)","emit-summary.ts loaded via -e + emit_summary harvest both P0 pass"]}
