@@ -184,3 +184,70 @@ the scout-then-draft pattern in particular absorbs a lot of
 "multi-stage analysis" asks. Seeds have to hit capabilities that
 *can't be composed*, not just capabilities that aren't in a single
 part.
+
+## Combined rerun (2026-04-24)
+
+**Round:** `combined-rerun/20260424-0514`
+**Cells:** 11 tasks × 3 `$AGENT_BUILDER_TARGETS` = 33 (6 gap + 5
+assembly, `--max-seeds 1` per pattern).
+
+Triggered to validate the close-out stack (strict grader, network-I/O
+stop, revised seed 04, patterns-line fix) against the full matrix and
+catch any collateral damage to previously-passing assembly cells.
+
+Headline: **30/33 full pass** (18/18 gap, 12/15 assembly). Three
+assembly cells grade "mostly passing" — all model-quality issues, not
+routing or grader issues.
+
+### Gap — clean sweep
+
+All 6 gap seeds × 3 targets emit correct GAP. The 2026-04-24 0341
+round was 12/18; this round is 18/18. The four interventions in the
+stack are all holding:
+
+- `fetches-url-01` / glm-5.1 no longer runaway-loops (network-I/O
+  stop in `procedure.md` step 1).
+- `fetches-url-01` / haiku no longer assembles an http recon
+  (network-I/O stop in step 2 callout).
+- `shell-06` / haiku's stylized GAP no longer slips past the grader
+  regex (final-message helper in `events.ts`).
+- Seed 04 (non-pi-subprocess) holds 3/3 GAP on reverify.
+
+### Assembly — 3 "mostly passing" cells
+
+| Cell | P0 | Missed rubric row | Diagnosis |
+|---|---|---|---|
+| `confined-drafter` / haiku | 18/19 | "sandboxRoot captured + cwd pinned on spawn" | Haiku wrote a confined drafter without threading `sandboxRoot` through to the child's cwd. Classification correct, subprocess-rails lapse. |
+| `orchestrator` / haiku | 16/17 | "components loaded via -e match pattern ## Parts — missing: cwd-guard.ts" | Loaded `stage-write.ts`, `run-deferred-writer.ts`, `review.ts` but not `cwd-guard.ts`. Classification correct, incomplete component set. |
+| `orchestrator` / glm-5.1 | 0/1 | "at least one .ts artifact produced" | pi exited 124 (wall-clock timeout); delegator session hit the agent-maker hard timeout mid-analysis, so no extension file was written. Classification correct (the last NDJSON message unambiguously names orchestrator), execution did not complete. Mirrors the prior "orchestrator provider quirk" but on GLM instead of gemini. |
+
+None of the three are classifier misroutes; none reproduce the old
+bucket-3 "assembled when gap expected" failure mode. All three are
+single-rubric-row misses; the 0/1 cell is anomalous because the
+orchestrator rubric has only one P0 gate at the "extension file
+produced" check and the model never reached that step.
+
+### Bonus: grader `REPO_ROOT` bug caught
+
+First pass of the assembly matrix produced **0/15** `grade.json`
+files — every cell crashed with `Pattern file not found at
+/home/user/pi-sandbox/...`. Root cause:
+`scripts/grader/index.ts` computed `REPO_ROOT` as
+`path.resolve(FRAMEWORK_ROOT, "..", "..")` — one `..` too many,
+resolving above the repo checkout. `pattern-spec.test.ts` recomputed
+`REPO_ROOT` locally from its own filepath, so the unit suite stayed
+green through the regression.
+
+Fix extracted the path constants to `scripts/grader/lib/paths.ts` and
+added `paths.test.ts` (asserts `REPO_ROOT/pi-sandbox` and
+`FRAMEWORK_ROOT/task-runner/tasks` both exist). Grader tests: 20/20
+(was 18/18). The 15 assembly cells were regraded in place from the
+saved `artifacts/` directories; no LLM re-spend.
+
+### Residue
+
+Per-task `summary.md` files under
+`combined-rerun/20260424-0514/*/` still carry the pre-fix
+"grade.json missing" rows from `run-task.sh`'s initial pass. The
+per-cell `grade.json` + `grade.md` are authoritative and correct; the
+task-level summaries are cosmetic and not regenerated.
