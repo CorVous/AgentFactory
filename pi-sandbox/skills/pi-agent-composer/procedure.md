@@ -122,25 +122,49 @@ needed in the composer's output.
 
 Two `delegate()` calls. Harvest phase-1 summaries from
 `byComponent.get("emit-summary")`, assemble into a brief with a
-bounded byte-length, and interpolate into phase-2's prompt.
+bounded byte-length, and interpolate into phase-2's prompt. The
+same `export default function(pi) { pi.registerCommand(...) }`
+shell wraps the body — do NOT substitute `export async function
+handler(ctx)` or `export const handler = …`; pi's loader only
+calls the default export, and anything else silently registers
+no command (grader reports it as "command not registered").
+Always include the empty-args short-circuit so the load probe
+(which invokes `/<slug>` with no args) exits cleanly without
+triggering either phase's LLM call.
 
 ```ts
-const scout = await delegate(ctx, {
-  components: [EMIT_SUMMARY],           // read-only scout, no CWD_GUARD
-  prompt: `Survey ${target}. Use emit_summary for each finding.`,
-});
-const summaries =
-  (scout.byComponent.get("emit-summary") as { summaries: { title: string; body: string }[] } | undefined)
-    ?.summaries ?? [];
-const brief = summaries.map((s) => `## ${s.title}\n${s.body}`).join("\n\n");
-if (Buffer.byteLength(brief, "utf8") > 16_000) {
-  ctx.ui.notify("brief exceeds budget; aborting", "error");
-  return;
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("<slug>", {
+    description: "<short description>",
+    handler: async (args, ctx) => {
+      if (!args.trim()) {
+        ctx.ui.notify("Usage: /<slug> <target>", "warning");
+        return;
+      }
+      const target = args.trim();
+
+      const scout = await delegate(ctx, {
+        components: [EMIT_SUMMARY],           // read-only scout, no CWD_GUARD
+        prompt: `Survey ${target}. Use emit_summary for each finding.`,
+      });
+      const summaries =
+        (scout.byComponent.get("emit-summary") as
+          | { summaries: { title: string; body: string }[] }
+          | undefined)?.summaries ?? [];
+      const brief = summaries
+        .map((s) => `## ${s.title}\n${s.body}`)
+        .join("\n\n");
+      if (Buffer.byteLength(brief, "utf8") > 16_000) {
+        ctx.ui.notify("brief exceeds budget; aborting", "error");
+        return;
+      }
+      await delegate(ctx, {
+        components: [CWD_GUARD, STAGE_WRITE],
+        prompt: `${target}\n\n<brief>\n${brief}\n</brief>`,
+      });
+    },
+  });
 }
-await delegate(ctx, {
-  components: [CWD_GUARD, STAGE_WRITE],
-  prompt: `${userTask}\n\n<brief>\n${brief}\n</brief>`,
-});
 ```
 
 ### rpc-delegator-over-concurrent-drafters
