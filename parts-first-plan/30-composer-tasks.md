@@ -59,7 +59,7 @@ path and we want a baseline on the simpler four before adding it.
 
 | Task dir | Components | Composition | Why it's new |
 | --- | --- | --- | --- |
-| `composer-review-only/` | `[cwd-guard, stage-write, review]` | `single-spawn` with review | Single drafter whose output goes through an LLM review before promotion, but no RPC delegator. Assembler's orchestrator pattern insists on RPC; composer should allow this thinner shape. |
+| ~~`composer-review-only/`~~ | `[cwd-guard, stage-write, review]` | `single-spawn` with review | **Deferred 2026-04-24.** The shape contradicts two tested invariants: `inferComposition` routes `review ∈ components → rpc-delegator-over-concurrent-drafters`, and `review.wiringChecks` requires `--mode rpc` + `--tools review`. Landing the task without first deciding how a non-RPC review path should look would either erode the invariant or duplicate the orchestrator. See `70-review-only-shape.md` for the options under consideration. |
 
 `composer-full-orchestrator` moved to Phase 1.6 — see bottom of file.
 

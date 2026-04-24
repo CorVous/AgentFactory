@@ -91,6 +91,16 @@ Additional gates before declaring Phase 2 done:
    and `delegated-writer.ts` refactored onto `delegate()` pass their
    existing probe tasks with no behavioral delta (byte-identical
    promoted files, byte-identical GAP headers, same exit status).
+
+   **Status (2026-04-24): closed via post-refactor probe baselines +
+   determinism test.** Pre-refactor bytes aren't recoverable from the
+   tree (the refactor commit was destructive). The post-refactor
+   `deferred-writer` probe still runs green as of
+   `baselines/phase2-delegate/` and the `delegate()` determinism case
+   in `pi-sandbox/.pi/components/__tests__/delegate.test.ts` asserts
+   byte-equal plans + byte-equal shas across identical fixture runs.
+   Future refactors of `delegate()` itself should re-run these two
+   probes and diff against this baseline.
 8. **Composer improves on Phase-1 composer baseline.** Re-run all
    composer tasks after 2.4 (thin-agent emission); cost and turn
    count must be *at or below* Phase-1 composer medians. This is the
@@ -107,13 +117,16 @@ Per round, produce a single `summary.md` with a table:
 | task | model | skill | P0 | P1 | turns | cost | headline |
 ```
 
-Diff against baseline via `scripts/grader/report-diff.sh` (TODO —
-small new script, ~30 lines of awk + sort). Spec: reads two
-`grade.json` files (baseline, current), diffs on (P0 pass count,
-`cost_total_usd`, turn count, exit status), prints a markdown table
-with red rows when any metric exceeds the `max(+25%, +$0.02)` bound
-from pass criterion #2. No new dependencies; `jq` for extraction,
-`awk` for the comparison, `sort` for stable row order.
+Diff against baseline via `scripts/grader/report-diff.sh`. Landed
+2026-04-24 as ~25 lines of bash + jq. Reads two `grade.json` files and
+emits a single markdown row keyed on task/model/skill, with `✗` when
+the P0 passed-count regressed and `⚠` when `load` or `behavioral`
+worsened. **Deliberate scope trim:** `grade.json` currently has no
+`cost_total_usd` or `turn_count` fields (see
+`scripts/grader/lib/types.ts`), so this version diffs P0 + load +
+behavioral + headline only. Adding cost/turns means extending the
+grader to accumulate them from the round's NDJSON (TODO, separate
+change).
 
 ## Rollback
 
