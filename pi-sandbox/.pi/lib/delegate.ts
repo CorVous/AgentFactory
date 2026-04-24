@@ -33,7 +33,12 @@ import type {
   UiCtx,
 } from "../components/_parent-side.ts";
 
-const PHASE_TIMEOUT_MS = 120_000;
+// Matches the orchestrator's drafter timeout from the pre-delegate era
+// (`delegated-writer.ts::DRAFTER_TIMEOUT_MS`). The delegated-writer's
+// RPC-phase calls stay on 120s because they don't go through delegate()
+// — this ceiling is for drafter/scout/recon children only, and 180s is
+// a proven envelope across all three `$AGENT_BUILDER_TARGETS`.
+const PHASE_TIMEOUT_MS = 180_000;
 const MAX_FILES_PROMOTABLE = 50;
 const PREVIEW_LINES_PER_FILE = 20;
 const FORBIDDEN_TOOLS = new Set(["write", "edit", "bash"]);
@@ -46,6 +51,14 @@ export interface DelegateOpts {
   model?: string;
   /** Extra tokens to union into the child's --tools CSV. Rarely needed. */
   extraTools?: string[];
+  /** When `false`, skip the rails.md §10 confirm/promote step — the caller
+   *  receives validated plans via `byComponent.get("stage-write")` and is
+   *  responsible for promotion (possibly after an external review phase).
+   *  Default `true`. The RPC orchestrator in
+   *  `pi-sandbox/.pi/extensions/delegated-writer.ts` sets this `false` on
+   *  its drafter spawns because its LLM reviewer is the gate, not the
+   *  human confirm prompt. */
+  autoPromote?: boolean;
 }
 
 export interface DelegateResult {
@@ -129,8 +142,12 @@ export async function delegate(
   // declared alongside stage-write the LLM verdict is the gate; delegate()
   // itself doesn't run a single-child review loop, so that combination is
   // treated as "defer to caller" — plans are returned via byComponent and
-  // nothing is promoted automatically.
-  const { promoted, skips } = await promoteStagedWrites(ctx, byComponent, names);
+  // nothing is promoted automatically. Callers can also opt out of
+  // promotion unconditionally via `opts.autoPromote: false`.
+  const autoPromote = opts.autoPromote ?? true;
+  const { promoted, skips } = autoPromote
+    ? await promoteStagedWrites(ctx, byComponent, names)
+    : { promoted: [], skips: getStageSkips(byComponent) };
 
   if (childOutcome.timedOut) {
     ctx.ui.notify(
@@ -347,6 +364,37 @@ async function promoteStagedWrites(
   }
 
   return { promoted, skips };
+}
+
+/** Promote a list of validated {@link StagedWritePlan}s to disk with a
+ *  sha256 post-write verify, respecting the MAX_FILES_PROMOTABLE cap.
+ *  Exported so orchestrators that bypass `delegate()`'s built-in confirm
+ *  gate (e.g. the RPC delegator) can still reuse the safe-write path. */
+export function promote(
+  ctx: UiCtx,
+  plans: ReadonlyArray<StagedWritePlan>,
+): { promoted: string[]; skips: string[] } {
+  const promoted: string[] = [];
+  const skips: string[] = [];
+  if (plans.length === 0) return { promoted, skips };
+  if (plans.length > MAX_FILES_PROMOTABLE) {
+    ctx.ui.notify(
+      `promote() → ${plans.length} plans > MAX_FILES_PROMOTABLE (${MAX_FILES_PROMOTABLE}); aborting`,
+      "error",
+    );
+    return { promoted, skips };
+  }
+  for (const p of plans) {
+    const r = promoteOne(p);
+    if (r.ok) promoted.push(p.destAbs);
+    else skips.push(`${p.relPath}: ${r.reason}`);
+  }
+  return { promoted, skips };
+}
+
+function getStageSkips(byComponent: Map<string, unknown>): string[] {
+  const sw = byComponent.get("stage-write") as StageWriteResult | undefined;
+  return sw ? [...sw.skips] : [];
 }
 
 function promoteOne(p: StagedWritePlan): { ok: true } | { ok: false; reason: string } {
