@@ -106,7 +106,7 @@ the library doesn't have, emit EXACTLY this message and stop:
 
 ```
 GAP: I don't have a component for "<user's ask, quoted>".
-Patterns I know: recon, drafter-with-approval, confined-drafter, orchestrator.
+Patterns I know: recon, drafter-with-approval, confined-drafter, scout-then-draft, orchestrator.
 Closest match: <"none" OR the nearest pattern name + 1-sentence why it doesn't quite fit>.
 To cover this you'd need: <one sentence describing the missing part or pattern>.
 To continue anyway, load the pi-agent-builder skill for from-scratch authorship.
