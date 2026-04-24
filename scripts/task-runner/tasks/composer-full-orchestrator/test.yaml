@@ -1,0 +1,12 @@
+skill: pi-agent-composer
+expectation:
+  kind: composition
+  components: [cwd-guard, stage-write, review, run-deferred-writer]
+  composition: rpc-delegator-over-concurrent-drafters
+prompt: |
+  Build me an orchestrator agent that can dispatch several drafter
+  children in parallel to produce staged drafts, have an LLM reviewer
+  approve or revise each one, and only promote approved drafts to
+  disk.
+probe:
+  args: " write three tiny files in parallel: a.md containing 'alpha', b.md containing 'beta', c.md containing 'gamma'"

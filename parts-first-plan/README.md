@@ -20,6 +20,7 @@ re-enter later as a reference.
 | `40-components-heavy-phase2.md` | Phase 2 — grow components to export `parentSide`; ship `delegate()` helper; refactor canonical extensions; composer emits thin agents. **Gated on Phase 1 green.** |
 | `50-verification-and-ab.md` | A/B protocol across `$AGENT_BUILDER_TARGETS`, measurement, what counts as green, regression thresholds. |
 | `60-open-questions.md` | Decisions deferred to implementation; record answers here as they land. |
+| `70-review-only-shape.md` | Parked design note — why `composer-review-only` was deferred and the three candidate shapes. |
 
 ## Guiding principles
 
