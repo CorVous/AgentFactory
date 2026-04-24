@@ -19,13 +19,25 @@ gives the skill a named-shape vocabulary small models latch onto.
 
 ## 2. Auto-infer `composition` from component list?
 
-Rule sketch:
+This is the **source of truth** for the inference cascade; the grader
+(`20-composer-grader.md §Composition-topology check`) mirrors it.
 
-- `review ∈ components` or `run-deferred-writer ∈ components` →
-  `rpc-delegator-over-concurrent-drafters`.
-- `emit-summary ∈ components && stage-write ∈ components` →
-  `sequential-phases-with-brief`.
-- Else → `single-spawn`.
+```
+composition-inference (when expectation.composition is omitted):
+  if run-deferred-writer ∈ components        → rpc-delegator-over-concurrent-drafters
+  else if review ∈ components                → rpc-delegator-over-concurrent-drafters
+  else if emit-summary ∈ components && stage-write ∈ components
+                                             → sequential-phases-with-brief
+  else                                       → single-spawn
+```
+
+Ordering matters: the `review ∈ components` branch fires **before**
+the `emit-summary + stage-write` branch. Without that precedence,
+`composer-review-only` (`[cwd-guard, stage-write, review]`) would
+never have triggered `sequential-phases-with-brief` — but tasks like
+`composer-scout-then-draft` (`[cwd-guard, emit-summary, stage-write]`
+plus *nothing else*) need the emit-summary+stage-write branch to fire
+on their own. The ordered cascade separates the two cleanly.
 
 **Recommendation:** make `composition:` optional in `test.yaml`;
 auto-infer with a P1 warning when it's load-bearing but omitted. This
@@ -59,11 +71,16 @@ The prompt validator (§30) needs a machine-readable version of
 - (b) auto-generate from the markdown at build time — zero drift,
   needs a small parser.
 
-**Recommendation:** start with (a); add a `prompts-signal-drift.test.ts`
-that re-parses the markdown and fails the build if the code table
-diverges. Upgrade to (b) if the test starts firing weekly.
+**Recommendation:** write the markdown parser first — the
+`prompts-signal-drift.test.ts` drift test needs it either way. If
+the parser fits in under 40 lines, use it to auto-generate
+`signal-map.ts` at build time directly (option b) and skip the
+hand-mirror. If the parser needs more than 40 lines, keep a
+hand-mirrored `signal-map.ts` and use the parser only for the drift
+test (option a). The choice is driven by parser cost, not an upfront
+preference.
 
-**Status:** provisionally (a) + drift test.
+**Status:** parser-size-driven. Revisit once the parser is written.
 
 ## 5. Does `delegate()` belong in `pi-sandbox/.pi/components/` or
    somewhere else?
@@ -90,18 +107,21 @@ too.
 
 ## 6. Orchestrator task in Phase 1?
 
-Phase 1 plans `composer-full-orchestrator` as a net-new task. But
-orchestrator is the highest-complexity shape and the most likely to
-regress on small models. Adding it to Phase 1 might delay Phase 2
-gate-open unnecessarily.
+Phase 1 originally planned `composer-full-orchestrator` as a net-new
+task. But orchestrator is the highest-complexity shape and the most
+likely to regress on small models — and pre-`delegate()`, composer
+emits the full RPC orchestrator inline (~700 lines mirroring
+`delegated-writer.ts`), which risks masking wins on simpler
+compositions.
 
-**Recommendation:** include it in Phase 1 but don't gate Phase 2 on
-it. Pass criteria §3 requires only 2/3 models to pass — if GLM fails
-orchestrator specifically, that's a known small-model ceiling (like
-recon behavioral=partial on deepseek-v3.2 in `AGENTS.md`), not a
-skill defect.
+**Recommendation:** move to Phase 1.6 (see `30-composer-tasks.md`
+bottom). Gate: mirror tasks (1a/1b/1c) sustain green on ≥2/3 models
+across ≥1 full round before orchestrator is authored. Phase 2 does
+not gate on Phase 1.6; if GLM fails orchestrator specifically, that
+remains a known small-model ceiling (like recon behavioral=partial on
+deepseek-v3.2 in `AGENTS.md`).
 
-**Status:** provisionally yes.
+**Status:** decided — Phase 1.6, not Phase 1.
 
 ## 7. Should `pi-agent-composer` link into
    `pi-agent-builder/references/defaults.md`?

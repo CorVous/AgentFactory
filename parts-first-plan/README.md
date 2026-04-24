@@ -35,17 +35,24 @@ re-enter later as a reference.
    4.5, Gemini 3 Flash Preview, GLM 5.1) is the design constraint; if
    the composer regresses GLM below the assembler's $0.013–$0.048/task,
    3–6-turn band, we investigate before widening scope.
+5. **Narrow bring-up.** Scaffold + grader ship against one mirror task
+   (`composer-drafter-approval`) before the other four; five
+   simultaneous A/Bs is a coarse-grained debug loop. See
+   `30-composer-tasks.md §Bring-up order`.
 
 ## Work branch
 
-`claude/disable-assembler-pattern-format-eKNZh` — despite the name, the
-approach is "add composer alongside" not "disable assembler." Branch
-name is retained to keep the PR thread coherent.
+`claude/review-project-plan-O6lS8` — this plan and the composer skill
+land on the same branch.
 
 ## Phase gates
 
 - **Enter Phase 1.4** (initial composer round) only after 1.1–1.3 land.
+- **Enter Phase 1.6** (orchestrator task) only after mirror tasks
+  sustain green on ≥2/3 `$AGENT_BUILDER_TARGETS` across ≥1 full round.
 - **Enter Phase 2** only after Phase 1 sustains green on all three
-  `$AGENT_BUILDER_TARGETS` across at least five composer tasks.
+  `$AGENT_BUILDER_TARGETS` across at least five composer tasks. Phase
+  2 does **not** gate on Phase 1.6 — orchestrator is the
+  highest-complexity shape and a known small-model ceiling risk.
 - **Deletion of `pi-agent-assembler`** is not on this plan. That is a
   separate decision informed by Phase-2 evidence.

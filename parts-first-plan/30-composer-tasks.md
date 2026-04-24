@@ -3,6 +3,18 @@
 Net-new tasks under `scripts/task-runner/tasks/composer-*/`. Existing
 assembler tasks untouched.
 
+## Bring-up order
+
+Land the skill scaffold (§10) and grader (§20) against
+**`composer-drafter-approval` only** before authoring the other four
+mirror tasks. `deferred-writer.ts` is the cleanest canonical reference
+(316 lines, fully working), so the first A/B round debugs the grader
+shape against known-good code. Extend to the remaining mirror tasks
+(`composer-recon`, `composer-confined-drafter`, `composer-scout-then-draft`,
+`composer-out-of-library`) only once the single-task loop is green on
+≥2 of 3 `$AGENT_BUILDER_TARGETS`. Five simultaneous A/Bs is a
+coarse-grained debug loop.
+
 ## test.yaml shape
 
 ```
@@ -48,7 +60,8 @@ path and we want a baseline on the simpler four before adding it.
 | Task dir | Components | Composition | Why it's new |
 | --- | --- | --- | --- |
 | `composer-review-only/` | `[cwd-guard, stage-write, review]` | `single-spawn` with review | Single drafter whose output goes through an LLM review before promotion, but no RPC delegator. Assembler's orchestrator pattern insists on RPC; composer should allow this thinner shape. |
-| `composer-full-orchestrator/` | `[cwd-guard, stage-write, review, run-deferred-writer]` | `rpc-delegator-over-concurrent-drafters` | Full orchestrator as a composition sanity-check. Prompt mirrors `delegated-writer.ts`'s intent. |
+
+`composer-full-orchestrator` moved to Phase 1.6 — see bottom of file.
 
 ## Prompt authoring rules
 
@@ -81,11 +94,13 @@ Logic (~40 lines):
    `cwd-guard`, `run_deferred_writer`, `sandbox_write`).
 7. Print a per-task report; exit 1 if any task fails.
 
-Output a scratch `signal-map.ts` table built from
-`reading-short-prompts.md:32-48`; keep the source of truth in the
-reference markdown and mirror it in code. A small follow-up is to
-auto-generate `signal-map.ts` from the markdown at build time — defer
-unless the dual-source drift shows up.
+Source-of-truth decision: write the markdown parser first — the drift
+test described in `60-open-questions.md §4` needs it regardless. If
+the parser fits in under 40 lines, use it to auto-generate
+`signal-map.ts` at build time directly (no hand-mirror). If the parser
+needs more than 40 lines, keep a hand-mirrored `signal-map.ts` and use
+the parser only for the drift test. This avoids committing to (a) vs
+(b) before seeing what the parser actually costs.
 
 ## Invocation examples
 
@@ -109,3 +124,20 @@ npm run validate-prompts
   — these are the assembler baseline.
 - `scripts/task-runner/agent-maker.sh` — already generic over `-s`.
 - `scripts/task-runner/run-task.sh` — same.
+
+## Phase 1.6 — `composer-full-orchestrator`
+
+| Task dir | Components | Composition |
+| --- | --- | --- |
+| `composer-full-orchestrator/` | `[cwd-guard, stage-write, review, run-deferred-writer]` | `rpc-delegator-over-concurrent-drafters` |
+
+Full orchestrator as a composition sanity-check. Prompt mirrors
+`delegated-writer.ts`'s intent.
+
+Add **after** mirror tasks (1a/1b/1c) sustain green on ≥2/3 models
+across ≥1 full round. Rationale: pre-`delegate()`, composer emits the
+full RPC orchestrator inline (`delegated-writer.ts` is 701 lines),
+which is the worst-fit shape for small-model authorship and risks
+masking wins on simpler compositions. Pass criteria for Phase 1.6 are
+spelled out in `50-verification-and-ab.md`; Phase 2 does **not** gate
+on Phase 1.6.
