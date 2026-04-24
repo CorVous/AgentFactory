@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { gradeAssemblerTask } from "./graders/assembler.ts";
+import { gradeComposerTask } from "./graders/composer.ts";
 import { FRAMEWORK_ROOT, REPO_ROOT } from "./lib/paths.ts";
 import { loadTestSpec } from "./lib/test-spec.ts";
 
@@ -47,23 +48,41 @@ function main(): void {
 
   const spec = loadTestSpec(taskDir);
 
-  const { rubric, kind, pattern } = gradeAssemblerTask({
-    repoRoot: REPO_ROOT,
-    logDir,
-    model,
-    task,
-    spec,
-  });
+  let rubricResult;
+  if (spec.skill === "pi-agent-composer") {
+    const { rubric, kind, composition, components } = gradeComposerTask({
+      repoRoot: REPO_ROOT,
+      logDir,
+      model,
+      task,
+      spec,
+    });
+    rubricResult = {
+      rubric,
+      kind: kind as "composition" | "gap",
+      pattern: composition,
+      components,
+    };
+  } else {
+    const { rubric, kind, pattern } = gradeAssemblerTask({
+      repoRoot: REPO_ROOT,
+      logDir,
+      model,
+      task,
+      spec,
+    });
+    rubricResult = { rubric, kind: kind as "assembly" | "gap", pattern };
+  }
 
-  const md = rubric.emitMarkdown();
+  const md = rubricResult.rubric.emitMarkdown();
   process.stdout.write(md);
 
-  rubric.writeJson(path.join(logDir, "grade.json"), {
+  rubricResult.rubric.writeJson(path.join(logDir, "grade.json"), {
     model,
     task,
     skill: spec.skill,
-    kind,
-    pattern,
+    kind: rubricResult.kind,
+    pattern: rubricResult.pattern,
   });
 }
 

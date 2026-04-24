@@ -1,0 +1,10 @@
+skill: pi-agent-composer
+expectation:
+  kind: composition
+  components: [cwd-guard, stage-write]
+  composition: single-spawn
+prompt: |
+  Write me an agent that writes to a file in buffer that waits for the
+  user to approve before the writes go through.
+probe:
+  args: " create a file hello-probe.md with the text hi"
