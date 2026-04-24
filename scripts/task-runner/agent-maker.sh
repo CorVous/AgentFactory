@@ -17,7 +17,7 @@
 #   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 -s pi-agent-builder --grade
 #   agent-maker.sh --interactive -m google/gemini-3-flash-preview
 #
-# Task definition lives at scripts/approach-b-framework/tasks/<task>/test.yaml
+# Task definition lives at scripts/task-runner/tasks/<task>/test.yaml
 # (schema: scripts/grader/lib/test-spec.ts). The file declares which skill to
 # invoke, the expected outcome (assembly + pattern, or gap), the
 # natural-language prompt, and the behavioral probe args.

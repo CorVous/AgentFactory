@@ -167,7 +167,7 @@ async function main(): Promise<void> {
   if (args.runAfter && materialized.length > 0) {
     console.log(`# Running run-task.sh for ${materialized.length} generated task(s)\n`);
     for (const { out } of materialized) {
-      const runner = path.join(repoRoot, "scripts/approach-b-framework/run-task.sh");
+      const runner = path.join(repoRoot, "scripts/task-runner/run-task.sh");
       const res = spawnSync("bash", [runner, out.relTaskName], {
         stdio: "inherit",
         env: process.env,

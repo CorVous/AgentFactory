@@ -45,7 +45,7 @@ const PATTERN_NAMES: PatternName[] = [
 
 /**
  * Default probe per pattern. Matches what the committed hand-authored
- * tasks under scripts/approach-b-framework/tasks/ use, so generated
+ * tasks under scripts/task-runner/tasks/ use, so generated
  * curations exercise the same smoke paths.
  */
 const PROBE_DEFAULTS: Record<PatternName, { args: string; evidence_anchor?: string } | undefined> = {

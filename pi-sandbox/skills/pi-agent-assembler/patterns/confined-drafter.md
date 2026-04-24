@@ -51,7 +51,7 @@ the case where the gate would hurt.
 
 ## Canonical assembled example
 
-`scripts/approach-b-framework/agent-maker.sh` runs pi with the
+`scripts/task-runner/agent-maker.sh` runs pi with the
 `pi-agent-builder` (or this) skill in a per-run cwd, loading
 cwd-guard as the sole `-e` argument and passing the narrow
 allowlist above. Study that script for the parent-side plumbing —

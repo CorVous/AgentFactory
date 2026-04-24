@@ -113,12 +113,12 @@ describe("materialize", () => {
       assert.ok(fs.existsSync(out.yamlPath));
       assert.equal(
         path.relative(REPO_ROOT, out.yamlPath),
-        path.join("scripts", "approach-b-framework", "tasks", "generated", tag, "test.yaml"),
+        path.join("scripts", "task-runner", "tasks", "generated", tag, "test.yaml"),
       );
     } finally {
       // Clean up the generated dir so tasks/generated stays ignored.
       fs.rmSync(
-        path.join(REPO_ROOT, "scripts", "approach-b-framework", "tasks", "generated", tag),
+        path.join(REPO_ROOT, "scripts", "task-runner", "tasks", "generated", tag),
         { recursive: true, force: true },
       );
     }

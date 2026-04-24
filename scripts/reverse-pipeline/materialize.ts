@@ -87,7 +87,7 @@ export function serializeTestSpec(curation: Curation, spec: TestSpec, meta: Mate
 
 /**
  * Write a curation+prompt pair to
- * scripts/approach-b-framework/tasks/generated/<tag>/test.yaml.
+ * scripts/task-runner/tasks/generated/<tag>/test.yaml.
  * Returns the paths used so the CLI can log them and invoke the runner.
  */
 export function materialize(
@@ -102,7 +102,7 @@ export function materialize(
   const taskDir = path.join(
     repoRoot,
     "scripts",
-    "approach-b-framework",
+    "task-runner",
     "tasks",
     relTaskName,
   );

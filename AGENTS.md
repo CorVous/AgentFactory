@@ -87,7 +87,7 @@ settled.
 ### Invoking the skill
 
 Preferred: `npm run agent-maker` / `npm run agent-maker:i`. Both wrap
-`scripts/approach-b-framework/agent-maker.sh`, which runs pi in a
+`scripts/task-runner/agent-maker.sh`, which runs pi in a
 **per-run isolated cwd** under `pi-sandbox/.pi/scratch/runs/<label>/`
 with the pi-agent-builder skill loaded at an absolute path, a narrow
 `--tools read,sandbox_write,sandbox_edit,ls,grep` allowlist, and the
@@ -109,7 +109,7 @@ npm run agent-maker:i              # uses $TASK_MODEL
 npm run agent-maker:i -- -m google/gemini-3-flash-preview
 
 # Batch across $AGENT_BUILDER_TARGETS (one run per model, sequential):
-scripts/approach-b-framework/run-task.sh recon-agent -r my-label
+scripts/task-runner/run-task.sh recon-agent -r my-label
 ```
 
 Both npm scripts source `models.env` first, so `$TASK_MODEL` etc. are
@@ -344,9 +344,10 @@ generation), a separate class of issues surfaces:
   on top of a stale one for an unrelated test.
 - **Don't hand Claude Code a plan that says "copy a big file verbatim,
   then edit sections" and expect it to emit the result in a single
-  `Write` call.** We hit this with `scripts/grade-deferred-writer.sh`
-  (571 lines / 23 KB of escape-heavy bash — nested quote regexes,
-  heredocs, `awk -F:` + `printf`-built JSON). Every attempt crashed
+  `Write` call.** We hit this with the old bash grader
+  `scripts/grade-deferred-writer.sh` (571 lines / 23 KB of escape-heavy
+  bash — nested quote regexes, heredocs, `awk -F:` + `printf`-built
+  JSON; since deleted). Every attempt crashed
   at the same point: the small rubric committed fine, then the
   grader copy died mid-`Write`. The failure is some mix of
   per-response output-token ceiling, JSON-escape corruption of the
