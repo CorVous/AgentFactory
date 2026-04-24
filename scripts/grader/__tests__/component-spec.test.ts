@@ -6,7 +6,12 @@ import {
   isKnownComponent,
   type ComponentName,
 } from "../lib/component-spec.ts";
-import { findSpawnInvocations } from "../lib/artifact.ts";
+import {
+  findDelegateUsage,
+  findSpawnInvocations,
+  type ArtifactSet,
+  type SpawnInvocation,
+} from "../lib/artifact.ts";
 import { inferComposition } from "../lib/test-spec.ts";
 
 /* -------- Composition inference cascade ----------------------------- */
@@ -92,6 +97,28 @@ describe("forbiddenToolHits", () => {
 
 /* -------- Per-component wiringChecks -------------------------------- */
 
+/** Build a WiringContext for tests. `delegateHandles` and
+ *  `importedComponents` default to empty sets because these tests
+ *  cover the pre-Phase-2.5 inline-spawn pattern; Phase-2.5 adds
+ *  dedicated delegate-shape tests separately. */
+function ctx(
+  art: ArtifactSet,
+  spawns: SpawnInvocation[],
+  components: Set<ComponentName>,
+  overrides: Partial<{
+    delegateHandles: Set<ComponentName>;
+    importedComponents: Set<ComponentName>;
+  }> = {},
+) {
+  return {
+    art,
+    spawns,
+    components,
+    delegateHandles: overrides.delegateHandles ?? new Set<ComponentName>(),
+    importedComponents: overrides.importedComponents ?? new Set<ComponentName>(),
+  };
+}
+
 const FAKE_BLOB_DRAFTER_APPROVAL = `
   const STAGE_WRITE = "/abs/components/stage-write.ts";
   const CWD_GUARD = "/abs/components/cwd-guard.ts";
@@ -143,7 +170,7 @@ describe("wiringChecks: cwd-guard", () => {
     const art = makeArt(FAKE_BLOB_DRAFTER_APPROVAL);
     const spawns = findSpawnInvocations(FAKE_BLOB_DRAFTER_APPROVAL);
     const components = new Set<ComponentName>(["cwd-guard", "stage-write"]);
-    const marks = COMPONENTS["cwd-guard"].wiringChecks({ art, spawns, components });
+    const marks = COMPONENTS["cwd-guard"].wiringChecks(ctx(art, spawns, components));
     assert.ok(marks.every((m) => m.status === "pass"), JSON.stringify(marks));
   });
 });
@@ -153,7 +180,7 @@ describe("wiringChecks: stage-write", () => {
     const art = makeArt(FAKE_BLOB_DRAFTER_APPROVAL);
     const spawns = findSpawnInvocations(FAKE_BLOB_DRAFTER_APPROVAL);
     const components = new Set<ComponentName>(["cwd-guard", "stage-write"]);
-    const marks = COMPONENTS["stage-write"].wiringChecks({ art, spawns, components });
+    const marks = COMPONENTS["stage-write"].wiringChecks(ctx(art, spawns, components));
     const confirmMark = marks.find((m) =>
       m.name.includes("ctx.ui.confirm before disk write"),
     );
@@ -172,7 +199,7 @@ describe("wiringChecks: stage-write", () => {
       "stage-write",
       "review",
     ]);
-    const marks = COMPONENTS["stage-write"].wiringChecks({ art, spawns, components });
+    const marks = COMPONENTS["stage-write"].wiringChecks(ctx(art, spawns, components));
     const noConfirmMark = marks.find((m) =>
       m.name.includes("no ctx.ui.confirm when review"),
     );
@@ -187,11 +214,7 @@ describe("wiringChecks: emit-summary", () => {
     const art = makeArt(blobWithConfirm);
     const spawns = findSpawnInvocations(blobWithConfirm);
     const components = new Set<ComponentName>(["emit-summary"]);
-    const marks = COMPONENTS["emit-summary"].wiringChecks({
-      art,
-      spawns,
-      components,
-    });
+    const marks = COMPONENTS["emit-summary"].wiringChecks(ctx(art, spawns, components));
     const noConfirmMark = marks.find((m) =>
       m.name.includes("no ctx.ui.confirm in summary-only flow"),
     );
@@ -203,11 +226,7 @@ describe("wiringChecks: emit-summary", () => {
     const art = makeArt(FAKE_BLOB_EMIT_ONLY);
     const spawns = findSpawnInvocations(FAKE_BLOB_EMIT_ONLY);
     const components = new Set<ComponentName>(["emit-summary"]);
-    const marks = COMPONENTS["emit-summary"].wiringChecks({
-      art,
-      spawns,
-      components,
-    });
+    const marks = COMPONENTS["emit-summary"].wiringChecks(ctx(art, spawns, components));
     assert.ok(marks.every((m) => m.status === "pass"), JSON.stringify(marks));
   });
 });
@@ -221,7 +240,112 @@ describe("wiringChecks: review", () => {
       "stage-write",
       "review",
     ]);
-    const marks = COMPONENTS["review"].wiringChecks({ art, spawns, components });
+    const marks = COMPONENTS["review"].wiringChecks(ctx(art, spawns, components));
+    assert.ok(marks.every((m) => m.status === "pass"), JSON.stringify(marks));
+  });
+});
+
+/* -------- findDelegateUsage (Phase 2.5) ----------------------------- */
+
+const THIN_AGENT_BLOB = `
+  import path from "node:path";
+  import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+  import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+  import { delegate } from "../lib/delegate.ts";
+  pi.registerCommand("x", {
+    handler: async (args, ctx) => {
+      await delegate(ctx, {
+        components: [CWD_GUARD, STAGE_WRITE],
+        prompt: "p",
+      });
+    },
+  });
+`;
+
+const INLINE_AGENT_BLOB = `
+  const child = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write", "--no-extensions"]);
+`;
+
+const ORCHESTRATOR_BLOB = `
+  import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+  import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+  import { parentSide as REVIEW } from "../components/review.ts";
+  import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
+  import { delegate } from "../lib/delegate.ts";
+  const stageHook = { ...STAGE_WRITE, harvest() {} };
+  const result = await delegate(ctx, { components: [CWD_GUARD, stageHook], prompt: p });
+  REVIEW.harvest(ev, reviewState);
+  RUN_DEFERRED_WRITER.harvest(ev, dispatchState);
+  spawn("pi", ["--mode", "rpc", "--tools", "run_deferred_writer,review"]);
+`;
+
+describe("findDelegateUsage", () => {
+  it("detects a thin-agent pattern", () => {
+    const u = findDelegateUsage(THIN_AGENT_BLOB);
+    assert.equal(u.usesDelegate, true);
+    assert.deepEqual([...u.importedComponents].sort(), ["cwd-guard", "stage-write"]);
+    assert.deepEqual([...u.delegateHandles].sort(), ["cwd-guard", "stage-write"]);
+  });
+
+  it("reports usesDelegate=false for an inline-spawn agent", () => {
+    const u = findDelegateUsage(INLINE_AGENT_BLOB);
+    assert.equal(u.usesDelegate, false);
+    assert.equal(u.importedComponents.size, 0);
+    assert.equal(u.delegateHandles.size, 0);
+  });
+
+  it("resolves a wrapped-component identifier (stageHook) to its underlying import", () => {
+    const u = findDelegateUsage(ORCHESTRATOR_BLOB);
+    assert.equal(u.usesDelegate, true);
+    // stageHook wraps STAGE_WRITE — should be picked up via the wrapper scan.
+    assert.ok(u.delegateHandles.has("stage-write"), [...u.delegateHandles].join(","));
+    assert.ok(u.delegateHandles.has("cwd-guard"));
+    // review and run-deferred-writer are imported (for their harvesters)
+    // but drive the RPC spawn inline — not in delegateHandles.
+    assert.ok(u.importedComponents.has("review"));
+    assert.ok(u.importedComponents.has("run-deferred-writer"));
+    assert.ok(!u.delegateHandles.has("review"));
+    assert.ok(!u.delegateHandles.has("run-deferred-writer"));
+  });
+});
+
+describe("wiringChecks + delegate (Phase 2.5)", () => {
+  it("cwd-guard short-circuits to pass when handled by delegate", () => {
+    const art = makeArt("import ... // no PI_SANDBOX_ROOT, no -e literals");
+    const marks = COMPONENTS["cwd-guard"].wiringChecks(
+      ctx(art, [], new Set(["cwd-guard"]), {
+        delegateHandles: new Set(["cwd-guard"]),
+        importedComponents: new Set(["cwd-guard"]),
+      }),
+    );
+    assert.ok(marks.every((m) => m.status === "pass"));
+    assert.ok(marks.some((m) => m.name.includes("delegate()")));
+  });
+
+  it("stage-write short-circuits to pass when handled by delegate", () => {
+    const art = makeArt("// thin agent — no ctx.ui.confirm, no fs.writeFileSync");
+    const marks = COMPONENTS["stage-write"].wiringChecks(
+      ctx(art, [], new Set(["stage-write"]), {
+        delegateHandles: new Set(["stage-write"]),
+        importedComponents: new Set(["stage-write"]),
+      }),
+    );
+    assert.ok(marks.every((m) => m.status === "pass"));
+    assert.ok(marks.some((m) => m.name.includes("delegate()")));
+  });
+
+  it("review accepts imported parentSide harvest (no inline literal)", () => {
+    const blob = `
+      spawn("pi", ["--mode", "rpc", "--tools", "review"]);
+      REVIEW.harvest(ev, reviewState);
+    `;
+    const art = makeArt(blob);
+    const spawns = findSpawnInvocations(blob);
+    const marks = COMPONENTS["review"].wiringChecks(
+      ctx(art, spawns, new Set(["review"]), {
+        importedComponents: new Set(["review"]),
+      }),
+    );
     assert.ok(marks.every((m) => m.status === "pass"), JSON.stringify(marks));
   });
 });

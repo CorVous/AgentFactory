@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import type { ArtifactSet, SpawnInvocation } from "./artifact.ts";
+import type { ArtifactSet, DelegateUsage, SpawnInvocation } from "./artifact.ts";
 import type { Rubric } from "./rubric.ts";
 
 /**
@@ -32,8 +32,24 @@ export function gradeSubprocessRails(
   rubric: Rubric,
   art: ArtifactSet,
   spawns: SpawnInvocation[],
+  delegateUsage?: DelegateUsage,
 ): void {
   rubric.say("## Subprocess rails");
+
+  // Thin agents (single delegate() call, no inline spawn) delegate every
+  // subprocess rail below to `pi-sandbox/.pi/lib/delegate.ts`. Report
+  // them as pass-by-delegate instead of failing on missing string
+  // literals that now live in the library file.
+  const thinAgent =
+    spawns.length === 0 && !!delegateUsage && delegateUsage.usesDelegate;
+  if (thinAgent) {
+    rubric.p0(
+      "subprocess rails handled by delegate() runtime",
+      "pass",
+      "no inline spawn; rails enforced in ../lib/delegate.ts",
+    );
+    return;
+  }
 
   const anySpawn = spawns.length > 0;
   const allNoExt = anySpawn && spawns.every((s) => s.noExtensions);
@@ -72,7 +88,25 @@ export function gradeSubprocessRails(
   );
 }
 
-export function gradeNdjsonParsing(rubric: Rubric, art: ArtifactSet): void {
+export function gradeNdjsonParsing(
+  rubric: Rubric,
+  art: ArtifactSet,
+  delegateUsage?: DelegateUsage,
+): void {
+  // delegate() owns the NDJSON split/parse loop; a thin agent body
+  // never references the event-type strings or JSON.parse.
+  if (delegateUsage?.usesDelegate) {
+    const hasDelegateEvents =
+      /tool_execution_start|message_end|message_update/.test(art.extBlob);
+    const hasDelegateParse = /JSON\.parse\(/.test(art.extBlob);
+    if (!hasDelegateEvents && !hasDelegateParse) {
+      rubric.p0(
+        "NDJSON parsing handled by delegate() runtime",
+        "pass",
+      );
+      return;
+    }
+  }
   const hasEvents = /tool_execution_start|message_end|message_update/.test(art.extBlob);
   const hasParse = /JSON\.parse\(/.test(art.extBlob);
   rubric.p0(
@@ -81,7 +115,27 @@ export function gradeNdjsonParsing(rubric: Rubric, art: ArtifactSet): void {
   );
 }
 
-export function gradePathValidation(rubric: Rubric, art: ArtifactSet): void {
+export function gradePathValidation(
+  rubric: Rubric,
+  art: ArtifactSet,
+  delegateUsage?: DelegateUsage,
+): void {
+  // Path validation + sandbox-root escape check are both inside
+  // stage-write.parentSide.finalize + delegate's promote helper.
+  if (
+    delegateUsage?.usesDelegate &&
+    delegateUsage.delegateHandles.has("stage-write")
+  ) {
+    rubric.p0(
+      "path validation handled by delegate() + stage-write finalize",
+      "pass",
+    );
+    rubric.p0(
+      "sandbox-root escape check handled by delegate() + stage-write finalize",
+      "pass",
+    );
+    return;
+  }
   const blob = art.extBlob;
   const hasIsAbsolute = /path\.isAbsolute|isAbsolute\(/.test(blob);
   const hasExists = /fs\.existsSync/.test(blob);
