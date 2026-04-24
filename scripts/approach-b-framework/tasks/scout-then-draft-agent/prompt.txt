@@ -1,1 +1,0 @@
-Build me an agent that surveys a directory, then drafts a new README.md summarizing what's there. Show me the draft before saving.

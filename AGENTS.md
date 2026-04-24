@@ -38,17 +38,19 @@ wiring a new agent, match the tier to the job:
 
 In addition to the three tiers, `models.env` exposes
 `AGENT_BUILDER_TARGETS` — a comma-separated list of models the
-`pi-agent-builder` skill is expected to work well on (the skill should
-produce a correct, safe pi extension from a short natural-language
-prompt on every one of them, not just one). Current targets: **Haiku
-4.5** (`anthropic/claude-haiku-4.5`) and **Gemini 3 Flash Preview**
-(`google/gemini-3-flash-preview`). When refining the skill, test
-against both; when invoking pi, pick either and pass it via `--model`.
-**GLM 5.1** (`z-ai/glm-5.1`) was dropped as a target on 2026-04-23:
-too slow and expensive for iterative skill-harness runs at the current
-skill size. Revisit once the skill is distilled enough that a
-small-to-mid model produces a correct extension in a few turns rather
-than the dozens GLM needed.
+agent-making skills (`pi-agent-builder`, `pi-agent-assembler`) are
+expected to work well on (each skill should produce a correct, safe
+pi extension from a short natural-language prompt on every one of
+them, not just one). Current targets: **Haiku 4.5**
+(`anthropic/claude-haiku-4.5`), **Gemini 3 Flash Preview**
+(`google/gemini-3-flash-preview`), and **GLM 5.1** (`z-ai/glm-5.1`).
+When refining a skill, test against all three; when invoking pi,
+pick any and pass it via `--model`. GLM 5.1 was dropped on
+2026-04-23 for the builder skill (too slow, too many turns) and
+added back the same day after the smaller assembler skill landed:
+on smoke tests across drafter-with-approval / recon / gap tasks,
+GLM converged in 3–6 turns at $0.013–$0.048/task with full-pass
+grades. The "compose, don't author" shape fits it well.
 
 Source the file before launching pi so the tier vars are in scope:
 

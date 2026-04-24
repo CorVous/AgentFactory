@@ -37,8 +37,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 cd "$REPO"
 
 TASK_DIR="$HERE/tasks/$TASK"
-if [[ ! -f "$TASK_DIR/task.env" || ! -f "$TASK_DIR/prompt.txt" ]]; then
-  echo "Task $TASK missing files (need task.env + prompt.txt in $TASK_DIR)" >&2
+if [[ ! -f "$TASK_DIR/test.yaml" ]]; then
+  echo "Task $TASK missing test.yaml at $TASK_DIR" >&2
   exit 2
 fi
 
@@ -55,11 +55,11 @@ if [[ -z "${AGENT_BUILDER_TARGETS:-}" ]]; then
 fi
 
 # shellcheck disable=SC1091
-source "$TASK_DIR/task.env"
-: "${PROFILE:?task.env must set PROFILE}"
-
-USER_PROMPT="$(sed -E 's/[[:space:]]+$//' "$TASK_DIR/prompt.txt")"
-WRAPPED_PROMPT="Use the pi-agent-builder skill to: ${USER_PROMPT}."
+source "$HERE/lib/test-spec-sh.sh"
+load_test_spec "$TASK_DIR"
+USER_PROMPT="$(sed -E 's/[[:space:]]+$//' "$TEST_PROMPT_FILE")"
+rm -f "$TEST_PROMPT_FILE"
+WRAPPED_PROMPT="Use the ${TEST_SKILL} skill to: ${USER_PROMPT}."
 
 SANDBOX="$REPO/pi-sandbox"
 RUNS_ROOT="$SANDBOX/.pi/scratch/runs"
@@ -83,7 +83,9 @@ else
 fi
 
 SUMMARY="$ROUND_DIR/summary.md"
-printf "# Round %s — task: %s (profile: %s)\n\n" "$ROUND_LABEL" "$TASK" "$PROFILE" > "$SUMMARY"
+HEADING="${TEST_EXPECT_KIND}${TEST_PATTERN:+: $TEST_PATTERN}"
+printf "# Round %s — task: %s (skill: %s, expect: %s)\n\n" \
+  "$ROUND_LABEL" "$TASK" "$TEST_SKILL" "$HEADING" > "$SUMMARY"
 printf "Prompt: \`%s\`\n\n" "$WRAPPED_PROMPT" >> "$SUMMARY"
 printf "| Model | P0 passed | P1 passed | Load | Behavioral | Headline |\n" >> "$SUMMARY"
 printf "|---|---|---|---|---|---|\n" >> "$SUMMARY"

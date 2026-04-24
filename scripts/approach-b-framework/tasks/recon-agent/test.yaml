@@ -1,0 +1,10 @@
+skill: pi-agent-assembler
+expectation:
+  kind: assembly
+  pattern: recon
+prompt: |
+  Write me an agent that reads a directory and produces a one-page
+  summary of what it contains.
+probe:
+  args: " skills/pi-agent-builder"
+  evidence_anchor: SKILL.md
