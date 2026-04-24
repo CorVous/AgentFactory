@@ -54,18 +54,25 @@ export function generatePrompt(curation: Curation, opts: GenerateOptions): Gener
 function buildSystemPrompt(curation: Curation): string {
   const base = [
     "You are writing a short user request that a developer might type",
-    "when they want a new pi agent. The request will be handed to a",
-    "skill that classifies it as one of several patterns and assembles",
-    "an agent from components.",
+    "when they want a new pi agent. The user is asking for a TOOL to be",
+    "BUILT — an agent they can run later — not for the underlying job",
+    "to be performed right now. A downstream skill will classify the",
+    "request and assemble an agent from components.",
     "",
     "Rules:",
-    "- Describe the JOB the user wants done, in natural developer",
+    "- Frame the ask as a request to BUILD an agent / tool / command.",
+    "  Start with phrases like 'I want an agent that…', 'Build me a",
+    "  tool that…', 'I need a command that…', 'Write me an agent",
+    "  that…'. NEVER frame it as 'do this task for me now' or",
+    "  'help me with X' — that reads as a direct task request and",
+    "  breaks classification downstream.",
+    "- Describe the JOB the agent should do, in natural developer",
     "  language. Do NOT describe the implementation.",
     "- Do NOT name any pattern, component, tool, or pi-specific vocabulary",
     "  (e.g. do NOT say: 'stage', 'emit-summary', 'cwd-guard', 'drafter',",
     "  'scout', 'orchestrator', 'recon', 'confined', 'stub', 'harvest').",
-    "- Do NOT describe the internals (spawn, stdout, json events,",
-    "  --tools, --mode, etc).",
+    "- Do NOT describe internals (spawn, stdout, json events, --tools,",
+    "  --mode, etc).",
     "- 2 to 4 sentences. Plain English. No bullet lists.",
     "- Output ONLY the user request text. No preamble, no quoting,",
     "  no 'Here's the prompt:' wrapper.",
@@ -76,7 +83,7 @@ function buildSystemPrompt(curation: Curation): string {
     const why = ctx?.why
       ? `\n\nContext (do not include in output): ${ctx.why}`
       : "";
-    return `${base}\n\nThe request should describe something realistic but OUT OF THE LIBRARY — a user asking for a job that the skill cannot assemble from its current parts. The phrasing should be believable, not deliberately weird.${why}`;
+    return `${base}\n\nThe request should describe something realistic but OUT OF THE LIBRARY — a user asking for an agent the skill cannot assemble from its current parts. The phrasing should be believable, not deliberately weird. Still frame it as 'I want an agent that…'.${why}`;
   }
 
   return `${base}\n\nThe intended target pattern (do NOT name it in your output) is: ${curation.pattern}. It expects these components to be loaded: ${curation.components.join(", ") || "(none)"}. Phrase the request so a careful human would classify it as that pattern without being told.`;
