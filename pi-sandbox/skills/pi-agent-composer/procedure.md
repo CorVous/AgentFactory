@@ -48,153 +48,120 @@ If a signal points at a component the library doesn't have (e.g.
 
 ## 3. Pick composition topology
 
-`compositions.md` names three. Apply this cascade in order; the
-first match wins:
+`compositions.md` names two the YAML composer can emit. Apply this
+cascade in order; the first match wins:
 
 ```
-if run-deferred-writer ∈ components        → rpc-delegator-over-concurrent-drafters
-else if review ∈ components                → rpc-delegator-over-concurrent-drafters
+if run-deferred-writer ∈ components        → GAP (orchestrator deferred)
+else if review ∈ components                → GAP (orchestrator deferred)
 else if emit-summary ∈ components && stage-write ∈ components
                                            → sequential-phases-with-brief
 else                                       → single-spawn
 ```
 
-The `review`-before-emit-summary+stage-write ordering matters:
-without it, a `[cwd-guard, stage-write, review]` set (single
-drafter + LLM review, no RPC delegator, no fan-out) gets
-mis-inferred as `sequential-phases-with-brief`. Reviewing a single
-drafter's output is still RPC-delegator topology — the delegator
-just dispatches one drafter and reviews one draft.
+The `review` / `run-deferred-writer` branches go straight to step 5
+because the YAML runner cannot drive an RPC delegator session —
+both `emit_agent_spec` and the runner reject those components. Do
+NOT try to express orchestrator shapes in YAML; the gap message
+points the user at `pi-agent-builder`, which authors RPC
+extensions from primitives.
 
-If none of the three topologies fits the user's ask (e.g. the user
+If neither remaining topology fits the user's ask (e.g. the user
 wants a fire-and-forget background drafter with no parent
 harvesting), go to step 5.
 
-## 4. Wire it
+## 4. Emit the spec
 
-Emit a thin extension at `.pi/extensions/<name>.ts` that imports
-the declared components' `parentSide` values and calls the
-`delegate()` runtime from `../lib/delegate.ts`. `delegate()` owns
-every subprocess rail (spawn frame, NDJSON loop, timeout, cost,
-path validation, confirm/promote per rails.md §10) so the
-extension body collapses to the slash-command registration and a
-single `delegate()` call.
+Call `emit_agent_spec` exactly once with the structured fields.
+The tool's TypeBox schema IS the YAML spec shape — you cannot
+write YAML or TypeScript by hand. The tool writes
+`.pi/agents/<name>.yml`; the auto-discovered runner registers
+`/<slash>` on the next pi startup and dispatches each phase via
+`delegate()`.
 
-### Template (single-spawn — covers `[emit-summary]`,
+Phase prompts may use `{args}` (the slash-command argument the
+user passes at runtime), `{sandboxRoot}` (absolute path of
+pi-sandbox), and — phase 2 of `sequential-phases-with-brief` only
+— `{brief}` (assembled from phase-1 `emit_summary` calls).
+
+### Example (single-spawn — covers `[emit-summary]`,
 ### `[cwd-guard]`, `[cwd-guard, stage-write]`)
 
-```ts
-import path from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
-import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
-import { delegate } from "../lib/delegate.ts";
-
-export default function (pi: ExtensionAPI) {
-  pi.registerCommand("<slug>", {
-    description: "<short description>",
-    handler: async (args, ctx) => {
-      if (!args.trim()) {
-        ctx.ui.notify("Usage: /<slug> <task>", "warning");
-        return;
-      }
-      const sandboxRoot = path.resolve(process.cwd());
-      const prompt = `<agent instructions referencing ${sandboxRoot}>`;
-      await delegate(ctx, {
-        components: [CWD_GUARD, STAGE_WRITE],  // ← declared set
-        prompt,
-      });
-    },
-  });
-}
+```
+emit_agent_spec({
+  name: "<filename>",
+  slash: "<slash-command-no-leading-/>",
+  description: "<one line>",
+  composition: "single-spawn",
+  phases: [
+    {
+      components: ["cwd-guard", "stage-write"],   // ← declared set
+      prompt: "You are a DRAFTER. Task: {args}. Stage files via stage_write under {sandboxRoot}. Reply DONE when finished."
+    }
+  ]
+})
 ```
 
-Substitute the `components` array for the declared component set.
-Drop `CWD_GUARD` from both the import and the array when the set
-is `[emit-summary]` (read-only recon, no write channel). The
-`delegate()` call's tier inference picks `$TASK_MODEL` or
-`$LEAD_MODEL` automatically based on whether `review` or
-`run-deferred-writer` are in the set — no `--model` override
-needed in the composer's output.
+Drop `cwd-guard` from the array when the set is `[emit-summary]`
+(read-only recon, no write channel). The runner's `delegate()`
+calls infer the model tier automatically — `$TASK_MODEL` here
+because neither `review` nor `run-deferred-writer` are present.
 
-### Template (sequential-phases-with-brief — covers
+### Example (sequential-phases-with-brief — covers
 ### `[cwd-guard, emit-summary, stage-write]`)
 
-Two `delegate()` calls. Harvest phase-1 summaries from
-`byComponent.get("emit-summary")`, assemble into a brief with a
-bounded byte-length, and interpolate into phase-2's prompt. The
-same `export default function(pi) { pi.registerCommand(...) }`
-shell wraps the body — do NOT substitute `export async function
-handler(ctx)` or `export const handler = …`; pi's loader only
-calls the default export, and anything else silently registers
-no command (grader reports it as "command not registered").
-Always include the empty-args short-circuit so the load probe
-(which invokes `/<slug>` with no args) exits cleanly without
-triggering either phase's LLM call.
-
-```ts
-export default function (pi: ExtensionAPI) {
-  pi.registerCommand("<slug>", {
-    description: "<short description>",
-    handler: async (args, ctx) => {
-      if (!args.trim()) {
-        ctx.ui.notify("Usage: /<slug> <target>", "warning");
-        return;
-      }
-      const target = args.trim();
-
-      const scout = await delegate(ctx, {
-        components: [EMIT_SUMMARY],           // read-only scout, no CWD_GUARD
-        prompt: `Survey ${target}. Use emit_summary for each finding.`,
-      });
-      const summaries =
-        (scout.byComponent.get("emit-summary") as
-          | { summaries: { title: string; body: string }[] }
-          | undefined)?.summaries ?? [];
-      const brief = summaries
-        .map((s) => `## ${s.title}\n${s.body}`)
-        .join("\n\n");
-      if (Buffer.byteLength(brief, "utf8") > 16_000) {
-        ctx.ui.notify("brief exceeds budget; aborting", "error");
-        return;
-      }
-      await delegate(ctx, {
-        components: [CWD_GUARD, STAGE_WRITE],
-        prompt: `${target}\n\n<brief>\n${brief}\n</brief>`,
-      });
+```
+emit_agent_spec({
+  name: "<filename>",
+  slash: "<slash-command>",
+  description: "<one line>",
+  composition: "sequential-phases-with-brief",
+  phases: [
+    {
+      name: "scout",
+      components: ["emit-summary"],          // read-only; no cwd-guard
+      prompt: "Survey {args}. Use emit_summary for each finding."
     },
-  });
-}
+    {
+      name: "draft",
+      components: ["cwd-guard", "stage-write"],
+      prompt: "Task: {args}\n\n<brief>\n{brief}\n</brief>\n\nStage missing pieces under {sandboxRoot}. Reply DONE."
+    }
+  ]
+})
 ```
 
-### rpc-delegator-over-concurrent-drafters
+The runner enforces phase-1 ⊇ `{emit-summary}` and phase-2 ⊇
+`{stage-write}` for this composition. Any `{brief}` reference
+outside phase 2 of `sequential-phases-with-brief` is left
+unsubstituted at runtime.
 
-Does NOT use `delegate()` for the delegator spawn — `delegate()` is
-json-mode only, the delegator needs `--mode rpc` with a persistent
-stdin channel driven through multiple phases. The drafter spawns
-inside the orchestrator's `Promise.all` DO go through
-`delegate(autoPromote: false)`; after review, promotion uses the
-exported `promote()` helper. Reference
-`pi-sandbox/.pi/extensions/delegated-writer.ts` for the whole
-shape; this composer emits a copy-adapted skeleton of it.
+### orchestrator (deferred — emit GAP)
+
+`emit_agent_spec` rejects any phase containing `review` or
+`run-deferred-writer`. The runner cannot drive an RPC delegator
+session — that topology stays in `pi-agent-builder`'s scope. If
+the user's ask requires fan-out + LLM review, jump to step 5
+(GAP) instead of trying to express it in YAML.
 
 ## 5. Flag the gap
 
 When step 1 produces no confident match, step 2 reveals a missing
-component, or step 3 has no fitting topology, emit EXACTLY this
+component, step 3 cascades to the orchestrator branch (the YAML
+runner doesn't drive RPC), or no topology fits, emit EXACTLY this
 message and stop:
 
 ```
 GAP: I don't have a component for "<user's ask, quoted>".
 Components I have: cwd-guard, stage-write, emit-summary, review, run-deferred-writer.
 Closest match: <"none" OR nearest part/topology + 1-sentence why it doesn't quite fit>.
-To cover this you'd need: <one sentence describing the missing part>.
+To cover this you'd need: <one sentence describing the missing part, OR "the YAML composer doesn't cover orchestrator topology yet — load pi-agent-builder">.
 To continue anyway, load the pi-agent-builder skill.
 ```
 
-Do NOT then go on to write an extension. The gap message is the
-whole deliverable. The user will decide whether to reshape the ask
-into the existing components or fall back to `pi-agent-builder`.
+Do NOT then call `emit_agent_spec`. The gap message is the whole
+deliverable. The user will decide whether to reshape the ask into
+the existing components or fall back to `pi-agent-builder`.
 
 The `GAP:` header and `I don't have a component` phrase are
 byte-identical to the assembler's GAP message. Both graders share

@@ -65,8 +65,20 @@ gitignored `.env` instead.
 ## Creating pi agents
 
 Pi ships no sub-agent feature by default. Use pi itself with one of
-two bundled skills; they split on "compose vs author":
+three bundled skills; they split on "emit YAML vs. compose-from-patterns
+vs. author-TS":
 
+- **`pi-agent-composer`** *(forward-looking, YAML)* — emits a
+  declarative YAML spec via the `emit_agent_spec` tool. The
+  auto-discovered runner (`pi-sandbox/.pi/extensions/yaml-agent-runner.ts`)
+  reads `.pi/agents/*.yml` and registers a slash command per spec,
+  dispatching each phase via `delegate()`. Covers `single-spawn`
+  and `sequential-phases-with-brief`; emits GAP for the
+  orchestrator topology. Driven by `npm run agent-composer` /
+  `:i`, which runs pi with the composer skill loaded and a tool
+  allowlist that exposes ONLY `read,ls,grep,emit_agent_spec` — no
+  write verbs, so the model cannot author code, only declare a
+  spec.
 - **`pi-agent-assembler`** — composes already-tested parts from
   `pi-sandbox/.pi/components/` (cwd-guard, stage-write, review)
   into agents matching one of four patterns: `recon`,
@@ -75,14 +87,17 @@ two bundled skills; they split on "compose vs author":
   safer path. If no pattern fits, the skill emits a GAP message
   and stops — that's the signal to fall back to the builder.
 - **`pi-agent-builder`** — from-scratch authorship. Use when the
-  assembler flagged a gap, or for shapes the assembler doesn't
-  cover (custom UI widgets, compaction strategies, event-only
+  assembler/composer flagged a gap, or for shapes neither covers
+  (custom UI widgets, compaction strategies, event-only
   extensions, context injection, session persistence, pi
-  packages).
+  packages, RPC orchestrator).
 
-Pick per-run via `-s <skill-name>` on `agent-maker.sh`. Default is
-`pi-agent-builder` for now — shift to assembler-first once it's
-settled.
+Pick per-run via `-s <skill-name>` on `agent-maker.sh` (assembler /
+builder), or via the dedicated `npm run agent-composer` script
+(composer). Default for `agent-maker.sh` is `pi-agent-builder`.
+The composer is the eventual replacement for `agent-maker.sh` once
+the assembler/builder skills also migrate to YAML output;
+`agent-maker.sh` stays in place until then.
 
 ### Invoking the skill
 
@@ -96,6 +111,11 @@ cwd. The shared `pi-sandbox/.pi/{extensions,components}/` is never
 touched, so concurrent invocations don't race.
 
 ```sh
+# Composer (YAML output, write-restricted spawn):
+npm run agent-composer -- -p "Drafter that stages writes for approval"
+npm run agent-composer:i                                 # interactive
+
+# Assembler / Builder (TS output via agent-maker):
 # One-shot (task-driven, auto-graded):
 npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 --grade
 
@@ -112,8 +132,12 @@ npm run agent-maker:i -- -m google/gemini-3-flash-preview
 scripts/task-runner/run-task.sh recon-agent -r my-label
 ```
 
-Both npm scripts source `models.env` first, so `$TASK_MODEL` etc. are
-already in scope.
+All three npm scripts source `models.env` first, so `$TASK_MODEL` etc.
+are already in scope.
+
+Composer output lands at `pi-sandbox/.pi/agents/<name>.yml`. The
+runner picks it up on the next pi startup; restart any active
+`npm run pi` session to register newly emitted slash commands.
 
 Legacy ad-hoc path (no isolation, no tool scoping — avoid for batch work):
 
@@ -399,7 +423,14 @@ generation), a separate class of issues surfaces:
     the parent. See `stage-write.ts` for the pattern. Distinct from
     pi's per-cwd `.pi/child-tools/` convention (which a generated
     extension writes to under its own cwd); this directory is the
-    repo's *curated* library.
+    repo's *curated* library. `emit-agent-spec.ts` is the one
+    parent-side outlier — loaded via `-e` into the composer pi
+    session, where its `execute()` writes YAML specs.
+  - `pi-sandbox/.pi/agents/` — composer-emitted YAML specs
+    (`.yml` per agent). Picked up by
+    `pi-sandbox/.pi/extensions/yaml-agent-runner.ts` on pi startup,
+    which registers one slash command per spec. Tracked in git
+    once intentional; `.pi/scratch/` covers throwaway runs.
   - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
     anything you don't want to check in. Gitignored.
   - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how
