@@ -359,6 +359,27 @@ generation), a separate class of issues surfaces:
   in a different but equally bad way. Treat "re-emit a >~300-line
   transformed copy via a single `Write`" as the anti-pattern and
   always decompose it into `cp` + targeted `Edit`s.
+- **Recon behavioral probe runs `behavioral=partial` on `$TASK_MODEL`
+  (deepseek-v3.2).** The grader looks for a `.md`/`.txt` file under
+  `.pi/scratch/` containing the `evidence_anchor` string (e.g.
+  `SKILL.md`). Generated recon extensions write that file only when
+  their child pi (also on `$TASK_MODEL`) calls the `emit_summary` stub
+  tool — and deepseek-v3.2 regularly skips the stub call on recon
+  prompts, so the parent's handler returns via the silent
+  `summaries.length === 0` branch (`ctx.ui.notify` is a no-op in
+  print mode, so the failure doesn't surface in NDJSON). This affects
+  the hand-authored `recon-agent` task equally — confirmed with an
+  A/B re-run on haiku — so it is a model-capability ceiling, not a
+  harness regression. Narrowing the agent-maker skill symlink
+  (`agent-maker.sh` only mounts `skills/$SKILL_NAME`, not the whole
+  tree) and the `seedReconFixture` helper in
+  `scripts/approach-b-framework/grader/lib/probes.ts` both stay in
+  place as correct test-isolation; neither flips the partial. If you
+  need to close it later, options are: (a) use `$LEAD_MODEL` for the
+  recon probe's child specifically, (b) log the child's stdout to a
+  scratch file so the silent early-exit branches become visible, or
+  (c) relax the evidence check. For now, treat recon `behavioral=
+  partial` as an expected "mostly passing" ceiling.
 
 ## Repo layout
 
