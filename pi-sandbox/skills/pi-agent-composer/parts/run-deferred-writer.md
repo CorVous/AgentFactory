@@ -65,53 +65,49 @@ run_deferred_writer
 The delegator's full allowlist is `run_deferred_writer,review` —
 nothing else.
 
-## Parent-side wiring template
+## Parent-side wiring
 
-- **Event anchor:** `event.type === "tool_execution_start" &&
-  event.toolName === "run_deferred_writer"`.
-- **Args destructuring:** `const { task } = event.args as {
-  task: string };`.
-- **State shape:** `const dispatched: Array<{ task: string;
-  draftPromise: Promise<DrafterResult> }> = [];`. Each call
-  spawns one drafter child (`cwd-guard + stage-write`,
-  single-spawn shape) and pushes its promise.
-- **Finalize behavior:**
-  1. `await Promise.all(dispatched.map((d) => d.draftPromise))`
-     to gather all drafter results before returning control to
-     the delegator.
-  2. For each drafter result, feed the staged file_path(s) back
-     into the delegator's RPC stdin as a follow-up prompt asking
-     for a `review` verdict.
-  3. After verdicts arrive (see `parts/review.md`), promote
-     `approve`d drafts via the standard stage-write promotion
-     path (rail 6).
-  4. Update the dashboard widget on each phase boundary
-     (dispatched / drafted / reviewed / promoted) per rail 11.
-
-### Spawn snippet for the dispatched drafter (per task)
+Orchestrator-only — `run_deferred_writer` lives inside the RPC
+delegator session, parallel to `review`. The delegator spawn
+itself stays custom (`--mode rpc`), but the orchestrator imports
+`run-deferred-writer.parentSide.harvest` to extract dispatched
+task strings from the delegator's stdout, and runs the drafter
+fan-out through `delegate(autoPromote: false)` — so each drafter
+gets the same rails set every other `delegate()` call enjoys.
 
 ```ts
-const drafter = spawn(
-  "pi",
-  [
-    "-e", CWD_GUARD,
-    "-e", STAGE_WRITE,
-    "--tools", "stage_write,ls",
-    "--no-extensions",
-    "--mode", "json",
-    "--provider", "openrouter",
-    "--model", TASK_MODEL,
-    "--no-session",
-    "--thinking", "off",
-    "-p", task,
-  ],
-  {
-    stdio: ["ignore", "pipe", "pipe"],
-    cwd: sandboxRoot,
-    env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
-  },
+import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
+import { delegate, promote } from "../lib/delegate.ts";
+
+// Per-phase state from the delegator RPC session:
+const dispatchState = RUN_DEFERRED_WRITER.initialState();
+// ...inside the RPC event loop:
+RUN_DEFERRED_WRITER.harvest(event, dispatchState);
+// ...after the dispatch phase ends (agent_end):
+const { tasks } = await RUN_DEFERRED_WRITER.finalize(dispatchState, fctx);
+
+// Drafter fan-out via delegate(autoPromote: false) — LLM review is
+// the gate, not ctx.ui.confirm:
+const drafterResults = await Promise.all(
+  tasks.map((task) =>
+    delegate(ctx, {
+      components: [CWD_GUARD, STAGE_WRITE],
+      prompt: task,
+      autoPromote: false,
+    }),
+  ),
 );
+
+// After the review phase verdicts come back, promote the approved
+// plans with the exported helper:
+const { promoted } = promote(ctx, approvedPlans);
 ```
+
+Dashboard updates on every phase boundary (dispatched / drafted /
+reviewed / promoted) via `ctx.ui.setWidget` + `ctx.ui.setStatus`
+per rail 11.
 
 ## Canonical assembled example
 
