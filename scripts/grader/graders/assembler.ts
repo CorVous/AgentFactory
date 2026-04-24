@@ -48,6 +48,11 @@ export function gradeAssemblerTask(args: AssemblerGraderArgs): AssemblerGraderRe
     gradeGap(rubric, args);
     return { rubric, kind: "gap" };
   }
+  if (spec.expectation.kind !== "assembly") {
+    throw new Error(
+      `assembler grader received non-assembly expectation: ${spec.expectation.kind}`,
+    );
+  }
   const patternName = spec.expectation.pattern;
   const pattern = loadPatternSpec(args.repoRoot, patternName);
   gradeAssembly(rubric, args, pattern);

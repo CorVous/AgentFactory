@@ -9,7 +9,8 @@
     "agent-maker": "bash -c 'set -a && source models.env && set +a && exec scripts/task-runner/agent-maker.sh \"$@\"' --",
     "agent-maker:i": "bash -c 'set -a && source models.env && set +a && exec scripts/task-runner/agent-maker.sh --interactive \"$@\"' --",
     "reverse-pipeline": "bash -c 'set -a && source models.env && set +a && exec tsx scripts/reverse-pipeline/index.ts \"$@\"' --",
-    "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts"
+    "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts",
+    "validate-prompts": "tsx scripts/grader/validate-prompt.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.69.0"

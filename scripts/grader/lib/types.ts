@@ -12,7 +12,7 @@ export interface GradeJson {
   model: string;
   task: string;
   skill: string;
-  kind: "assembly" | "gap" | "unknown";
+  kind: "assembly" | "composition" | "gap" | "unknown";
   pattern?: string;
   p0_passed: string;
   p1_passed: string;
