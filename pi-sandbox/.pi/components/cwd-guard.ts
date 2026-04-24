@@ -24,12 +24,44 @@ export default function (pi: ExtensionAPI) {
     throw new Error("cwd-guard.ts: PI_SANDBOX_ROOT must be set");
   }
   const ROOT_ABS = path.resolve(ROOT);
+  // Also compute the realpath of the root so symlink-based escapes are
+  // caught even when a harness mounts directories (e.g. `.pi/components`)
+  // into the cwd via `ln -s`. `fs.realpathSync` fails if the root
+  // doesn't exist; fall back to the lexical value in that case.
+  let ROOT_REAL = ROOT_ABS;
+  try { ROOT_REAL = fs.realpathSync(ROOT_ABS); } catch {}
 
   function validate(p: string): string {
     const abs = path.resolve(process.cwd(), p);
     if (abs !== ROOT_ABS && !abs.startsWith(ROOT_ABS + path.sep)) {
       throw new Error(
         `path escapes sandbox root ${ROOT_ABS}: ${p} -> ${abs}`
+      );
+    }
+    // Realpath the deepest existing ancestor — `fs.realpathSync` on a
+    // path that doesn't yet exist throws, so walk up until we hit one
+    // that does, then append the trailing pieces lexically. This catches
+    // writes into a symlinked subdir (e.g. `<ROOT>/.pi/components ->
+    // <REPO>/pi-sandbox/.pi/components`) that would otherwise land
+    // outside the run cwd at the filesystem level.
+    let existing = abs;
+    const trailing: string[] = [];
+    while (!fs.existsSync(existing)) {
+      const parent = path.dirname(existing);
+      if (parent === existing) break;
+      trailing.unshift(path.basename(existing));
+      existing = parent;
+    }
+    let realAbs = abs;
+    try {
+      realAbs = path.join(fs.realpathSync(existing), ...trailing);
+    } catch {
+      // realpath failure on the ancestor is unusual; fall through to the
+      // lexical value. The startsWith check above already passed.
+    }
+    if (realAbs !== ROOT_REAL && !realAbs.startsWith(ROOT_REAL + path.sep)) {
+      throw new Error(
+        `path escapes sandbox root via symlink: ${p} -> ${realAbs} (root ${ROOT_REAL})`
       );
     }
     return abs;
