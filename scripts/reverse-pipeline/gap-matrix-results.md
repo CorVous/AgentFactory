@@ -10,7 +10,9 @@ Headline: 12/18 full pass, 4/18 "mostly" (p0=1/2), 1/18 fail (p0=0/2),
 failures and one runaway-output harness crash surface as the actionable
 signals; triage notes below.
 
-Triage-only, no skill or seed fixes in this branch.
+Triage-only on skill side, no `procedure.md` or component edits.
+One gap-seed revision happened downstream of the matrix run —
+see "Seed 04 revision" below.
 
 ## Matrix
 
@@ -149,3 +151,36 @@ done
 Runtime on this round: ~20 min wall clock for 18 cells. Tag 2
 (`fetches-url-01 / glm-5.1`) accounted for ~10 min of that alone — a
 runaway loop. Budget accordingly.
+
+## Seed 04 revision (post-matrix)
+
+The original slot — "two-stage LLM critique pipeline that scores files
+but never drafts or writes" — failed 3/3 as a gap seed. The classifier
+was right: `recon` + `emit-summary` genuinely covers "read-only survey
+producing structured findings". A first rewrite that emphasized stage
+chaining ("stage-2 analyzes stage-1's findings against a separate
+security ruleset") also failed 3/3 — haiku built exactly the
+`scout-then-draft` pattern (recon child → drafter child, findings as
+structured brief), and gemini + glm collapsed to plain recon. The
+library covers chained multi-stage analysis too.
+
+Replaced in `gap-seeds.ts` with a non-pi-subprocess ask:
+
+> "agent that spawns an external Python preprocessing script for each
+> file, pipes data in via stdin, and ingests the script's structured
+> JSON output"
+
+This one is genuinely outside the library: every pattern's sub-process
+helper spawns a sub-pi and parses the NDJSON event stream. No
+component wraps a foreign binary with stdin piping or arbitrary-JSON
+stdout. Reverify round `gap-matrix-reverify/20260424-0423-python` —
+3/3 full pass across `$AGENT_BUILDER_TARGETS` (haiku, gemini, glm all
+correctly emit GAP, zero extensions produced).
+
+Insight for future seed design: the assembler's library covers more
+shapes than a naive gap-hunt assumes. "No component for X" is only a
+gap if no composition of existing parts + patterns can produce X —
+the scout-then-draft pattern in particular absorbs a lot of
+"multi-stage analysis" asks. Seeds have to hit capabilities that
+*can't be composed*, not just capabilities that aren't in a single
+part.

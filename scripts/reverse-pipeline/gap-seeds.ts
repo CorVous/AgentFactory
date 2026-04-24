@@ -35,9 +35,9 @@ export const GAP_SEEDS: GapSeed[] = [
     why: "custom TUI widgets and streaming output belong to pi-agent-builder, not the assembler.",
   },
   {
-    seed: "two-stage LLM critique pipeline that scores existing files but never drafts or writes anything",
-    closestMatch: "recon",
-    why: "no write, no draft — but also no summary emission; pure reviewer role without a component.",
+    seed: "agent that spawns an external Python preprocessing script for each file, pipes data in via stdin, and ingests the script's structured JSON output",
+    closestMatch: "orchestrator",
+    why: "every pattern's sub-process helper spawns a sub-pi child and parses the NDJSON event stream. No component wraps a non-pi binary, feeds it stdin, or parses arbitrary-schema JSON from its stdout. Foreign-tool invocation with structured IPC is outside the library; inventing it inline would violate the cardinal 'compose, don't author' rule.",
   },
   {
     seed: "agent that opens a long-running interactive chat session and remembers prior turns across invocations",

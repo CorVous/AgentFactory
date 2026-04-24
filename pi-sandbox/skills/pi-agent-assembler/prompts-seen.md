@@ -85,11 +85,11 @@ real user asks. -->
   notes: All three GAP correctly. Custom-TUI-widget work is another documented pi-agent-builder fallback; classifier uses that signal correctly.
 
 - kind: gap
-  source: synthetic-gap-matrix-2026-04-24
-  closest-pattern: recon
+  source: synthetic-gap-matrix-2026-04-24-rev
+  closest-pattern: orchestrator
   request: |
-    I want an agent that performs a rigorous dual-pass evaluation of my
-    existing source code files without making any changes to them.
-    Provides a detailed critique and quality score for each file.
-    Strictly a reviewer; never rewrites or fixes.
-  notes: Classifier routes all three models to recon + emit-summary — correctly. `emit-summary` IS the finding-report channel; the seed's "no summary emission; pure reviewer role without a component" over-narrows. This seed is likely mislabeled as gap and should be dropped or revised. Triage-only for this branch.
+    I want an agent that processes my project files by feeding them into
+    an external Python script via stdin. I need the command to capture
+    the structured JSON output from that script for every file it handles
+    so the results can be used for further analysis.
+  notes: Seed slot 04 revised after the first round — the original "two-stage critique / pure reviewer" ask turned out to route cleanly to recon+emit-summary (or scout-then-draft, when the chaining framing was added). Library genuinely covers review-and-score. Replaced with a non-pi-subprocess ask — every pattern spawns sub-pi children and parses NDJSON; none wraps a foreign binary with stdin piping and arbitrary-JSON stdout. Reverify run 2026-04-24-0423 — 3/3 full pass across $AGENT_BUILDER_TARGETS.
