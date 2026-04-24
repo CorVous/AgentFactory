@@ -9,9 +9,9 @@
 # Inputs:  <log-dir>/artifacts/{extensions,child-tools,stray}/*.ts
 # Outputs: stdout = human markdown; <log-dir>/grade.json = machine row
 #
-# The grader itself lives under grader/ (TypeScript, runs via tsx).
-# Keeping a shell wrapper for callers that scripted against the old
-# name — delete when no external callers remain.
+# The grader itself lives under scripts/grader/ (TypeScript, runs via
+# tsx). Keeping a shell wrapper for callers that scripted against the
+# old name — delete when no external callers remain.
 
 set -uo pipefail
 
@@ -25,4 +25,4 @@ if [[ -z "${TASK_MODEL:-}" && -f "$REPO/models.env" ]]; then
   set -a; source "$REPO/models.env"; set +a
 fi
 
-exec npx --yes tsx "$HERE/grader/index.ts" "$@"
+exec npx --yes tsx "$REPO/scripts/grader/index.ts" "$@"

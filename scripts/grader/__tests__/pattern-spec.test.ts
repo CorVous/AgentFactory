@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { loadPatternSpec } from "../lib/pattern-spec.ts";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 describe("pattern-spec", () => {
   it("parses drafter-with-approval", () => {

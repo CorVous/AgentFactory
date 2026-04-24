@@ -5,7 +5,7 @@ import {
   loadPatternSpec,
   patternsDir,
   type PatternName,
-} from "../approach-b-framework/grader/lib/pattern-spec.ts";
+} from "../grader/lib/pattern-spec.ts";
 import { GAP_SEEDS, type GapSeed } from "./gap-seeds.ts";
 
 export type CurationKind = "assembly" | "gap";

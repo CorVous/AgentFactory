@@ -22,7 +22,7 @@ load_test_spec() {
 
   local here grader
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  grader="$here/../grader"
+  grader="$here/../../grader"
 
   TEST_PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/test-prompt.XXXXXX")"
   local assignments

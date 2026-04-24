@@ -373,7 +373,7 @@ generation), a separate class of issues surfaces:
   harness regression. Narrowing the agent-maker skill symlink
   (`agent-maker.sh` only mounts `skills/$SKILL_NAME`, not the whole
   tree) and the `seedReconFixture` helper in
-  `scripts/approach-b-framework/grader/lib/probes.ts` both stay in
+  `scripts/grader/lib/probes.ts` both stay in
   place as correct test-isolation; neither flips the partial. If you
   need to close it later, options are: (a) use `$LEAD_MODEL` for the
   recon probe's child specifically, (b) log the child's stdout to a

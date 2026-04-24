@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { describe, it } from "node:test";
-import { loadTestSpec } from "../../approach-b-framework/grader/lib/test-spec.ts";
+import { loadTestSpec } from "../../grader/lib/test-spec.ts";
 import type { Curation } from "../curation.ts";
 import { buildTestSpec, materialize, serializeTestSpec } from "../materialize.ts";
 import { pickLeastLeakyVariant } from "../curate-to-prompt.ts";

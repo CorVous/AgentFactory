@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
-import { TestSpecSchema, type TestSpec } from "../approach-b-framework/grader/lib/test-spec.ts";
+import { TestSpecSchema, type TestSpec } from "../grader/lib/test-spec.ts";
 import type { Curation } from "./curation.ts";
 
 export interface MaterializeMeta {
