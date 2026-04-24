@@ -34,4 +34,62 @@ Each entry is a short block:
 
 ## Entries
 
-<!-- Populate as real asks come in. -->
+<!-- Populate as real asks come in. Synthetic entries are fine; tag
+them `source: synthetic-<round>` so triage can tell them apart from
+real user asks. -->
+
+- kind: gap
+  source: synthetic-gap-matrix-2026-04-24
+  closest-pattern: none
+  request: |
+    I want an agent that can execute arbitrary bash commands on my
+    local system based on my natural language instructions. It should
+    be able to run complex shell scripts, manage system processes, and
+    report back the specific exit codes and command outputs.
+  notes: Gemini + glm gap correctly; haiku emits a non-normalized GAP header (grader p0 1/2). Explicitly out-of-scope for the assembler per the cardinal rule against bash child-tools.
+
+- kind: gap
+  source: synthetic-gap-matrix-2026-04-24
+  closest-pattern: recon
+  request: |
+    I want an agent that can fetch live data from a specified URL over
+    HTTP. It should be able to parse the JSON response and provide a
+    concise summary of the key fields.
+  notes: Most valuable classifier signal in this round. Gemini gapped correctly; haiku improvised an http-fetch recon variant with inline `node:child_process` (violates "don't invent new parts"); glm-5.1 dropped a stray `http-poll.ts` and produced a 994 MB events.ndjson that crashed the grader. Candidate follow-up — add an explicit "http/network I/O" negative signal in `procedure.md` step 1.
+
+- kind: gap
+  source: synthetic-gap-matrix-2026-04-24
+  closest-pattern: none
+  request: |
+    I want an agent that maintains a persistent interactive chat session
+    across multiple separate executions. Remembers the full context and
+    history across process restarts so I can pick up where I left off.
+  notes: All three models route to GAP. Procedure.md already lists "session-persistence work" as a pi-agent-builder fallback; classifier uses that signal correctly.
+
+- kind: gap
+  source: synthetic-gap-matrix-2026-04-24
+  closest-pattern: none
+  request: |
+    I want an agent that runs on a recurring cron schedule to monitor a
+    specific local log file. Tails for stack traces or error keywords
+    and sends an alert if it detects a spike over a time window.
+  notes: All three GAP correctly. Closest-match disagrees across models (haiku=confined-drafter, gemini=none, glm=recon) — informational, not a grading concern.
+
+- kind: gap
+  source: synthetic-gap-matrix-2026-04-24
+  closest-pattern: none
+  request: |
+    I want an agent that provides a live-updating TUI dashboard for
+    monitoring LLM generations. Stream model responses into a custom
+    widget in real-time with an interactive cancel button.
+  notes: All three GAP correctly. Custom-TUI-widget work is another documented pi-agent-builder fallback; classifier uses that signal correctly.
+
+- kind: gap
+  source: synthetic-gap-matrix-2026-04-24-rev
+  closest-pattern: orchestrator
+  request: |
+    I want an agent that processes my project files by feeding them into
+    an external Python script via stdin. I need the command to capture
+    the structured JSON output from that script for every file it handles
+    so the results can be used for further analysis.
+  notes: Seed slot 04 revised after the first round — the original "two-stage critique / pure reviewer" ask turned out to route cleanly to recon+emit-summary (or scout-then-draft, when the chaining framing was added). Library genuinely covers review-and-score. Replaced with a non-pi-subprocess ask — every pattern spawns sub-pi children and parses NDJSON; none wraps a foreign binary with stdin piping and arbitrary-JSON stdout. Reverify run 2026-04-24-0423 — 3/3 full pass across $AGENT_BUILDER_TARGETS.

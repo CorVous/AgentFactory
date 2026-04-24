@@ -38,7 +38,7 @@ function main(): void {
   if (argv.length < 3) usage();
 
   const [task, logDirArg, model] = argv;
-  const taskDir = path.join(FRAMEWORK_ROOT, "tasks", task);
+  const taskDir = path.join(FRAMEWORK_ROOT, "task-runner", "tasks", task);
   if (!fs.existsSync(path.join(taskDir, "test.yaml"))) {
     console.error(`No test.yaml at ${taskDir}/test.yaml`);
     process.exit(2);
