@@ -48,6 +48,7 @@ export default function (pi: ExtensionAPI) {
 const REVIEW_PATH = fileURLToPath(import.meta.url);
 
 export const parentSide: ParentSide<ReviewState, ReviewResult> = {
+  name: "review",
   tools: ["review"],
   spawnArgs: ["-e", REVIEW_PATH],
   env: () => ({}),

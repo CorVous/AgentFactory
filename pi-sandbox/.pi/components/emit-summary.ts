@@ -69,6 +69,7 @@ const EMIT_SUMMARY_PATH = fileURLToPath(import.meta.url);
 const MAX_SUMMARY_BODY_BYTES = 8_192;
 
 export const parentSide: ParentSide<EmitSummaryState, EmitSummaryResult> = {
+  name: "emit-summary",
   tools: ["emit_summary"],
   spawnArgs: ["-e", EMIT_SUMMARY_PATH],
   env: () => ({}),

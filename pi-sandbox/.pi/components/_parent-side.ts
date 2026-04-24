@@ -25,7 +25,7 @@ export type NDJSONEvent = Record<string, unknown>;
 export interface UiCtx {
   ui: {
     notify: (m: string, level: "info" | "warning" | "error") => void;
-    confirm?: (title: string, body?: string) => Promise<boolean>;
+    confirm?: (title: string, body: string) => Promise<boolean>;
     setWidget?: (key: string, content: string[] | undefined) => void;
     setStatus?: (key: string, text: string | undefined) => void;
   };
@@ -63,6 +63,13 @@ export interface FinalizeContext {
  *  without a union type; the runtime only needs `unknown` as the common
  *  denominator. */
 export interface ParentSide<State = unknown, Result = unknown> {
+  /** Stable identifier for the component. Used by `delegate()` to key
+   *  per-component state + results, and to apply cross-component policy
+   *  (rails.md §10 — confirm iff stage-write ∈ components && review ∉
+   *  components). Must be unique within a single `delegate()` call. The
+   *  canonical five are `cwd-guard`, `stage-write`, `emit-summary`,
+   *  `review`, `run-deferred-writer`. */
+  name: string;
   /** Tokens this component contributes to the child's --tools CSV. */
   tools: string[];
   /** Pi CLI args this component contributes (typically `-e <abs path>`). */

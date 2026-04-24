@@ -16,12 +16,19 @@ that already implements every rail) and the rails that apply.
   - `[cwd-guard, stage-write]` — drafter with approval (human gate).
   - `[cwd-guard, stage-write, review]` — drafter with LLM review
     gate, no fan-out (`run-deferred-writer ∉ components`).
-- **Canonical reference:** `pi-sandbox/.pi/extensions/deferred-writer.ts`
-  lines 52–128 (child spawn + NDJSON loop) + 278–306 (validation +
-  `ctx.ui.confirm` + promotion). The recon and confined-drafter
-  shapes are simplifications: drop the `stage_write` harvest, drop
-  the `ctx.ui.confirm` gate (recon has no writes; confined drafter
-  is unattended).
+- **Canonical reference (inline-spawn shape):**
+  `pi-sandbox/.pi/extensions/delegated-writer.ts::runDrafter`
+  (lines 192–267 — child spawn + NDJSON loop in `--mode json`) +
+  `validateStagedWrite` / `promoteFiles`
+  (lines 387–434 — per-item validation and `fs.writeFileSync` with
+  sha256 post-write verify). The recon and confined-drafter shapes
+  are simplifications: drop the `stage_write` harvest, drop the
+  `ctx.ui.confirm` gate (recon has no writes; confined drafter is
+  unattended). `pi-sandbox/.pi/extensions/deferred-writer.ts` was
+  the previous single-spawn reference — it is now a thin wrapper
+  over `../lib/delegate.ts` after the Phase 2.3 refactor, so the
+  inline pattern lives in `delegated-writer.ts` until Phase 2.4
+  teaches this skill to emit `delegate()` calls directly.
 - **Rails that apply:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12. Rail 11
   (dashboard) does NOT apply — no fan-out state to track.
 
@@ -54,8 +61,10 @@ that already implements every rail) and the rails that apply.
 
   // Phase 2: drafter child (cwd-guard + stage-write, full rail set).
   // Spawn shape borrowed from
-  //   pi-sandbox/.pi/extensions/deferred-writer.ts:52-128 (spawn + NDJSON loop)
-  //   pi-sandbox/.pi/extensions/deferred-writer.ts:278-306 (promotion).
+  //   pi-sandbox/.pi/extensions/delegated-writer.ts::runDrafter (192-267)
+  //     — single-child json-mode spawn + NDJSON loop
+  //   pi-sandbox/.pi/extensions/delegated-writer.ts::{validateStagedWrite,
+  //     promoteFiles} (387-434) — validation + sha256 post-write verify.
   const drafterPrompt = `${userTask}\n\n<brief>\n${brief}\n</brief>`;
   const drafterResult = await runChild({
     args: ["-e", CWD_GUARD, "-e", STAGE_WRITE, "--tools", "stage_write,ls", ...],

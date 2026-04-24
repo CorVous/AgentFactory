@@ -110,6 +110,7 @@ export default function (pi: ExtensionAPI) {
 const CWD_GUARD_PATH = fileURLToPath(import.meta.url);
 
 export const parentSide: ParentSide<CwdGuardState, CwdGuardResult> = {
+  name: "cwd-guard",
   tools: ["read", "sandbox_write", "sandbox_edit", "ls", "grep"],
   spawnArgs: ["-e", CWD_GUARD_PATH],
   env: ({ cwd }) => ({ PI_SANDBOX_ROOT: cwd }),

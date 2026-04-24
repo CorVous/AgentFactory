@@ -59,6 +59,7 @@ const sha256 = (data: string) =>
   createHash("sha256").update(data, "utf8").digest("hex");
 
 export const parentSide: ParentSide<StageWriteState, StageWriteResult> = {
+  name: "stage-write",
   tools: ["stage_write"],
   spawnArgs: ["-e", STAGE_WRITE_PATH],
   env: () => ({}),

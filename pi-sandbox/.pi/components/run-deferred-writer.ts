@@ -42,6 +42,7 @@ export const parentSide: ParentSide<
   DispatchRequestsState,
   DispatchRequestsResult
 > = {
+  name: "run-deferred-writer",
   tools: ["run_deferred_writer"],
   spawnArgs: ["-e", RUN_DEFERRED_WRITER_PATH],
   env: () => ({}),
