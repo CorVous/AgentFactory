@@ -61,50 +61,34 @@ Never add `write`, `edit`, `stage_write`, or `bash` in a
 composition that uses `emit_summary` as its primary output channel
 — they undermine the "structured-output-only" contract.
 
-## Parent-side wiring template
+## Parent-side wiring
 
-- **Event anchor:** `event.type === "tool_execution_start" &&
-  event.toolName === "emit_summary"`.
-- **Args destructuring:** `const { title, body } = event.args as
-  { title: string; body: string };`.
-- **State shape:** `const summaries: Array<{ title: string; body:
-  string }> = [];`. Apply per-body byte cap
-  (`Buffer.byteLength(body, "utf8") <= SUMMARY_BYTE_CAP`,
-  typically 16 KB) on push; reject and log if exceeded.
-- **Finalize behavior** depends on topology:
-  - **single-spawn (recon):** persist each summary to
-    `.pi/scratch/<safe-title>.md` (or join into one file). Final
-    `ctx.ui.notify` lists the persisted paths.
-  - **sequential-phases-with-brief:** join the summaries into a
-    brief — `summaries.map((s) => "## " + s.title + "\n" + s.body).join("\n\n")`
-    — assert the joined `Buffer.byteLength` is within
-    `BRIEF_MAX_BYTES`, then pass the brief into phase 2's prompt.
-
-### Spawn snippet
+Adds `emit-summary.parentSide` to the `delegate()` call's
+`components` array. `delegate()` contributes the `emit_summary`
+tool token, pushes `-e <emit-summary.ts>` into the child argv,
+and routes `tool_execution_start` events for `emit_summary`
+through `parentSide.harvest` (pushes `{title, body}` pairs into
+the per-run state). `parentSide.finalize` enforces the
+`MAX_SUMMARY_BODY_BYTES = 8 KB` per-body cap and returns
+`{summaries, skips}`; the caller decides what to do with the
+list (persist each to `.pi/scratch/<title>.md` in a recon shape,
+or concatenate into a brief for a sequential second phase).
 
 ```ts
-const child = spawn(
-  "pi",
-  [
-    "-e", EMIT_SUMMARY,
-    "--tools", "ls,read,grep,glob,emit_summary",
-    "--no-extensions",
-    "--mode", "json",
-    "--provider", "openrouter",
-    "--model", MODEL,
-    "--no-session",
-    "--thinking", "off",
-    "-p", agentPrompt,
-  ],
-  {
-    stdio: ["ignore", "pipe", "pipe"],
-    cwd: sandboxRoot,
-  },
-);
+import { parentSide as EMIT_SUMMARY } from "../components/emit-summary.ts";
+import { delegate } from "../lib/delegate.ts";
+
+const result = await delegate(ctx, {
+  components: [EMIT_SUMMARY],   // read-only recon; no cwd-guard needed
+  prompt,
+});
+const { summaries } =
+  result.byComponent.get("emit-summary") as
+    { summaries: { title: string; body: string; byteLength: number }[] };
 ```
 
-`PI_SANDBOX_ROOT` is NOT set on this spawn — `emit_summary` has
-no filesystem contact and the child's allowlist is read-only.
-Compositions that combine `emit_summary` with write-capable
-components (e.g. `sequential-phases-with-brief`'s phase 2) set
-`PI_SANDBOX_ROOT` only on the spawn that loads `cwd-guard.ts`.
+`PI_SANDBOX_ROOT` is NOT set on an emit-summary-only child —
+`emit_summary` has no filesystem contact. Compositions that
+combine it with write-capable components (sequential phase-2
+drafter) set the env var only on the drafter spawn, which
+`cwd-guard.parentSide.env` supplies automatically.

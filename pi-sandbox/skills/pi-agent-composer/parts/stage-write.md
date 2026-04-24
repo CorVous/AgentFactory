@@ -58,60 +58,36 @@ back out. Prefer feeding relevant existing content into the prompt.
 Never add `write`, `edit`, or `bash` — they're real write channels
 and defeat the stub.
 
-## Parent-side wiring template
+## Parent-side wiring
 
-- **Event anchor:** `event.type === "tool_execution_start" &&
-  event.toolName === "stage_write"`.
-- **Args destructuring:** `const { path: stagedPath, content }
-  = event.args as { path: string; content: string };`.
-- **State shape:** `const staged: Array<{ path: string; content:
-  string }> = [];` — push one entry per matched event. Cap at
-  `MAX_STAGED` (typ. 64) and bail if exceeded.
-- **Finalize behavior:**
-  1. Validate every staged path (absolute? `..`? exists already?)
-     per rail 5.
-  2. **If `review ∉ components`:** call `ctx.ui.confirm` with a
-     per-file preview (path + first ~20 lines). On `false`, notify
-     "cancelled" and return — leave nothing on disk.
-  3. **If `review ∈ components`:** the LLM verdict is the gate;
-     skip `ctx.ui.confirm` entirely. The parent receives `approve`
-     / `revise` from the review harvest and promotes only
-     `approve`d entries.
-  4. For each promotable entry: `fs.mkdirSync(path.dirname(dest),
-     { recursive: true }); fs.writeFileSync(dest, content);` then
-     `fs.readFileSync(dest)` + sha256 verify against staged
-     content.
-  5. Final `ctx.ui.notify` with the promoted file list and session
-     cost.
-
-### Spawn snippet
+Adds `stage-write.parentSide` to the `delegate()` call's
+`components` array. `delegate()` unions `parentSide.tools`
+(contributes `stage_write`) + `parentSide.spawnArgs`
+(contributes `-e <stage-write.ts>`) into the child's argv, then
+dispatches `tool_execution_start` events for `stage_write` through
+`parentSide.harvest`. `parentSide.finalize` validates each
+`{path, content}` against the sandbox root + size caps and
+returns `StagedWritePlan[]`. `delegate()` itself runs the
+rails.md §10 gate: when `review ∉ components` it calls
+`ctx.ui.confirm` with a per-file preview and `fs.writeFileSync`s
+approved plans with sha256 post-write verify; when `review ∈
+components` it returns plans unpromoted for the caller to
+reconcile against review verdicts.
 
 ```ts
-const child = spawn(
-  "pi",
-  [
-    "-e", CWD_GUARD,
-    "-e", STAGE_WRITE,
-    "--tools", "stage_write,ls",
-    "--no-extensions",
-    "--mode", "json",
-    "--provider", "openrouter",
-    "--model", MODEL,
-    "--no-session",
-    "--thinking", "off",
-    "-p", agentPrompt,
-  ],
-  {
-    stdio: ["ignore", "pipe", "pipe"],
-    cwd: sandboxRoot,
-    env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
-  },
-);
+import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+import { delegate } from "../lib/delegate.ts";
+
+await delegate(ctx, {
+  components: [CWD_GUARD, STAGE_WRITE],
+  prompt,
+});
 ```
+
+See `_parent-side.ts` for the exact `ParentSide` shape.
 
 ## Canonical assembled example
 
-`pi-sandbox/.pi/extensions/deferred-writer.ts` wires stage-write +
-cwd-guard into a `/deferred-writer <task>` slash command with a
-`ctx.ui.confirm` gate. Use it as the reference whenever the
-wiring template above leaves something ambiguous.
+`pi-sandbox/.pi/extensions/deferred-writer.ts` — a 41-line thin
+agent that wires cwd-guard + stage-write through a single
+`delegate()` call.

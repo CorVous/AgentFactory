@@ -16,12 +16,29 @@ that already implements every rail) and the rails that apply.
   - `[cwd-guard, stage-write]` — drafter with approval (human gate).
   - `[cwd-guard, stage-write, review]` — drafter with LLM review
     gate, no fan-out (`run-deferred-writer ∉ components`).
-- **Canonical reference:** `pi-sandbox/.pi/extensions/deferred-writer.ts`
-  lines 52–128 (child spawn + NDJSON loop) + 278–306 (validation +
-  `ctx.ui.confirm` + promotion). The recon and confined-drafter
-  shapes are simplifications: drop the `stage_write` harvest, drop
-  the `ctx.ui.confirm` gate (recon has no writes; confined drafter
-  is unattended).
+- **Canonical reference:** a single `delegate()` call from
+  `pi-sandbox/.pi/lib/delegate.ts`. The shared runtime owns the
+  subprocess rails (spawn frame, NDJSON loop, timeout, cost
+  extraction, path validation, confirm/promote). The generated
+  extension body is the slash-command registration + one
+  `await delegate(ctx, { components, prompt })`. Reference
+  implementation: `pi-sandbox/.pi/extensions/deferred-writer.ts`
+  (41 lines after the Phase 2.3 refactor).
+
+  ```ts
+  await delegate(ctx, {
+    components: [CWD_GUARD, STAGE_WRITE],   // substitute declared set
+    prompt,
+  });
+  ```
+
+  For `[emit-summary]` (read-only recon) drop `CWD_GUARD` —
+  `delegate()` infers `$TASK_MODEL` and the emit-summary
+  harvester; the caller then persists
+  `result.byComponent.get("emit-summary").summaries` to
+  `.pi/scratch/<title>.md`. For `[cwd-guard]` (confined drafter)
+  drop `STAGE_WRITE` — the child writes directly via
+  `sandbox_write`.
 - **Rails that apply:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12. Rail 11
   (dashboard) does NOT apply — no fan-out state to track.
 
@@ -34,35 +51,35 @@ that already implements every rail) and the rails that apply.
 - **Component sets that infer to this:** `[cwd-guard, emit-summary,
   stage-write]` (when `review ∉ components` and
   `run-deferred-writer ∉ components`).
-- **Canonical reference:** no single existing extension yet; inline
-  this worked example until `composer-scout-then-draft` lands and
-  takes over as the canonical reference.
+- **Canonical reference:** two `delegate()` calls — one per phase
+  — with the brief assembled in between. The scout call uses
+  `[EMIT_SUMMARY]` (no cwd-guard, read-only child). The drafter
+  call uses `[CWD_GUARD, STAGE_WRITE]` and receives the brief
+  interpolated into its prompt.
 
   ```ts
-  // Phase 1: scout child (emit-summary only, no write channel,
-  // PI_SANDBOX_ROOT NOT set on this spawn — rails 1, 2, 3, 4, 8, 12).
-  const scoutResult = await runChild({
-    args: ["-e", EMIT_SUMMARY, "--tools", "ls,read,grep,glob,emit_summary", ...],
-    env: { ...process.env },        // no PI_SANDBOX_ROOT
+  const scout = await delegate(ctx, {
+    components: [EMIT_SUMMARY],
+    prompt: `Survey ${target}. Use emit_summary for each finding.`,
   });
-  const brief = scoutResult.summaries
+  const summaries =
+    (scout.byComponent.get("emit-summary") as
+      | { summaries: { title: string; body: string }[] }
+      | undefined)?.summaries ?? [];
+  const brief = summaries
     .map((s) => `## ${s.title}\n${s.body}`)
     .join("\n\n");
-  if (Buffer.byteLength(brief, "utf8") > BRIEF_MAX_BYTES) {
-    throw new Error("brief exceeds budget");
+  if (Buffer.byteLength(brief, "utf8") > BRIEF_MAX_BYTES /* typ. 16 KB */) {
+    ctx.ui.notify("brief exceeds budget; aborting", "error");
+    return;
   }
 
-  // Phase 2: drafter child (cwd-guard + stage-write, full rail set).
-  // Spawn shape borrowed from
-  //   pi-sandbox/.pi/extensions/deferred-writer.ts:52-128 (spawn + NDJSON loop)
-  //   pi-sandbox/.pi/extensions/deferred-writer.ts:278-306 (promotion).
-  const drafterPrompt = `${userTask}\n\n<brief>\n${brief}\n</brief>`;
-  const drafterResult = await runChild({
-    args: ["-e", CWD_GUARD, "-e", STAGE_WRITE, "--tools", "stage_write,ls", ...],
-    env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
-    prompt: drafterPrompt,
+  await delegate(ctx, {
+    components: [CWD_GUARD, STAGE_WRITE],
+    prompt: `${userTask}\n\n<brief>\n${brief}\n</brief>`,
   });
-  // stage-write.finalize handles ctx.ui.confirm + promote (rail 10).
+  // delegate() runs the rails.md §10 confirm/promote gate
+  // automatically because review ∉ components on this spawn.
   ```
 
 - **Rails that apply:** all single-spawn rails plus a bounded brief

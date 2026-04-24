@@ -1,5 +1,12 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { fileURLToPath } from "node:url";
+import type {
+  DispatchRequestsResult,
+  DispatchRequestsState,
+  NDJSONEvent,
+  ParentSide,
+} from "./_parent-side.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -24,3 +31,28 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
+
+// Parent-side surface (Phase 2.1). Like review, run-deferred-writer is
+// orchestrator-only (RPC delegator fan-out) — but the harvester shape is
+// the same, so exposing it lets the orchestrator import this instead of
+// re-implementing the dispatch-list extraction.
+const RUN_DEFERRED_WRITER_PATH = fileURLToPath(import.meta.url);
+
+export const parentSide: ParentSide<
+  DispatchRequestsState,
+  DispatchRequestsResult
+> = {
+  name: "run-deferred-writer",
+  tools: ["run_deferred_writer"],
+  spawnArgs: ["-e", RUN_DEFERRED_WRITER_PATH],
+  env: () => ({}),
+  initialState: () => ({ tasks: [] }),
+  harvest: (event: NDJSONEvent, state: DispatchRequestsState) => {
+    if (event.type !== "tool_execution_start") return;
+    if (event.toolName !== "run_deferred_writer") return;
+    const args = event.args as { task?: unknown } | undefined;
+    if (!args || typeof args.task !== "string") return;
+    state.tasks.push(args.task);
+  },
+  finalize: (state) => ({ tasks: state.tasks.slice() }),
+};

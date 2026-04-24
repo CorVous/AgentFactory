@@ -72,17 +72,111 @@ harvesting), go to step 5.
 
 ## 4. Wire it
 
-For each component in the set, follow the **Parent-side wiring
-template** in `parts/<name>.md`. Apply every rail in `rails.md`
-(the grader asserts each one). Output goes to
-`.pi/extensions/<name>.ts`.
+Emit a thin extension at `.pi/extensions/<name>.ts` that imports
+the declared components' `parentSide` values and calls the
+`delegate()` runtime from `../lib/delegate.ts`. `delegate()` owns
+every subprocess rail (spawn frame, NDJSON loop, timeout, cost,
+path validation, confirm/promote per rails.md §10) so the
+extension body collapses to the slash-command registration and a
+single `delegate()` call.
 
-The wiring templates are not skeletons — they are per-component
-fragments (event anchor, args destructuring, accumulator shape,
-finalize behavior) that the composer assembles into a single
-extension based on the chosen topology. The canonical references
-named in `compositions.md` show how the fragments combine for each
-topology.
+### Template (single-spawn — covers `[emit-summary]`,
+### `[cwd-guard]`, `[cwd-guard, stage-write]`)
+
+```ts
+import path from "node:path";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+import { delegate } from "../lib/delegate.ts";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("<slug>", {
+    description: "<short description>",
+    handler: async (args, ctx) => {
+      if (!args.trim()) {
+        ctx.ui.notify("Usage: /<slug> <task>", "warning");
+        return;
+      }
+      const sandboxRoot = path.resolve(process.cwd());
+      const prompt = `<agent instructions referencing ${sandboxRoot}>`;
+      await delegate(ctx, {
+        components: [CWD_GUARD, STAGE_WRITE],  // ← declared set
+        prompt,
+      });
+    },
+  });
+}
+```
+
+Substitute the `components` array for the declared component set.
+Drop `CWD_GUARD` from both the import and the array when the set
+is `[emit-summary]` (read-only recon, no write channel). The
+`delegate()` call's tier inference picks `$TASK_MODEL` or
+`$LEAD_MODEL` automatically based on whether `review` or
+`run-deferred-writer` are in the set — no `--model` override
+needed in the composer's output.
+
+### Template (sequential-phases-with-brief — covers
+### `[cwd-guard, emit-summary, stage-write]`)
+
+Two `delegate()` calls. Harvest phase-1 summaries from
+`byComponent.get("emit-summary")`, assemble into a brief with a
+bounded byte-length, and interpolate into phase-2's prompt. The
+same `export default function(pi) { pi.registerCommand(...) }`
+shell wraps the body — do NOT substitute `export async function
+handler(ctx)` or `export const handler = …`; pi's loader only
+calls the default export, and anything else silently registers
+no command (grader reports it as "command not registered").
+Always include the empty-args short-circuit so the load probe
+(which invokes `/<slug>` with no args) exits cleanly without
+triggering either phase's LLM call.
+
+```ts
+export default function (pi: ExtensionAPI) {
+  pi.registerCommand("<slug>", {
+    description: "<short description>",
+    handler: async (args, ctx) => {
+      if (!args.trim()) {
+        ctx.ui.notify("Usage: /<slug> <target>", "warning");
+        return;
+      }
+      const target = args.trim();
+
+      const scout = await delegate(ctx, {
+        components: [EMIT_SUMMARY],           // read-only scout, no CWD_GUARD
+        prompt: `Survey ${target}. Use emit_summary for each finding.`,
+      });
+      const summaries =
+        (scout.byComponent.get("emit-summary") as
+          | { summaries: { title: string; body: string }[] }
+          | undefined)?.summaries ?? [];
+      const brief = summaries
+        .map((s) => `## ${s.title}\n${s.body}`)
+        .join("\n\n");
+      if (Buffer.byteLength(brief, "utf8") > 16_000) {
+        ctx.ui.notify("brief exceeds budget; aborting", "error");
+        return;
+      }
+      await delegate(ctx, {
+        components: [CWD_GUARD, STAGE_WRITE],
+        prompt: `${target}\n\n<brief>\n${brief}\n</brief>`,
+      });
+    },
+  });
+}
+```
+
+### rpc-delegator-over-concurrent-drafters
+
+Does NOT use `delegate()` for the delegator spawn — `delegate()` is
+json-mode only, the delegator needs `--mode rpc` with a persistent
+stdin channel driven through multiple phases. The drafter spawns
+inside the orchestrator's `Promise.all` DO go through
+`delegate(autoPromote: false)`; after review, promotion uses the
+exported `promote()` helper. Reference
+`pi-sandbox/.pi/extensions/delegated-writer.ts` for the whole
+shape; this composer emits a copy-adapted skeleton of it.
 
 ## 5. Flag the gap
 

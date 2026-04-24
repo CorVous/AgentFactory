@@ -9,6 +9,17 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import type {
+  NDJSONEvent,
+  ParentSide,
+  StageWriteResult,
+  StageWriteState,
+  StagedWritePlan,
+} from "./_parent-side.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -36,3 +47,73 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
+
+// Parent-side surface (Phase 2.1). Harvests `stage_write` calls from the
+// child's NDJSON stdout and validates them at finalize. Promotion +
+// confirm-vs-verdict gating lives in the delegate runtime (the correct
+// policy depends on whether `review` is in the component set — rails.md §10).
+const STAGE_WRITE_PATH = fileURLToPath(import.meta.url);
+const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
+
+const sha256 = (data: string) =>
+  createHash("sha256").update(data, "utf8").digest("hex");
+
+export const parentSide: ParentSide<StageWriteState, StageWriteResult> = {
+  name: "stage-write",
+  tools: ["stage_write"],
+  spawnArgs: ["-e", STAGE_WRITE_PATH],
+  env: () => ({}),
+  initialState: () => ({ stagedWrites: [] }),
+  harvest: (event: NDJSONEvent, state: StageWriteState) => {
+    if (event.type !== "tool_execution_start") return;
+    if (event.toolName !== "stage_write") return;
+    const args = event.args as { path?: unknown; content?: unknown } | undefined;
+    if (!args) return;
+    state.stagedWrites.push({ path: args.path, content: args.content });
+  },
+  finalize: (state, { sandboxRoot }) => {
+    const plans: StagedWritePlan[] = [];
+    const skips: string[] = [];
+    for (const s of state.stagedWrites) {
+      if (typeof s.path !== "string" || s.path.length === 0) {
+        skips.push(`<invalid path type: ${typeof s.path}>`);
+        continue;
+      }
+      if (typeof s.content !== "string") {
+        skips.push(`${s.path}: content is ${typeof s.content}, expected string`);
+        continue;
+      }
+      const relPath = s.path;
+      if (
+        path.isAbsolute(relPath) ||
+        relPath.split("/").includes("..") ||
+        relPath.split(path.sep).includes("..")
+      ) {
+        skips.push(`${relPath}: absolute or contains '..'`);
+        continue;
+      }
+      const destAbs = path.resolve(sandboxRoot, relPath);
+      if (destAbs !== sandboxRoot && !destAbs.startsWith(sandboxRoot + path.sep)) {
+        skips.push(`${relPath}: escapes sandbox`);
+        continue;
+      }
+      if (fs.existsSync(destAbs)) {
+        skips.push(`${relPath}: destination exists at ${destAbs}`);
+        continue;
+      }
+      const byteLength = Buffer.byteLength(s.content, "utf8");
+      if (byteLength > MAX_CONTENT_BYTES_PER_FILE) {
+        skips.push(`${relPath}: ${byteLength} bytes > ${MAX_CONTENT_BYTES_PER_FILE} limit`);
+        continue;
+      }
+      plans.push({
+        relPath,
+        destAbs,
+        content: s.content,
+        sha: sha256(s.content),
+        byteLength,
+      });
+    }
+    return { plans, skips };
+  },
+};

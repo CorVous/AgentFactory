@@ -1,0 +1,9 @@
+skill: pi-agent-composer
+expectation:
+  kind: gap
+  closest_match: none
+prompt: |
+  Build a pi agent that calls the OpenAI API and streams the responses
+  into a live-updating custom TUI widget. The widget should show
+  partial tokens as they arrive, track total output cost, and let the
+  user cancel an in-flight stream with Ctrl-C.

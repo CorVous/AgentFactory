@@ -58,9 +58,9 @@ in `compositions.md`.
 
 | Topology | When | Canonical reference |
 | --- | --- | --- |
-| `single-spawn` | One child, one phase. Covers recon-style, confined-drafter, and drafter-with-approval shapes. | `pi-sandbox/.pi/extensions/deferred-writer.ts` |
-| `sequential-phases-with-brief` | Two or more children run serially; parent assembles a brief from phase 1's `emit_summary` output and passes it into phase 2's prompt. | (inline in `compositions.md` until `composer-scout-then-draft` lands) |
-| `rpc-delegator-over-concurrent-drafters` | Persistent RPC delegator LLM dispatches drafters via `run_deferred_writer` and reviews their drafts via `review`; LLM verdict is the gate. | `pi-sandbox/.pi/extensions/delegated-writer.ts` |
+| `single-spawn` | One child, one phase. Covers recon-style, confined-drafter, and drafter-with-approval shapes. | `pi-sandbox/.pi/extensions/deferred-writer.ts` — 41-line thin agent over `delegate()`. |
+| `sequential-phases-with-brief` | Two or more children run serially; parent assembles a brief from phase 1's `emit_summary` output and passes it into phase 2's prompt. | Two `delegate()` calls; see worked example in `compositions.md`. |
+| `rpc-delegator-over-concurrent-drafters` | Persistent RPC delegator LLM dispatches drafters via `run_deferred_writer` and reviews their drafts via `review`; LLM verdict is the gate. | `pi-sandbox/.pi/extensions/delegated-writer.ts` — delegator spawn stays custom (`--mode rpc`); drafter fan-out uses `delegate(autoPromote: false)`. |
 
 ## Always-on rails
 

@@ -134,6 +134,21 @@ mkdir -p \
   "$CWD/artifacts/child-tools" \
   "$CWD/artifacts/stray"
 
+# Mount the shared components + lib/ into the run's cwd so that a
+# composer-emitted thin agent's relative imports (`../components/foo.ts`,
+# `../lib/delegate.ts`) resolve whether the probe spawns pi against the
+# in-place `.pi/extensions/<name>.ts` or the copied
+# `artifacts/extensions/<name>.ts`. Without these symlinks, the Phase 2.4
+# thin-agent output fails to load in the grader's probe phase. We symlink
+# (not copy) so a refactor to the shared runtime is immediately visible
+# across every run directory without re-seeding.
+COMPONENTS_SRC="$REPO/pi-sandbox/.pi/components"
+LIB_SRC="$REPO/pi-sandbox/.pi/lib"
+for slot in "$CWD/.pi" "$CWD/artifacts"; do
+  [[ -e "$slot/components" ]] || ln -s "$COMPONENTS_SRC" "$slot/components"
+  [[ -e "$slot/lib" ]]        || ln -s "$LIB_SRC"        "$slot/lib"
+done
+
 # Expose ONLY the skill under test into the run's cwd — never the whole
 # skills/ tree. A broad symlink would let pi auto-discover every skill
 # in pi-sandbox/skills/ (e.g. pi-agent-builder leaking into a run that

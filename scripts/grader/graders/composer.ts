@@ -3,8 +3,10 @@ import path from "node:path";
 import {
   discoverArtifacts,
   extractCommandName,
+  findDelegateUsage,
   findSpawnInvocations,
   type ArtifactSet,
+  type DelegateUsage,
   type SpawnInvocation,
 } from "../lib/artifact.ts";
 import {
@@ -162,26 +164,37 @@ function gradeComposition(
   const spawns = art.extensions.flatMap((f) =>
     findSpawnInvocations(fs.readFileSync(f, "utf8")),
   );
+  const delegateUsage = findDelegateUsageOnExtensions(art);
+
+  // P1: reward thin agents that ride on the delegate() runtime. Not
+  // required for pass — inline-spawn agents are still fully graded
+  // against the per-component rails below. See parts-first-plan §2.5.
+  if (delegateUsage.usesDelegate) {
+    rubric.p1("uses delegate() runtime (thin agent)", "pass");
+  }
 
   gradeRegistration(rubric, art, cmdName);
   gradeRegisterToolShape(rubric, art);
-  gradeSubprocessRails(rubric, art, spawns);
-  gradeNdjsonParsing(rubric, art);
+  gradeSubprocessRails(rubric, art, spawns, delegateUsage);
+  gradeNdjsonParsing(rubric, art, delegateUsage);
 
   // Composition-fidelity: each declared component's spawn-args + tool
-  // contributions must appear in at least one spawn.
-  gradeCompositionFidelity(rubric, declaredComponents, expectation, spawns);
+  // contributions must appear in at least one spawn — unless the
+  // component is handled by delegate(), where the wiring is indirect.
+  gradeCompositionFidelity(rubric, declaredComponents, expectation, spawns, delegateUsage);
 
   // Per-component wiring.
-  gradePerComponentWiring(rubric, declaredComponents, art, spawns, declaredSet);
+  gradePerComponentWiring(rubric, declaredComponents, art, spawns, declaredSet, delegateUsage);
 
   // Composition-topology check.
   gradeTopology(rubric, composition, art, spawns, inferred);
 
   // Path validation when stage-write is in play (parent promotes; needs
-  // the validation rail).
+  // the validation rail). delegate()-based thin agents defer to the
+  // stage-write finalize + promote helper — gradePathValidation checks
+  // usesDelegate internally and short-circuits.
   if (declaredSet.has("stage-write")) {
-    gradePathValidation(rubric, art);
+    gradePathValidation(rubric, art, delegateUsage);
   }
 
   gradeNegativeAnchors(rubric, art);
@@ -245,19 +258,44 @@ function gradeCompositionFidelity(
   declaredComponents: ComponentName[],
   expectation: CompositionExpectation,
   spawns: SpawnInvocation[],
+  delegateUsage: DelegateUsage,
 ): void {
   rubric.say(`## Composition fidelity`);
-  if (spawns.length === 0) {
+  const thinAgent = spawns.length === 0 && delegateUsage.usesDelegate;
+  if (thinAgent) {
+    rubric.p0(
+      "delegate({components: [...]}) call in extension",
+      "pass",
+      "spawn + wiring live in ../lib/delegate.ts",
+    );
+  } else if (spawns.length === 0) {
     rubric.p0("at least one spawn('pi', [...]) call", "fail", "no spawn found");
     return;
+  } else {
+    rubric.p0("at least one spawn('pi', [...]) call", "pass");
   }
-  rubric.p0("at least one spawn('pi', [...]) call", "pass");
 
   const expectedFilenames = new Set(
     declaredComponents.map((c) => COMPONENTS[c].filename),
   );
+  // For thin agents, the "loaded" set comes from delegate()'s components
+  // array (resolved to filenames via parentSide imports). For inline-spawn
+  // agents, it comes from each spawn's -e args.
   const loadedFilenames = new Set<string>();
-  for (const s of spawns) for (const c of s.eFlagComponents) loadedFilenames.add(c);
+  if (thinAgent) {
+    for (const name of delegateUsage.delegateHandles) {
+      const spec = COMPONENTS[name as ComponentName];
+      if (spec) loadedFilenames.add(spec.filename);
+    }
+  } else {
+    for (const s of spawns) for (const c of s.eFlagComponents) loadedFilenames.add(c);
+    // Orchestrators drive the drafter spawn through delegate() and the
+    // RPC delegator spawn inline — union both so a split wiring passes.
+    for (const name of delegateUsage.delegateHandles) {
+      const spec = COMPONENTS[name as ComponentName];
+      if (spec) loadedFilenames.add(spec.filename);
+    }
+  }
 
   const missing = [...expectedFilenames].filter((f) => !loadedFilenames.has(f));
   if (missing.length === 0) {
@@ -295,7 +333,22 @@ function gradeCompositionFidelity(
 
   // Tool allowlist: union of each component's contribution + extra_tools.
   // Each spawn's tools must be a subset of (allowed ∪ {ls, read, grep,
-  // glob} — the read-only verbs are always safe).
+  // glob} — the read-only verbs are always safe). Thin agents delegate
+  // the --tools assembly to delegate() itself, which unions each
+  // component's parentSide.tools and rejects the forbidden trio — so
+  // the check collapses to "is the component set correct?", which the
+  // declared-vs-loaded filename check above already asserts.
+  if (thinAgent) {
+    rubric.p0(
+      "--tools allowlist unioned by delegate() from parentSide contributions",
+      "pass",
+    );
+    rubric.p0(
+      "no write/edit/bash in child tool allowlist (enforced by delegate())",
+      "pass",
+    );
+    return;
+  }
   const allowedTools = new Set<string>(
     unionToolsContribution(declaredComponents, expectation.extra_tools),
   );
@@ -354,13 +407,46 @@ function gradePerComponentWiring(
   art: ArtifactSet,
   spawns: SpawnInvocation[],
   components: Set<ComponentName>,
+  delegateUsage: DelegateUsage,
 ): void {
   rubric.say(`## Per-component wiring`);
+  const delegateHandles = new Set<ComponentName>();
+  for (const n of delegateUsage.delegateHandles) {
+    if (isKnownComponent(n)) delegateHandles.add(n);
+  }
+  const importedComponents = new Set<ComponentName>();
+  for (const n of delegateUsage.importedComponents) {
+    if (isKnownComponent(n)) importedComponents.add(n);
+  }
   for (const name of declaredComponents) {
     if (!isKnownComponent(name)) continue;
-    const marks = COMPONENTS[name].wiringChecks({ art, spawns, components });
+    const marks = COMPONENTS[name].wiringChecks({
+      art,
+      spawns,
+      components,
+      delegateHandles,
+      importedComponents,
+    });
     for (const m of marks) emitMark(rubric, m);
   }
+}
+
+/** Collapse every generated extension's delegate usage into one
+ *  {@link DelegateUsage} value. Multi-file extensions are rare in
+ *  composer output but we handle them by unioning imports + handle
+ *  sets so any file's delegate() call counts. */
+function findDelegateUsageOnExtensions(art: ArtifactSet): DelegateUsage {
+  let usesDelegate = false;
+  const importedComponents = new Set<string>();
+  const delegateHandles = new Set<string>();
+  for (const f of art.extensions) {
+    const src = fs.readFileSync(f, "utf8");
+    const u = findDelegateUsage(src);
+    if (u.usesDelegate) usesDelegate = true;
+    for (const c of u.importedComponents) importedComponents.add(c);
+    for (const c of u.delegateHandles) delegateHandles.add(c);
+  }
+  return { usesDelegate, importedComponents, delegateHandles };
 }
 
 function emitMark(rubric: Rubric, m: Mark): void {

@@ -77,15 +77,17 @@ function validateTask(
   const inferredSet = inferComponentsFromPrompt(prompt);
   const inferred = [...inferredSet];
 
-  // cwd-guard is implicit for any write-capable shape — declared
-  // cwd-guard is allowed even if the prompt doesn't trigger the
-  // sandbox-phrasing signal, when the rest of the declared set
-  // contains a write-capable component.
-  const declaredHasWriteCapable =
-    declared.includes("stage-write") || declared.includes("run-deferred-writer");
+  // cwd-guard is implicit for any sub-pi spawn that writes — declared
+  // `cwd-guard` is allowed regardless of whether the prompt triggered
+  // a sandbox-phrasing signal. This covers both the drafter-with-approval
+  // shape (cwd-guard + stage-write) and the confined-drafter shape
+  // (cwd-guard alone; child writes directly via sandbox_write), without
+  // forcing every prompt to include literal sandbox language. See the
+  // note at the top of signal-map.ts — cwd-guard is intentionally NOT
+  // a standalone signal.
   const missingFromPrompt = declared.filter((c) => {
     if (inferredSet.has(c)) return false;
-    if (c === "cwd-guard" && declaredHasWriteCapable) return false;
+    if (c === "cwd-guard") return false;
     return true;
   });
 

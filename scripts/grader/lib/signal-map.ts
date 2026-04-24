@@ -27,17 +27,24 @@ export interface SignalRow {
 }
 
 export const SIGNAL_MAP: ReadonlyArray<SignalRow> = [
-  // Recon / read-only / survey → emit-summary
+  // Recon / read-only / survey → emit-summary.
+  // Word stems accept inflections (survey/surveys/surveyed/surveying,
+  // summary/summaries/summarize/summarizing) so the composer's mirror
+  // prompts — which inherit the assembler's wording verbatim — all
+  // trigger this row.
   {
-    pattern: /\b(read-only|survey|recon|explore|map out|index|audit|summari[sz]e)\b/i,
+    pattern:
+      /\b(read-only|survey\w*|recon|explor\w*|map out|index\w*|audit\w*|summar\w*)\b/i,
     components: ["emit-summary"],
     description: "recon-style read-only survey",
   },
 
-  // Approval / confirm / preview → stage-write (parent gate)
+  // Approval / confirm / preview → stage-write (parent gate).
+  // `show me (the )?drafts?` covers "Show me the draft before saving"
+  // alongside the existing "draft … show me" ordering.
   {
     pattern:
-      /\b(after the user confirms?|with approval|the user (decides?|approves?)|preview before writing|stage,? then approve|draft .* (and )?show me)\b/i,
+      /\b(after the user confirms?|with approval|the user (decides?|approves?)|preview before writing|stage,? then approve|draft .* (and )?show me|show me (the )?drafts?)\b/i,
     components: ["stage-write"],
     description: "user-approval gate over drafts",
   },
@@ -58,10 +65,12 @@ export const SIGNAL_MAP: ReadonlyArray<SignalRow> = [
     description: "sandbox / confined writes",
   },
 
-  // Sequential phases — scout-then-draft style → emit-summary + stage-write
+  // Sequential phases — scout-then-draft style → emit-summary + stage-write.
+  // `surveys?` (with optional plural s) and `draft\w*` as a second-phase
+  // verb cover "surveys a directory, then drafts a new README.md".
   {
     pattern:
-      /\b(two phases|first .{0,40} then|propose .{0,40} then commit|look at .{0,40} then write|survey .{0,40} (and|then) (add|write|generate|create|produce)|given what'?s there,? (produce|generate|write))\b/i,
+      /\b(two phases|first .{0,40} then|propose .{0,40} then commit|look at .{0,40} then write|surveys? .{0,40} (and|then) (add|write|generate|create|produce|draft\w*)|given what'?s there,? (produce|generate|write))\b/i,
     components: ["emit-summary", "stage-write"],
     description: "sequential phases (scout + draft)",
   },

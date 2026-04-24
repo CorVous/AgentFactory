@@ -75,24 +75,30 @@ For the orchestrator shape, the delegator's allowlist is exactly
 `run_deferred_writer,review` — no read/write verbs. The delegator
 decides *what* to dispatch and *what to accept*, nothing else.
 
-## Parent-side wiring template
+## Parent-side wiring
 
-- **Event anchor:** `event.type === "tool_execution_start" &&
-  event.toolName === "review"`.
-- **Args destructuring:** `const { file_path: reviewedPath,
-  verdict, feedback } = event.args as { file_path: string;
-  verdict: "approve" | "revise"; feedback?: string };`.
-- **State shape:** `const verdicts = new Map<string, { verdict:
-  "approve" | "revise"; feedback?: string }>();` keyed by the
-  staged draft's path. Also track `iterations` per file_path,
-  capped at `MAX_REVIEW_ITERATIONS` (typ. 3).
-- **Finalize behavior:**
-  - On `approve`: mark the staged draft promotable; pass through
-    to the stage-write finalize step.
-  - On `revise`: re-dispatch the drafter for that file_path with
-    `"Revision feedback: " + feedback` appended to the task
-    string. After `MAX_REVIEW_ITERATIONS`, bail with a `notify`
-    naming the file_path and surface accumulated cost.
+`review` lives inside the RPC delegator session, not a
+single-shot `delegate()` call. Orchestrator extensions keep the
+RPC spawn custom but import `review.parentSide.harvest` to parse
+verdicts from the delegator's stdout stream:
+
+```ts
+import { parentSide as REVIEW } from "../components/review.ts";
+
+const reviewState = REVIEW.initialState();
+// ...in the RPC session's per-event loop:
+REVIEW.harvest(event, reviewState);
+// ...then after agent_end:
+const { verdictMap } = await REVIEW.finalize(reviewState, { ctx, sandboxRoot });
+```
+
+`verdictMap` keys by `file_path`; `approve` promotes the staged
+draft (use the exported `promote()` helper from
+`../lib/delegate.ts`), `revise` re-dispatches the drafter with
+`feedback` appended. Cap at `MAX_REVIEW_ITERATIONS = 3` per
+file_path; bail with a `notify` and the accumulated cost when
+exceeded. Reference: `delegated-writer.ts` — its RPC loop is the
+canonical consumer of this harvester.
 
 ## Gotcha
 

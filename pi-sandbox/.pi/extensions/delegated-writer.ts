@@ -1,15 +1,22 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import fs from "node:fs";
-import { createHash } from "node:crypto";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { parentSide as REVIEW } from "../components/review.ts";
+import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
+import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+import type {
+  DispatchRequestsState,
+  ReviewCall,
+  ReviewState,
+  StageWriteResult,
+  StagedWritePlan,
+} from "../components/_parent-side.ts";
+import { delegate, promote } from "../lib/delegate.ts";
 
 const DELEGATOR_PHASE_TIMEOUT_MS = 120_000;
-const DRAFTER_TIMEOUT_MS = 180_000;
 const MAX_SUBTASKS = 8;
 const MAX_FILES_PROMOTABLE = 50;
-const MAX_CONTENT_BYTES_PER_FILE = 2_000_000;
 const MAX_REVISE_ITERATIONS = 3;
 const NOTIFY_TEXT_MAX = 400;
 const DASHBOARD_KEY = "delegated-writer";
@@ -19,47 +26,10 @@ const CONTENT_PREVIEW_CHARS = 80;
 const WRITTEN_PREVIEW_LINES = 8;
 const WRITTEN_PREVIEW_CHARS = 120;
 
-const STAGE_WRITE_TOOL = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "components",
-  "stage-write.ts",
-);
-const RUN_DEFERRED_WRITER_TOOL = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "components",
-  "run-deferred-writer.ts",
-);
-const REVIEW_TOOL = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "components",
-  "review.ts",
-);
-
-type StagedWrite = {
-  relPath: string;
-  destAbs: string;
-  content: string;
-  sha: string;
-  byteLength: number;
-  taskIndex: number;
-};
-
-type ReviewCall = {
-  file_path: string;
-  verdict: "approve" | "revise";
-  feedback?: string;
-};
-
-type DrafterResult = {
-  stagedWrites: Array<{ path: unknown; content: unknown }>;
-  code: number;
-  timedOut: boolean;
-  stderr: string;
-  costUsd: number;
-};
+/** A validated stage-write plan tagged with the drafter index that produced
+ *  it. Extends the StagedWritePlan from `_parent-side.ts` with taskIndex so
+ *  the review phase can attribute verdicts back to drafters for revision. */
+type TaskStagedWrite = StagedWritePlan & { taskIndex: number };
 
 type PhaseResult = {
   tasks: string[];
@@ -104,7 +74,6 @@ function extractCostUsd(ev: Record<string, unknown>): number {
 
 const fmtUsd = (n: number) => `$${n.toFixed(4)}`;
 
-const sha256 = (data: string) => createHash("sha256").update(data, "utf8").digest("hex");
 const trunc = (s: string, n = NOTIFY_TEXT_MAX) =>
   s.length > n ? s.slice(0, n) + `… (+${s.length - n} chars)` : s;
 
@@ -188,16 +157,32 @@ function updateStatus(ctx: UiCtx, state: PipelineState) {
   try { ctx.ui.setStatus(DASHBOARD_KEY, renderStatus(state)); } catch {}
 }
 
-// Drafter uses the classic non-RPC json mode — one-shot per task.
+// Drafter result shape after delegate() validation. `plans` are already
+// sandbox-checked / dedup-checked / sha-computed by stage-write.finalize;
+// the orchestrator assigns taskIndex and merges duplicates across tasks.
+type DrafterOutcome = {
+  plans: StagedWritePlan[];
+  skips: string[];
+  timedOut: boolean;
+  exitCode: number;
+  stderr: string;
+  costUsd: number;
+};
+
+// Drafter goes through delegate(autoPromote: false) so the LLM reviewer —
+// not ctx.ui.confirm — is the gate. Uses CWD_GUARD alongside STAGE_WRITE
+// because drafters may call `read` / `ls` on sandbox paths and the guard
+// supplies the tool allowlist contribution for those verbs plus the
+// PI_SANDBOX_ROOT env. `onStage` wraps STAGE_WRITE.harvest so the
+// per-stage_write dashboard update still fires live rather than batched
+// at child-close.
 async function runDrafter(
-  taskIndex: number,
   task: string,
   feedback: string[] | undefined,
-  taskModel: string,
-  sandboxRoot: string,
   ctx: UiCtx,
   onStage?: (w: { path: string; content: string; bytes: number }) => void,
-): Promise<DrafterResult> {
+): Promise<DrafterOutcome> {
+  const sandboxRoot = path.resolve(process.cwd());
   const base = `You are a DRAFTER. Task: ${task}.
 To create a file, call 'stage_write' with a relative 'path' (inside the project at ${sandboxRoot}) and full 'content'. Nothing touches disk until approved.
 
@@ -210,60 +195,42 @@ Rules:
     ? `${base}\n\nThis is a REVISION pass. Previous attempt had issues. Apply this feedback verbatim:\n${feedback.map(f => `- ${f}`).join("\n")}`
     : base;
 
-  return new Promise((resolve) => {
-    const child = spawn("pi", [
-      "--mode", "json",
-      "-e", STAGE_WRITE_TOOL,
-      "-p", prompt,
-      "--no-extensions", "--no-session", "--thinking", "off",
-      "--tools", "stage_write,ls,read",
-      "--provider", "openrouter", "--model", taskModel,
-    ], { stdio: ["ignore", "pipe", "pipe"], cwd: sandboxRoot });
-
-    let buffer = "";
-    let stderr = "";
-    const stagedWrites: Array<{ path: unknown; content: unknown }> = [];
-    let costUsd = 0;
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, DRAFTER_TIMEOUT_MS);
-
-    child.stdout.on("data", (d) => {
-      buffer += d.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let e: Record<string, unknown>;
-        try { e = JSON.parse(line); } catch { continue; }
-        if (e.type === "tool_execution_start") {
-          const name = e.toolName as string | undefined;
-          const inputObj = e.args as Record<string, unknown> | undefined;
-          if (name === "stage_write" && inputObj) {
-            stagedWrites.push({ path: inputObj.path, content: inputObj.content });
-            const p = typeof inputObj.path === "string" ? inputObj.path : "<?>";
-            const content = typeof inputObj.content === "string" ? inputObj.content : "";
-            if (onStage && typeof inputObj.path === "string") {
-              onStage({ path: p, content, bytes: Buffer.byteLength(content, "utf8") });
-            }
-          }
-        } else if (e.type === "message_end") {
-          costUsd += extractCostUsd(e);
-        }
+  const stageHook = onStage
+    ? {
+        ...STAGE_WRITE,
+        harvest(event: Record<string, unknown>, state: unknown) {
+          STAGE_WRITE.harvest(event, state as never);
+          if (
+            event.type !== "tool_execution_start" ||
+            event.toolName !== "stage_write"
+          ) return;
+          const args = event.args as { path?: unknown; content?: unknown } | undefined;
+          if (!args || typeof args.path !== "string") return;
+          const content = typeof args.content === "string" ? args.content : "";
+          onStage({
+            path: args.path,
+            content,
+            bytes: Buffer.byteLength(content, "utf8"),
+          });
+        },
       }
-    });
-    child.stderr.on("data", (d) => { stderr += d.toString(); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ stagedWrites, code: code ?? 0, timedOut, stderr, costUsd });
-    });
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve({ stagedWrites, code: -1, timedOut, stderr, costUsd });
-    });
+    : STAGE_WRITE;
+
+  const result = await delegate(ctx, {
+    components: [CWD_GUARD, stageHook],
+    prompt,
+    autoPromote: false,
   });
+
+  const sw = result.byComponent.get("stage-write") as StageWriteResult | undefined;
+  return {
+    plans: sw?.plans ?? [],
+    skips: sw?.skips ?? [],
+    timedOut: result.timedOut,
+    exitCode: result.exitCode,
+    stderr: result.stderr,
+    costUsd: result.costUsd,
+  };
 }
 
 // Single persistent RPC-mode pi child, driven through multiple prompt/phase turns.
@@ -275,13 +242,17 @@ class DelegatorSession {
   private closed = false;
 
   constructor(leadModel: string, sandboxRoot: string) {
+    // -e flags and --tools CSV come from parentSide contributions so the
+    // RPC delegator shares its "how to load these stubs" knowledge with
+    // the rest of the composer library (rails.md §1, §8).
+    const spawnArgs = [...RUN_DEFERRED_WRITER.spawnArgs, ...REVIEW.spawnArgs];
+    const tools = [...RUN_DEFERRED_WRITER.tools, ...REVIEW.tools].join(",");
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",
       "--thinking", "off",
-      "-e", RUN_DEFERRED_WRITER_TOOL,
-      "-e", REVIEW_TOOL,
-      "--tools", "run_deferred_writer,review",
+      ...spawnArgs,
+      "--tools", tools,
       "--provider", "openrouter", "--model", leadModel,
     ], { stdio: ["pipe", "pipe", "pipe"], cwd: sandboxRoot });
 
@@ -320,15 +291,27 @@ class DelegatorSession {
     }
 
     return new Promise<PhaseResult>((resolve) => {
-      const tasks: string[] = [];
-      const reviews: ReviewCall[] = [];
+      // Per-phase harvest state owned by the component parentSides.
+      // Using their harvesters here (instead of the old inline name/
+      // args switch) keeps the RPC event parsing in lockstep with the
+      // single-shot delegate() path — any future stub-schema tweak in
+      // a component file stays the one place that has to change.
+      const dispatchState = RUN_DEFERRED_WRITER.initialState() as DispatchRequestsState;
+      const reviewState = REVIEW.initialState() as ReviewState;
+      const seenTasks = new Set<number>();
+      const seenReviews = new Set<number>();
       let costUsd = 0;
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
         this.listeners.delete(listener);
-        resolve({ tasks, reviews, timedOut: true, costUsd });
+        resolve({
+          tasks: dispatchState.tasks.slice(),
+          reviews: reviewState.reviews.slice(),
+          timedOut: true,
+          costUsd,
+        });
       }, timeoutMs);
 
       const listener = (ev: Record<string, unknown>) => {
@@ -337,24 +320,33 @@ class DelegatorSession {
           costUsd += extractCostUsd(ev);
         }
         if (type === "tool_execution_start") {
-          const name = ev.toolName as string | undefined;
-          const inputObj = ev.args as Record<string, unknown> | undefined;
-          if (name === "run_deferred_writer" && inputObj && typeof inputObj.task === "string") {
-            tasks.push(inputObj.task);
-            if (onTask) onTask(inputObj.task);
-          } else if (name === "review" && inputObj && typeof inputObj.file_path === "string") {
-            const verdict = inputObj.verdict === "approve" ? "approve" : "revise";
-            const feedback = typeof inputObj.feedback === "string" ? inputObj.feedback : undefined;
-            const rc: ReviewCall = { file_path: inputObj.file_path, verdict, feedback };
-            reviews.push(rc);
-            if (onReview) onReview(rc);
+          RUN_DEFERRED_WRITER.harvest(ev, dispatchState);
+          REVIEW.harvest(ev, reviewState);
+          // Fire onTask / onReview for any newly-appended entries since
+          // the last event so the parent's dashboard animates in real
+          // time. (Component harvesters append in order; using the old
+          // length as a cursor suffices.)
+          while (seenTasks.size < dispatchState.tasks.length) {
+            const idx = seenTasks.size;
+            seenTasks.add(idx);
+            if (onTask) onTask(dispatchState.tasks[idx]);
+          }
+          while (seenReviews.size < reviewState.reviews.length) {
+            const idx = seenReviews.size;
+            seenReviews.add(idx);
+            if (onReview) onReview(reviewState.reviews[idx]);
           }
         } else if (type === "agent_end") {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
           this.listeners.delete(listener);
-          resolve({ tasks, reviews, timedOut: false, costUsd });
+          resolve({
+            tasks: dispatchState.tasks.slice(),
+            reviews: reviewState.reviews.slice(),
+            timedOut: false,
+            costUsd,
+          });
         } else if (type === "response" && ev.success === false) {
           ctx.ui.notify(`${phaseLabel} RPC error: ${ev.error}`, "error");
         }
@@ -369,7 +361,12 @@ class DelegatorSession {
         clearTimeout(timer);
         this.listeners.delete(listener);
         ctx.ui.notify(`${phaseLabel} failed to write prompt: ${(e as Error).message}`, "error");
-        resolve({ tasks, reviews, timedOut: true, costUsd });
+        resolve({
+          tasks: dispatchState.tasks.slice(),
+          reviews: reviewState.reviews.slice(),
+          timedOut: true,
+          costUsd,
+        });
       }
     });
   }
@@ -384,56 +381,11 @@ class DelegatorSession {
   }
 }
 
-function validateStagedWrite(
-  s: { path: unknown; content: unknown },
-  taskIndex: number,
-  sandboxRoot: string,
-): StagedWrite | { error: string } {
-  if (typeof s.path !== "string" || !s.path) return { error: "invalid path" };
-  if (typeof s.content !== "string") return { error: `${s.path}: content not string` };
-  const relPath = s.path;
-  if (path.isAbsolute(relPath) || relPath.split("/").includes("..") || relPath.split(path.sep).includes("..")) {
-    return { error: `${relPath}: absolute or contains '..'` };
-  }
-  const destAbs = path.resolve(sandboxRoot, relPath);
-  if (destAbs !== sandboxRoot && !destAbs.startsWith(sandboxRoot + path.sep)) {
-    return { error: `${relPath}: escapes sandbox` };
-  }
-  if (fs.existsSync(destAbs)) return { error: `${relPath}: destination exists` };
-  const byteLength = Buffer.byteLength(s.content, "utf8");
-  if (byteLength > MAX_CONTENT_BYTES_PER_FILE) {
-    return { error: `${relPath}: too large (${byteLength} bytes)` };
-  }
-  return {
-    relPath,
-    destAbs,
-    content: s.content,
-    sha: sha256(s.content),
-    byteLength,
-    taskIndex,
-  };
-}
+// Validation + sha256 + per-item sandbox checks live in
+// stage-write.parentSide.finalize (phase 2.1); actual promotion goes
+// through the exported `promote()` helper in ../lib/delegate.ts.
 
-function promoteFiles(plans: StagedWrite[], ctx: UiCtx): StagedWrite[] {
-  const promoted: StagedWrite[] = [];
-  const failures: string[] = [];
-  for (const p of plans) {
-    try {
-      if (fs.existsSync(p.destAbs)) { failures.push(`${p.relPath}: exists`); continue; }
-      fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
-      fs.writeFileSync(p.destAbs, p.content, "utf8");
-      const actualSha = sha256(fs.readFileSync(p.destAbs, "utf8"));
-      if (actualSha !== p.sha) { failures.push(`${p.relPath}: sha mismatch after write`); continue; }
-      promoted.push(p);
-    } catch (e) {
-      failures.push(`${p.relPath}: ${(e as Error).message}`);
-    }
-  }
-  if (failures.length > 0) ctx.ui.notify(`Failures:\n${failures.join("\n")}`, "error");
-  return promoted;
-}
-
-function renderWrittenSummary(promoted: StagedWrite[]): string {
+function renderWrittenSummary(promoted: TaskStagedWrite[]): string {
   const sections = promoted.map((p) => {
     const lines = p.content.split("\n");
     const shown = lines.slice(0, WRITTEN_PREVIEW_LINES).map((l) => trunc(l, WRITTEN_PREVIEW_CHARS));
@@ -445,7 +397,7 @@ function renderWrittenSummary(promoted: StagedWrite[]): string {
 
 function buildReviewPrompt(
   tasks: string[],
-  staged: StagedWrite[],
+  staged: TaskStagedWrite[],
   isInitial: boolean,
 ): string {
   const header = isInitial
@@ -479,18 +431,18 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      // The delegator RPC session needs $LEAD_MODEL directly;
+      // drafter children pick up $TASK_MODEL through delegate()'s
+      // tier inference since neither `review` nor `run-deferred-writer`
+      // is declared on their component set.
       const LEAD_MODEL = process.env.LEAD_MODEL;
-      const TASK_MODEL = process.env.TASK_MODEL;
-      if (!LEAD_MODEL || !TASK_MODEL) {
-        ctx.ui.notify("LEAD_MODEL or TASK_MODEL env var not set.", "error");
+      if (!LEAD_MODEL) {
+        ctx.ui.notify("LEAD_MODEL env var not set.", "error");
         return;
       }
-
-      for (const t of [STAGE_WRITE_TOOL, RUN_DEFERRED_WRITER_TOOL, REVIEW_TOOL]) {
-        if (!fs.existsSync(t)) {
-          ctx.ui.notify(`Missing child-tool: ${t}`, "error");
-          return;
-        }
+      if (!process.env.TASK_MODEL) {
+        ctx.ui.notify("TASK_MODEL env var not set (needed for drafter children).", "error");
+        return;
       }
 
       const sandboxRoot = path.resolve(process.cwd());
@@ -545,8 +497,11 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
         }
         const tasks = dispatchRes.tasks;
 
-        // Phase 2: parallel drafters (initial)
-        const taskStaged = new Map<number, Array<{ path: unknown; content: unknown }>>();
+        // Phase 2: parallel drafters (initial). Each drafter goes through
+        // delegate(autoPromote:false); validation + sha256 happens inside
+        // stage-write.parentSide.finalize, so what we collect here are
+        // already-checked StagedWritePlans.
+        const taskPlans = new Map<number, StagedWritePlan[]>();
         const runAllDrafters = async (indices: number[], feedbackByTask?: Map<number, string[]>) => {
           state.phase = feedbackByTask ? "revising" : "drafting";
           for (const i of indices) {
@@ -557,7 +512,7 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           await Promise.all(indices.map(async (i) => {
             const fb = feedbackByTask?.get(i);
             const res = await runDrafter(
-              i, tasks[i], fb, TASK_MODEL, sandboxRoot, ctx,
+              tasks[i], fb, ctx,
               (w) => {
                 const d = state.drafters.get(i);
                 if (!d) return;
@@ -569,11 +524,11 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
             const d = state.drafters.get(i);
             if (d) {
               if (res.timedOut) d.phase = "timed_out";
-              else if (res.code !== 0) d.phase = "error";
+              else if (res.exitCode !== 0) d.phase = "error";
               else d.phase = "done";
             }
             refreshUi();
-            taskStaged.set(i, res.stagedWrites);
+            taskPlans.set(i, res.plans);
           }));
         };
         await runAllDrafters(tasks.map((_, i) => i));
@@ -588,19 +543,22 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
             return;
           }
 
-          const staged: StagedWrite[] = [];
+          // Flatten drafter-produced plans into a cross-task list,
+          // tagging each with its originating taskIndex for revise-loop
+          // feedback attribution. Duplicate relPath across tasks is
+          // skipped (first-writer-wins) — the review phase can't
+          // disambiguate "two drafts for the same destination".
+          const staged: TaskStagedWrite[] = [];
           const skips: string[] = [];
           const seenPaths = new Set<string>();
-          for (const [taskIndex, writes] of taskStaged.entries()) {
-            for (const w of writes) {
-              if (typeof w.path === "string" && seenPaths.has(w.path)) {
-                skips.push(`${w.path}: duplicate across tasks`);
+          for (const [taskIndex, plans] of taskPlans.entries()) {
+            for (const plan of plans) {
+              if (seenPaths.has(plan.relPath)) {
+                skips.push(`${plan.relPath}: duplicate across tasks`);
                 continue;
               }
-              const result = validateStagedWrite(w, taskIndex, sandboxRoot);
-              if ("error" in result) { skips.push(result.error); continue; }
-              seenPaths.add(result.relPath);
-              staged.push(result);
+              seenPaths.add(plan.relPath);
+              staged.push({ ...plan, taskIndex });
             }
           }
           if (staged.length === 0) {
@@ -640,7 +598,7 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           const verdictByPath = new Map<string, ReviewCall>();
           for (const r of reviewRes.reviews) verdictByPath.set(r.file_path, r);
 
-          const approved: StagedWrite[] = [];
+          const approved: TaskStagedWrite[] = [];
           const feedbackByTask = new Map<number, string[]>();
           let anyRevise = false;
           for (const s of staged) {
@@ -668,7 +626,12 @@ In THIS turn, call run_deferred_writer once per subtask, then reply DONE and sto
           if (!anyRevise) {
             state.phase = "promoting";
             refreshUi();
-            const written = promoteFiles(approved, ctx);
+            const { promoted, skips: promoteSkips } = promote(ctx, approved);
+            if (promoteSkips.length > 0) {
+              ctx.ui.notify(`Failures:\n${promoteSkips.join("\n")}`, "error");
+            }
+            const writtenSet = new Set(promoted);
+            const written = approved.filter((p) => writtenSet.has(p.destAbs));
             state.phase = "done";
             refreshUi();
             if (written.length > 0) {

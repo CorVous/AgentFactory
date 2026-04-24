@@ -40,6 +40,21 @@ export interface WiringContext {
   spawns: SpawnInvocation[];
   /** Full component set declared on the test spec. */
   components: Set<ComponentName>;
+  /** Set of components whose inline rail evidence can be trusted to
+   *  `pi-sandbox/.pi/lib/delegate.ts` (Phase 2.5). Populated from
+   *  {@link artifact.findDelegateUsage}. A component in this set has
+   *  its per-rail regex anchors short-circuited to "pass — handled by
+   *  delegate()", since the extension body delegates that rail to the
+   *  shared runtime and the rail-level checks live in delegate.ts
+   *  itself. */
+  delegateHandles: Set<ComponentName>;
+  /** Set of components the extension imports from `../components/*.ts`.
+   *  Broader than `delegateHandles` — an orchestrator imports `REVIEW`
+   *  and `RUN_DEFERRED_WRITER` for their harvesters but drives its own
+   *  RPC spawn, so those aren't in `delegateHandles`. Checks that only
+   *  need to know "the component's harvester is being used" (instead of
+   *  the full delegate() wiring) can key off this set. */
+  importedComponents: Set<ComponentName>;
 }
 
 export interface ComponentSpec {
@@ -61,8 +76,20 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
     name: "cwd-guard",
     filename: "cwd-guard.ts",
     toolsContribution: ["sandbox_write", "sandbox_edit"],
-    wiringChecks({ art, spawns }) {
+    wiringChecks({ art, spawns, delegateHandles }) {
       const out: Mark[] = [];
+      if (delegateHandles.has("cwd-guard")) {
+        // delegate() internally concatenates cwd-guard.parentSide.spawnArgs
+        // (i.e. `-e <cwd-guard.ts>`) and merges PI_SANDBOX_ROOT into env.
+        // The extension body won't contain those string literals, so the
+        // inline anchors below would false-negative; short-circuit instead.
+        out.push({
+          severity: "P0",
+          name: "cwd-guard: handled by delegate() runtime",
+          status: "pass",
+        });
+        return out;
+      }
       const sandboxEnv = /PI_SANDBOX_ROOT/.test(art.extBlob);
       out.push({
         severity: "P0",
@@ -92,9 +119,21 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
     name: "stage-write",
     filename: "stage-write.ts",
     toolsContribution: ["stage_write"],
-    wiringChecks({ art, components }) {
+    wiringChecks({ art, components, delegateHandles }) {
       const out: Mark[] = [];
       const blob = art.extBlob;
+      if (delegateHandles.has("stage-write")) {
+        // stage-write.parentSide.finalize does the validation + sha256,
+        // delegate() does the promote + rails.md §10 confirm/verdict
+        // gating. None of those string literals live in the extension
+        // when it's a delegate-based thin agent.
+        out.push({
+          severity: "P0",
+          name: "stage-write: handled by delegate() runtime",
+          status: "pass",
+        });
+        return out;
+      }
       const hasStageHarvest =
         /["'`]stage_write["'`]/.test(blob) && /tool_execution_start/.test(blob);
       out.push({
@@ -143,9 +182,21 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
     name: "emit-summary",
     filename: "emit-summary.ts",
     toolsContribution: ["emit_summary"],
-    wiringChecks({ art, components }) {
+    wiringChecks({ art, components, delegateHandles }) {
       const out: Mark[] = [];
       const blob = art.extBlob;
+      if (delegateHandles.has("emit-summary")) {
+        // emit-summary.parentSide.finalize enforces the per-body byte
+        // cap and hands back a Summary list; the thin-agent wrapper
+        // decides what to do with it. Skip the inline "byte cap" anchor
+        // since the cap lives in the component's finalize now.
+        out.push({
+          severity: "P0",
+          name: "emit-summary: handled by delegate() runtime",
+          status: "pass",
+        });
+        return out;
+      }
       const hasEmitHarvest =
         /["'`]emit_summary["'`]/.test(blob) && /tool_execution_start/.test(blob);
       out.push({
@@ -180,7 +231,7 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
     name: "review",
     filename: "review.ts",
     toolsContribution: ["review"],
-    wiringChecks({ art, spawns }) {
+    wiringChecks({ art, spawns, importedComponents }) {
       const out: Mark[] = [];
       const blob = art.extBlob;
       const rpcSpawn = spawns.find((s) => s.mode === "rpc");
@@ -195,12 +246,20 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
         name: "review: --tools includes review on the delegator spawn",
         status: reviewToolListed ? "pass" : "fail",
       });
-      const hasVerdictHarvest =
+      // Accept either inline literal harvest (pre-Phase-2.3) or
+      // imported-parentSide harvest (`REVIEW.harvest(ev, …)` or
+      // `REVIEW.parentSide.harvest(…)`) — the refactored orchestrator
+      // drives review parsing through the component's harvester and
+      // the literal "review" string never lands in its body.
+      const inlineHarvest =
         /["'`]review["'`]/.test(blob) && /tool_execution_start/.test(blob);
+      const importedHarvest =
+        importedComponents.has("review") &&
+        /\b[A-Z_][A-Z0-9_]*\s*\.\s*(?:parentSide\s*\.\s*)?harvest\s*\(/.test(blob);
       out.push({
         severity: "P0",
         name: "review: harvest review verdict from tool_execution_start",
-        status: hasVerdictHarvest ? "pass" : "fail",
+        status: inlineHarvest || importedHarvest ? "pass" : "fail",
       });
       return out;
     },
@@ -209,7 +268,7 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
     name: "run-deferred-writer",
     filename: "run-deferred-writer.ts",
     toolsContribution: ["run_deferred_writer"],
-    wiringChecks({ art, spawns }) {
+    wiringChecks({ art, spawns, importedComponents }) {
       const out: Mark[] = [];
       const blob = art.extBlob;
       const dispatchToolListed = spawns.some((s) =>
@@ -220,12 +279,21 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
         name: "run-deferred-writer: --tools includes run_deferred_writer on delegator",
         status: dispatchToolListed ? "pass" : "fail",
       });
-      const hasDispatchHarvest =
+      // Either the literal "run_deferred_writer" appears in a
+      // tool_execution_start switch (pre-Phase-2.3) or the component's
+      // parentSide.harvest is imported and called (`RUN_DEFERRED_WRITER
+      // .harvest(ev, …)`). Post-refactor the literal moves into the
+      // component file, so the extension body only shows the import +
+      // call.
+      const inlineHarvest =
         /run_deferred_writer/.test(blob) && /tool_execution_start/.test(blob);
+      const importedHarvest =
+        importedComponents.has("run-deferred-writer") &&
+        /\b[A-Z_][A-Z0-9_]*\s*\.\s*(?:parentSide\s*\.\s*)?harvest\s*\(/.test(blob);
       out.push({
         severity: "P0",
         name: "run-deferred-writer: harvest run_deferred_writer from tool_execution_start",
-        status: hasDispatchHarvest ? "pass" : "fail",
+        status: inlineHarvest || importedHarvest ? "pass" : "fail",
       });
       const hasParallel = /Promise\.all\(/.test(blob);
       out.push({

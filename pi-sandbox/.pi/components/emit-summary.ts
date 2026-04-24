@@ -16,6 +16,14 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { fileURLToPath } from "node:url";
+import type {
+  EmitSummaryResult,
+  EmitSummaryState,
+  NDJSONEvent,
+  ParentSide,
+  Summary,
+} from "./_parent-side.ts";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -51,3 +59,49 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
+
+// Parent-side surface (Phase 2.1). Harvests `emit_summary` calls from the
+// child's NDJSON stdout and enforces the per-body byte cap at finalize.
+// What to do with the surviving summaries — persist to .pi/scratch/<title>.md
+// (recon shape) vs concatenate into a brief (scout shape) — is decided by
+// the delegate runtime / calling extension, not here.
+const EMIT_SUMMARY_PATH = fileURLToPath(import.meta.url);
+const MAX_SUMMARY_BODY_BYTES = 8_192;
+
+export const parentSide: ParentSide<EmitSummaryState, EmitSummaryResult> = {
+  name: "emit-summary",
+  tools: ["emit_summary"],
+  spawnArgs: ["-e", EMIT_SUMMARY_PATH],
+  env: () => ({}),
+  initialState: () => ({ summaries: [] }),
+  harvest: (event: NDJSONEvent, state: EmitSummaryState) => {
+    if (event.type !== "tool_execution_start") return;
+    if (event.toolName !== "emit_summary") return;
+    const args = event.args as { title?: unknown; body?: unknown } | undefined;
+    if (!args) return;
+    state.summaries.push({ title: args.title, body: args.body });
+  },
+  finalize: (state) => {
+    const summaries: Summary[] = [];
+    const skips: string[] = [];
+    for (const s of state.summaries) {
+      if (typeof s.title !== "string" || s.title.length === 0) {
+        skips.push(`<invalid title type: ${typeof s.title}>`);
+        continue;
+      }
+      if (typeof s.body !== "string") {
+        skips.push(`${s.title}: body is ${typeof s.body}, expected string`);
+        continue;
+      }
+      const byteLength = Buffer.byteLength(s.body, "utf8");
+      if (byteLength > MAX_SUMMARY_BODY_BYTES) {
+        skips.push(
+          `${s.title}: ${byteLength} bytes > ${MAX_SUMMARY_BODY_BYTES} limit`,
+        );
+        continue;
+      }
+      summaries.push({ title: s.title, body: s.body, byteLength });
+    }
+    return { summaries, skips };
+  },
+};
