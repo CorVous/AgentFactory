@@ -6,33 +6,43 @@ Each cites the corresponding section in
 than re-prosing the rule; the grader (`scripts/grader/graders/composer.ts`)
 asserts each one.
 
-## Who owns each rail after Phase 2.2
+## Who owns each rail in the YAML composer
 
 `pi-sandbox/.pi/lib/delegate.ts` — the shared runtime — owns
 rails **1, 2, 3, 4, 5, 6, 7, 8, 9, 10, and 12** for every
-`single-spawn` and `sequential-phases-with-brief` composition:
-the thin agent you emit contains an `import` + one `delegate(ctx,
-{ components, prompt })` call; the library enforces the rail
-mechanics. The grader short-circuits those rails to pass when it
-detects the delegate() shape (see §2.5 of
-`parts-first-plan/40-components-heavy-phase2.md`).
+`single-spawn` and `sequential-phases-with-brief` composition.
+The runner extension (`pi-sandbox/.pi/extensions/yaml-agent-runner.ts`)
+calls `delegate()` once per phase, so the library enforces the
+rail mechanics on the YAML's behalf — no wiring escapes into the
+spec file.
 
-Thin-agent authorship responsibilities collapse to:
+`emit_agent_spec` and the runner together own:
 
-- **rail 11 (dashboard)** — applies only to the
-  `rpc-delegator-over-concurrent-drafters` topology, which keeps
-  its custom RPC loop. The drafter fan-out inside that loop goes
-  through `delegate(autoPromote: false)` and then `promote()`;
-  the delegator spawn + `ctx.ui.setWidget`/`setStatus` updates
-  stay hand-rolled.
-- **choosing the component set correctly** — the rest of this
-  procedure (steps 1–3) covers this.
+- **input validation** — `emit_agent_spec` rejects orphan
+  components, missing phase fields, and `review` /
+  `run-deferred-writer` declarations (those require the deferred
+  RPC topology).
+- **template substitution** — the runner substitutes `{args}`,
+  `{sandboxRoot}`, and (phase 2 only) `{brief}` before each
+  `delegate()` call.
+- **brief budget** — the runner aborts if the assembled brief
+  exceeds 16 KB before spawning phase 2.
 
-The per-rail table below still describes the *mechanics*; treat
-it as the library's contract, not your own checklist. If you find
-yourself writing inline spawn/NDJSON code for a single-spawn or
-sequential-phases agent, stop — you're drifting back toward
-pre-2.2 authorship.
+Composer-skill authorship responsibilities collapse to:
+
+- **picking the component set correctly** — steps 1–3 of
+  `procedure.md`.
+- **writing prompts that hold their own** — the YAML's `prompt:`
+  fields are the only thing the model gets to write. Make them
+  task-shaped and reference the template variables explicitly.
+
+Rail **11 (dashboard)** does not apply — it is orchestrator-only,
+and the orchestrator topology is deferred (composer emits GAP).
+
+The per-rail table below describes the *mechanics* the runtime
+enforces; treat it as the library's contract, not your own
+checklist. If you find yourself wanting to author TS, stop — you
+have no write tool, and the YAML spec is the entire deliverable.
 
 | # | Rail | Cite |
 | --- | --- | --- |

@@ -1,40 +1,41 @@
 ---
 name: pi-agent-composer
-description: Composes pi agents from a committed library of components (cwd-guard, stage-write, emit-summary, review, run-deferred-writer) without being constrained to fixed patterns. Use this skill when the user wants to compose a pi-coding-agent extension parts-first — pick whichever components the ask requires and wire them with one of three composition topologies (single-spawn, sequential-phases-with-brief, rpc-delegator-over-concurrent-drafters). Trigger on phrases like "compose pi agent", "parts-first", "component-driven", "pi extension that uses cwd-guard / stage-write / emit-summary / review / run-deferred-writer", or any ask of the form "build a pi agent that uses X" / "pi extension with component Y". This skill does NOT author from scratch — if the ask doesn't decompose into the known components, it STOPS and emits a GAP message so the user can fall back to `pi-agent-builder`.
+description: Composes pi agents by emitting a YAML spec (components + per-phase prompts) via the `emit_agent_spec` tool. Use this skill when the user wants to compose a pi-coding-agent extension parts-first — pick whichever components the ask requires and declare them with one of two composition topologies (single-spawn, sequential-phases-with-brief). Trigger on phrases like "compose pi agent", "parts-first", "component-driven", "pi extension that uses cwd-guard / stage-write / emit-summary", or any ask of the form "build a pi agent that uses X". This skill does NOT author code — it emits a YAML spec the auto-discovered runner extension turns into a slash command. Orchestrator topology (RPC delegator + review + run-deferred-writer) is deferred — emit GAP for those asks. If the ask doesn't decompose into the runnable components, STOP and emit a GAP message so the user can fall back to `pi-agent-builder`.
 ---
 
 # Pi Agent Composer
 
-This skill composes agents by **picking components and wiring them
-with a composition topology**. It is the parts-first counterpart to
-`pi-agent-assembler`: where the assembler picks one of five fixed
-patterns, the composer picks any subset of the five components and
-infers the topology from the set.
+This skill composes agents by **picking components and emitting a
+YAML spec** via the `emit_agent_spec` tool. The runner extension
+(`pi-sandbox/.pi/extensions/yaml-agent-runner.ts`, auto-discovered)
+reads the YAML and registers a slash command that wires the
+declared components via `delegate()`.
 
-If the user's request cannot be expressed in terms of the known
-components, the skill **stops and emits a GAP message**. The gap
-message is the whole point: when the library can't cover a shape,
-you want that known rather than a confabulated extension.
+If the user's request cannot be expressed in terms of the runnable
+components and topologies, the skill **stops and emits a GAP
+message**. The gap message is the whole point: when the library
+can't cover a shape, you want that known rather than a
+confabulated agent.
 
 ## Cardinal rules
 
 1. **Compose, don't author.** The components in
    `pi-sandbox/.pi/components/` are the vocabulary. Do not invent
    new child-tools, new stub shapes, or new NDJSON harvesters
-   inside this skill.
-2. **`cwd-guard.ts` on every write-capable sub-pi spawn.** Every
-   generated agent that spawns a child pi process with a
-   write-capable tool in its allowlist MUST load
-   `pi-sandbox/.pi/components/cwd-guard.ts` via `-e <abs path>` and
-   pin `PI_SANDBOX_ROOT` in the child's env. The sole exception is
-   a read-only child whose only output channel is `emit_summary`
-   (no filesystem contact, no write verbs in the allowlist).
-3. **Output under `.pi/extensions/<name>.ts`, never the cwd root.**
-   Pi auto-discovers extensions from `.pi/extensions/` under its
-   cwd. A file at `./<name>.ts` loads as nothing; the user then
-   sees "no artifacts" even though the model produced correct
-   TypeScript. When invoking the sandboxed write tool, the `path`
-   argument must start with `.pi/extensions/`.
+   inside this skill. You also cannot author TypeScript — your
+   tool allowlist exposes `emit_agent_spec` plus read verbs only.
+2. **`cwd-guard` on every write-capable phase.** Every phase whose
+   `components` array includes a write-capable part (`stage-write`,
+   or any future direct-write component) MUST also include
+   `cwd-guard`. The runner pins `PI_SANDBOX_ROOT` automatically via
+   `cwd-guard`'s `parentSide.env`. The sole exception is a
+   read-only phase whose only output channel is `emit_summary`.
+3. **Output via `emit_agent_spec` only.** The tool writes
+   `.pi/agents/<name>.yml`; the runner picks it up on the next pi
+   startup. You cannot write `.ts`, `.yml`, or any other file
+   directly — you have no `write` / `edit` / `sandbox_write`
+   tools. A run that finishes without calling `emit_agent_spec`
+   produced nothing.
 
 ## Parts catalog
 
@@ -51,16 +52,23 @@ template" the parent extension copy-adapts).
 | `review.ts` | Stub reviewer verdict | A reviewer LLM renders `approve`/`revise` on staged drafts. Parent harvests verdicts; `approve` ⇒ promote, `revise` ⇒ re-dispatch the drafter with the feedback string. When `review` is in the component set, the LLM is the gate — no `ctx.ui.confirm` fires. |
 | `run-deferred-writer.ts` | Stub dispatch verb | A delegator LLM dispatches one drafter per call. Parent harvests `{task}` strings and runs drafter children in parallel via `Promise.all`. Pair with `review.ts` inside an RPC delegator session. |
 
+## Output channel
+
+The composer's only write tool is `emit_agent_spec` (loaded into
+the parent session via `pi -e .pi/components/emit-agent-spec.ts`).
+It validates the spec against composition rules and writes
+`.pi/agents/<name>.yml`. Detail in `parts/emit-agent-spec.md`.
+
 ## Compositions catalog
 
-Three topologies. Pick one based on the component set; full detail
-in `compositions.md`.
+Two runnable topologies plus one deferred. Pick one based on the
+component set; full detail in `compositions.md`.
 
-| Topology | When | Canonical reference |
+| Topology | When | What the runner does |
 | --- | --- | --- |
-| `single-spawn` | One child, one phase. Covers recon-style, confined-drafter, and drafter-with-approval shapes. | `pi-sandbox/.pi/extensions/deferred-writer.ts` — 41-line thin agent over `delegate()`. |
-| `sequential-phases-with-brief` | Two or more children run serially; parent assembles a brief from phase 1's `emit_summary` output and passes it into phase 2's prompt. | Two `delegate()` calls; see worked example in `compositions.md`. |
-| `rpc-delegator-over-concurrent-drafters` | Persistent RPC delegator LLM dispatches drafters via `run_deferred_writer` and reviews their drafts via `review`; LLM verdict is the gate. | `pi-sandbox/.pi/extensions/delegated-writer.ts` — delegator spawn stays custom (`--mode rpc`); drafter fan-out uses `delegate(autoPromote: false)`. |
+| `single-spawn` | One child, one phase. Covers recon-style, confined-drafter, and drafter-with-approval shapes. | One `delegate()` call. Reference: `pi-sandbox/.pi/extensions/deferred-writer.ts` (41-line thin agent over `delegate()`). |
+| `sequential-phases-with-brief` | Two phases run serially; the runner assembles a brief from phase 1's `emit_summary` output and substitutes it into phase 2's prompt as `{brief}`. | Two `delegate()` calls bracketing brief assembly. |
+| `rpc-delegator-over-concurrent-drafters` | Persistent RPC delegator LLM dispatches drafters via `run_deferred_writer` and reviews their drafts via `review`. | **Deferred — emit GAP.** `delegate()` is single-spawn json-mode only. Reference for hand-authored RPC: `pi-sandbox/.pi/extensions/delegated-writer.ts`. Use `pi-agent-builder`. |
 
 ## Always-on rails
 
@@ -86,18 +94,21 @@ worth the pause.
 - **Inventing a new component in a user session.** The library is
   closed; if a new child-tool shape is needed, that's a GAP, not
   an opportunity to improvise.
-- **Skipping cwd-guard on a write-capable child.** Non-negotiable
-  on every write-capable spawn; the one exception is a read-only +
-  `emit_summary`-only child. An agent that skips cwd-guard while
-  handing the child `sandbox_write` / `write` / `edit` / `bash` is
-  unsafe no matter how narrow the task looks.
+- **Trying to write TypeScript.** You have no `write` / `edit` /
+  `sandbox_write` tools. The only way to commit a result is
+  `emit_agent_spec`. A finished session that didn't call it
+  produced nothing.
+- **Skipping cwd-guard on a write-capable phase.** Non-negotiable
+  on every phase whose components include `stage-write` or any
+  future direct-write part. The one exception is a read-only
+  phase whose only output channel is `emit_summary`.
+- **Declaring `review` or `run-deferred-writer` in a phase.**
+  `emit_agent_spec` rejects these and the runner refuses to
+  register the resulting spec. The orchestrator topology lives in
+  `pi-agent-builder`'s scope.
 - **Skipping the `rails.md` checklist.** Rails encode the always-on
   defaults from `pi-agent-builder/references/defaults.md`. Drift
   here re-introduces bugs the components were written to prevent.
-- **Mixing composition topologies in one handler.** A single
-  command dispatches one topology. If the user wants both an
-  RPC-delegator and a separate drafter-with-approval flow, that's
-  two slash commands.
 
 ## When to fall back to pi-agent-builder
 
