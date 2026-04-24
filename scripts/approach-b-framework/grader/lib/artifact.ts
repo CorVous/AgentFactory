@@ -361,7 +361,12 @@ function findContext(src: string, ident: string): string {
 }
 
 function extractComponentFilename(s: string): string | null {
-  const m = /"([a-z][a-z0-9-]+\.ts)"/i.exec(s) ?? /'([a-z][a-z0-9-]+\.ts)'/i.exec(s);
+  // Match a component basename at a path/quote/start boundary, with a
+  // quote/paren/comma/whitespace/EOS on the trailing side. Handles both
+  // quote-bounded literals ("cwd-guard.ts") and filenames embedded in
+  // an absolute-path literal ("/abs/path/components/cwd-guard.ts").
+  const re = /(?:^|[\s"'`/\\])([a-z][a-z0-9-]+\.ts)(?=["'`)\s,]|$)/i;
+  const m = re.exec(s);
   return m ? m[1] : null;
 }
 

@@ -141,6 +141,8 @@ export function runBehavioralProbe(
   const startMarker = path.join(ctx.logDir, ".beh-start");
   fs.writeFileSync(startMarker, "");
 
+  if (mode === "recon") seedReconFixture(ctx);
+
   const ndjsonPath = path.join(ctx.logDir, "behavior.ndjson");
   const stderrPath = path.join(ctx.logDir, "behavior.stderr");
 
@@ -320,5 +322,27 @@ function safeMtime(p: string): number {
     return fs.statSync(p).mtimeMs;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Seed a minimal fixture at `<ctx.logDir>/<probeArgs>/<evidence_anchor>`
+ * before the recon behavioral probe runs. The probe's child scans
+ * starting from this path; without a fixture the child has nothing
+ * real to list and the behavioral rubric drops to `partial` on chance
+ * alone. Exported for tests.
+ */
+export function seedReconFixture(ctx: ProbeContext): void {
+  const rel = ctx.probeArgs.trim();
+  if (!rel || path.isAbsolute(rel) || rel.split(/[/\\]/).includes("..")) return;
+  const anchor = ctx.evidenceAnchor ?? "SKILL.md";
+  const fixtureDir = path.join(ctx.logDir, rel);
+  const anchorPath = path.join(fixtureDir, anchor);
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  if (!fs.existsSync(anchorPath)) {
+    fs.writeFileSync(
+      anchorPath,
+      `# ${anchor}\n\nMinimal fixture seeded by the recon behavioral probe.\n`,
+    );
   }
 }
