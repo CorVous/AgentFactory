@@ -7,7 +7,9 @@
   "scripts": {
     "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
     "agent-maker": "bash -c 'set -a && source models.env && set +a && exec scripts/approach-b-framework/agent-maker.sh \"$@\"' --",
-    "agent-maker:i": "bash -c 'set -a && source models.env && set +a && exec scripts/approach-b-framework/agent-maker.sh --interactive \"$@\"' --"
+    "agent-maker:i": "bash -c 'set -a && source models.env && set +a && exec scripts/approach-b-framework/agent-maker.sh --interactive \"$@\"' --",
+    "reverse-pipeline": "bash -c 'set -a && source models.env && set +a && exec tsx scripts/reverse-pipeline/index.ts \"$@\"' --",
+    "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.69.0"
