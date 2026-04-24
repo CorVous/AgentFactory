@@ -18,6 +18,7 @@ import {
 import { loadPatternSpec, type PatternName, type PatternSpec } from "../lib/pattern-spec.ts";
 import { runBehavioralProbe, runLoadProbe, type ProbeContext } from "../lib/probes.ts";
 import { Rubric } from "../lib/rubric.ts";
+import { readFinalAssistantText } from "../lib/events.ts";
 import type { TestSpec } from "../lib/test-spec.ts";
 
 export interface AssemblerGraderArgs {
@@ -66,16 +67,27 @@ function gradeGap(rubric: Rubric, args: AssemblerGraderArgs): void {
   );
 
   const eventsPath = path.join(args.logDir, "events.ndjson");
-  if (!fs.existsSync(eventsPath)) {
-    rubric.p0("GAP marker present in events.ndjson", "fail", "events.ndjson missing");
+  const finalText = readFinalAssistantText(eventsPath);
+  if (finalText === null) {
+    rubric.p0(
+      "GAP marker present in final assistant message",
+      "fail",
+      "events.ndjson missing or contains no message_end",
+    );
     return;
   }
-  const events = fs.readFileSync(eventsPath, "utf8");
-  const hasGapMarker = /"GAP:/.test(events) || /GAP: I don't have a component/.test(events);
+  // Accept the exact template and stylized renderings that put "GAP"
+  // on one line (e.g. a markdown header) and "I don't have a component"
+  // on another. Checking only the final assistant text avoids the
+  // false-positive where procedure.md's template gets echoed into a
+  // tool_execution_end event during the model's own `read` call —
+  // that's not an emission, it's the skill docs.
+  const hasGap =
+    /\bGAP\b/.test(finalText) && /I don't have a component/.test(finalText);
   rubric.p0(
-    "GAP marker present in events.ndjson",
-    hasGapMarker ? "pass" : "fail",
-    hasGapMarker ? undefined : "no 'GAP:' string in event stream",
+    "GAP marker present in final assistant message",
+    hasGap ? "pass" : "fail",
+    hasGap ? undefined : "no 'GAP … I don\\'t have a component' in final message_end text",
   );
 }
 
