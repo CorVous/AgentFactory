@@ -16,13 +16,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { gradeAssemblerTask } from "./graders/assembler.ts";
+import { FRAMEWORK_ROOT, REPO_ROOT } from "./lib/paths.ts";
 import { loadTestSpec } from "./lib/test-spec.ts";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FRAMEWORK_ROOT = path.resolve(HERE, "..");
-const REPO_ROOT = path.resolve(FRAMEWORK_ROOT, "..", "..");
 
 function usage(): never {
   console.error(
