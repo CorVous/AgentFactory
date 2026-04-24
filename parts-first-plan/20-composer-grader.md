@@ -25,7 +25,7 @@ export const COMPONENTS: Record<string, ComponentSpec>;
 Per-component `wiringChecks`:
 
 - **cwd-guard**: `PI_SANDBOX_ROOT` in at least one spawn's env + `-e <...cwd-guard.ts>` on every write-capable spawn.
-- **stage-write**: extBlob contains `tool_execution_start` + `"stage_write"` + `ctx.ui.confirm` + `fs.writeFileSync` + `sha256` (ignore case for the last).
+- **stage-write**: extBlob contains `tool_execution_start` + `"stage_write"` + `fs.writeFileSync` + `sha256` (ignore case for the last). Confirm-gate predicate (cross-component, receives full `components` set): if `review ∉ components`, assert `ctx.ui.confirm` present; if `review ∈ components`, assert `ctx.ui.confirm` **absent** — the LLM verdict is the gate.
 - **emit-summary**: extBlob contains `tool_execution_start` + `"emit_summary"` + (`Buffer.byteLength` OR `.slice(0,`) + optional `.pi/scratch/` write. If `stage-write` not in component list, confirm `ctx.ui.confirm` is absent.
 - **review**: any spawn has `--mode rpc` and `--tools` includes `review`.
 - **run-deferred-writer**: any spawn has `--tools` includes `run_deferred_writer`; extBlob contains `Promise.all` (concurrent dispatch).
@@ -59,9 +59,23 @@ runDir, artifacts, rubric)`. Dispatch by `spec.expectation.kind`:
      a brief assembly (`Buffer.byteLength` between spawns);
      `rpc-delegator-over-concurrent-drafters` = one `--mode rpc`
      spawn + `Promise.all` + inner drafter spawn(s). If
-     `composition` omitted, infer from component list (see
-     `60-open-questions.md` §2) and emit a P1 warning that it's
-     implicit.
+     `composition` omitted, infer from component list per the
+     cascade below (canonical rule in `60-open-questions.md` §2;
+     mirrored here because the grader consumes it at every run) and
+     emit a P1 warning that it's implicit.
+
+     ```
+     composition-inference (when expectation.composition is omitted):
+       if run-deferred-writer ∈ components        → rpc-delegator-over-concurrent-drafters
+       else if review ∈ components                → rpc-delegator-over-concurrent-drafters
+       else if emit-summary ∈ components && stage-write ∈ components
+                                                  → sequential-phases-with-brief
+       else                                       → single-spawn
+     ```
+
+     The `review ∈ components` branch prevents `composer-review-only`
+     (`[cwd-guard, stage-write, review]`) from being mis-inferred as
+     `sequential-phases-with-brief`.
   5. **Probes** (load + behavioral) — unchanged; mode pick becomes
      "recon if `emit-summary ∈ components && stage-write ∉ components
      && cwd-guard ∉ components`".

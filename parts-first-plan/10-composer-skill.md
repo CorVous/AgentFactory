@@ -56,6 +56,13 @@ Body sections:
 7. **When to fall back to `pi-agent-builder`** — same as assembler's
    fallback section; point at builder's references.
 
+Not shipped: `prompts-seen.md`. That file is assembler-specific (logs
+pattern-name asks seen in the wild). The composer's signal surface is
+inherited from
+`pi-sandbox/skills/pi-agent-builder/references/reading-short-prompts.md`,
+which is already load-bearing for the prompt validator (§30). No
+composer-local mirror.
+
 ## procedure.md
 
 Five-step flow:
@@ -116,7 +123,9 @@ Bullets (expected count ~12):
 9. Sandbox root — `PI_SANDBOX_ROOT` in child env whenever `cwd-guard.ts`
    is loaded.
 10. Confirmation gate — `ctx.ui.confirm` before any parent-side
-    `fs.writeFileSync` (drafter-with-approval shape only).
+    `fs.writeFileSync`. Required iff `stage-write ∈ components &&
+    review ∉ components`; when `review ∈ components` the LLM verdict
+    is the gate, no human confirm fires.
 11. Dashboard (orchestrator-only) — `ctx.ui.setWidget` + `setStatus` on
     every state mutation; guard against absence.
 12. `ctx.ui.notify` — one message per phase boundary (child spawn,
@@ -139,9 +148,28 @@ Three topologies. Each entry is ~20 lines:
 
 - **When:** recon phase + drafter phase, parent assembles brief between.
 - **Covers:** scout-then-draft.
-- **Canonical reference:** TODO — if no canonical exists, inline a
-  short worked example citing `deferred-writer.ts` for the drafter
-  half and the recon spawn shape for the scout half.
+- **Canonical reference:** no single existing extension — inline this
+  worked example until `composer-scout-then-draft` lands and takes
+  over as the reference.
+
+  ```
+  // Phase 1: scout child (emit-summary only, no write channel)
+  const scoutResult = await runChild(/* args with -e emit-summary */);
+  const brief = scoutResult.summaries
+    .map(s => `## ${s.title}\n${s.body}`)
+    .join("\n\n");
+  if (Buffer.byteLength(brief, "utf8") > BRIEF_MAX_BYTES) {
+    throw new Error("brief exceeds budget");
+  }
+
+  // Phase 2: drafter child (shape borrowed from
+  // pi-sandbox/.pi/extensions/deferred-writer.ts:52-128 — child spawn
+  // + NDJSON loop, plus lines 278-306 — promotion)
+  const drafterPrompt = `${args}\n\n<brief>\n${brief}\n</brief>`;
+  const drafterResult = await runChild(/* args with -e stage-write, cwd-guard */);
+  // ...stage-write.finalize handles confirm + promote as in single-spawn.
+  ```
+
 - **Rails that apply:** all of single-spawn + bounded brief size
   (`Buffer.byteLength` check before second spawn).
 

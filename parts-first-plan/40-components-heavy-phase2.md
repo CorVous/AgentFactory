@@ -35,7 +35,7 @@ export const parentSide: ParentSide = {
 Per-component contributions:
 
 - **cwd-guard**: `{tools: ["read","sandbox_write","sandbox_edit","ls","grep"], spawnArgs: ["-e", GUARD], env: {PI_SANDBOX_ROOT: cwd}, harvest: noop, finalize: noop}`.
-- **stage-write**: `{tools: ["stage_write"], harvest: collectStaged, finalize: confirmThenPromote}`. Extracts `{path, content}` on `tool_execution_start` events where `toolName === "stage_write"`; finalize prompts `ctx.ui.confirm` then `fs.writeFileSync` with sha256 verify.
+- **stage-write**: `{tools: ["stage_write"], harvest: collectStaged, finalize: confirmThenPromote}`. Extracts `{path, content}` on `tool_execution_start` events where `toolName === "stage_write"`; finalize reads the sibling `review` component state if present (defers to the LLM verdict map) and otherwise prompts `ctx.ui.confirm`, then `fs.writeFileSync` with sha256 verify. This is the code-level manifestation of the `rails.md` §10 predicate (confirm iff `stage-write ∈ components && review ∉ components`).
 - **emit-summary**: `{tools: ["emit_summary"], harvest: collectSummaries, finalize: persistToScratchOrReturnBrief}`. Configurable finalize: either write each summary to `.pi/scratch/<title>.md` (recon shape) or return concatenated brief with byte cap (scout shape).
 - **review**: `{tools: ["review"], harvest: collectVerdicts, finalize: returnVerdictMap}`. Used by the orchestrator runtime; not normally active in a single-spawn composer agent.
 - **run-deferred-writer**: `{tools: ["run_deferred_writer"], harvest: collectDispatchRequests, finalize: returnDispatchList}`. Used by the orchestrator runtime to trigger `Promise.all` fan-out.
@@ -47,26 +47,49 @@ and the generic `state` types.
 
 ## 2.2 Ship `delegate()` runtime
 
-`pi-sandbox/.pi/components/delegate.ts` — a generic parent-side runtime.
-Signature roughly:
+`pi-sandbox/.pi/lib/delegate.ts` — a generic parent-side runtime (lives
+under `lib/` per `60-open-questions.md §5`, not `components/`, to
+signal "library, not auto-loaded artifact"). Signature:
 
 ```ts
 export async function delegate(ctx: HandlerContext, opts: {
-  components: ParentSide[];
-  prompt: string;
-  model: string;
-  mode: "json" | "rpc";
-  timeoutMs: number;
-  extraTools?: string[];          // rarely needed
-  cwd: string;
+  components: ParentSide[];      // required — the whole point
+  prompt: string;                // required — the ask
+  model?: string;                // optional; default inferred from components (see below)
+  extraTools?: string[];         // optional; rarely used
 }): Promise<DelegateResult>;
 ```
+
+Two required keys, two optional. Everything else is a rail with a
+sensible default baked into `delegate()`:
+
+- `timeoutMs`: `PHASE_TIMEOUT_MS = 120_000` — module-level const.
+  Every caller in the canonical extensions passes the same value
+  today; it is not a per-call parameter, it is a rail.
+- `mode`: always `"json"`. `"rpc"` is orchestrator-only and the
+  orchestrator stays bespoke (see end of this section), so
+  `delegate()` never needs it. No `mode` parameter.
+- `cwd`: `process.cwd()`. The only time a caller wants a different
+  cwd is the per-run isolation in `agent-maker.sh`, which already
+  sets `process.chdir()` before loading extensions.
+- `model`: default = role inference from component set, per the
+  `AGENTS.md` tier rule. If `review ∈ components ||
+  run-deferred-writer ∈ components`, use `$LEAD_MODEL`; else
+  `$TASK_MODEL`. Caller can override by passing `model` explicitly.
+  This turns "match the tier to the child's role" from a per-agent
+  obligation into a library default.
+
+Escape hatch: pass `model` to override tier inference. There is no
+escape hatch for `timeoutMs`/`mode`/`cwd` by design — if you need
+one, you are writing something `delegate()` doesn't cover and should
+drop to bespoke spawn code (like the RPC orchestrator below).
 
 Internals:
 
 - Unions `opts.components[].tools` + `opts.extraTools` for `--tools`.
 - Concatenates `opts.components[].spawnArgs` for `-e` flags.
-- Merges `opts.components[].env` into child env.
+- Merges `opts.components[].env` into child env (`PI_SANDBOX_ROOT`
+  from `cwd-guard.env` lands here).
 - Applies every rail from `rails.md` (§1–9, 12): SIGKILL timer, NDJSON
   loop, `--no-extensions`, cost extraction, path validation on any
   promoted writes.
@@ -82,21 +105,44 @@ bespoke — the orchestrator authors its own dispatch→review loop but
 imports per-component harvesters from `parentSide` instead of
 re-implementing them.
 
+Resulting thin-agent call (Phase 2.4) collapses to two keys:
+
+```ts
+await delegate(ctx, {
+  components: [CWD_GUARD, STAGE_WRITE],
+  prompt: args,
+});
+```
+
 ## 2.3 Refactor canonical extensions onto `delegate()`
 
 **Validates the abstraction against real code before the composer
-starts emitting it.**
+starts emitting it.** Land `deferred-writer.ts` first; only then
+re-estimate the orchestrator target.
 
 - `pi-sandbox/.pi/extensions/deferred-writer.ts`:
-  - Before: ~300 lines of spawn + NDJSON + confirm + promote.
-  - After: ~30 lines — single `delegate()` call with `[CWD_GUARD,
-    STAGE_WRITE]`, prompt from slash-command args, `ctx.ui.confirm`
-    gate wired in the `stage-write.finalize`.
+  - Before: 316 lines of spawn + NDJSON + confirm + promote.
+  - After: ~15 lines — single `delegate()` call with `[CWD_GUARD,
+    STAGE_WRITE]`, prompt from slash-command args, confirm gate
+    wired in `stage-write.finalize` per §2.1.
+  - **Gate:** if the LOC reduction is less than 5× (i.e. the refactor
+    ends up >60 lines), stop and reconsider `delegate()`'s shape
+    before touching the orchestrator. The schema is wrong if a
+    known-good extension doesn't collapse cleanly.
 - `pi-sandbox/.pi/extensions/delegated-writer.ts`:
-  - Before: ~400 lines (dispatch → review → revise RPC loop).
-  - After: ~150 lines. RPC loop stays custom but drafter spawns inside
-    `Promise.all` delegate to `delegate()`; review-verdict parsing
-    uses `REVIEW.parentSide.harvest`.
+  - Before: **701 lines** (dispatch → review → revise RPC loop,
+    per-drafter dashboard, cost aggregation, feedback map).
+  - After: measure after `deferred-writer.ts` lands — apply the same
+    reduction *ratio* to the non-RPC-loop portion (drafter spawns,
+    per-event harvest, promotion) and keep the RPC
+    dispatch→review→revise loop custom. Earlier drafts quoted a
+    specific target line count, but the real figure depends on what
+    `delegate()` reclaims from the drafter-spawn path, which won't
+    be known until 2.3 step 1.
+  - Required behaviors preserved: drafter spawns inside `Promise.all`
+    delegate to `delegate()`; review-verdict parsing uses
+    `REVIEW.parentSide.harvest`; dispatch-list harvest uses
+    `RUN_DEFERRED_WRITER.parentSide.harvest`.
 
 Both refactors must pass their existing probe tasks
 (`deferred-writer` and any orchestrator task we add in Phase 1.6)
@@ -106,9 +152,11 @@ byte-equivalently — no user-visible behavior change.
 
 Once `delegate()` exists and canonical extensions validate it:
 
-- `procedure.md` step 4 ("wire it") emits ~15-line TS files calling
-  `delegate({components: [...], ...})` instead of inline spawn/NDJSON
-  code.
+- `procedure.md` step 4 ("wire it") emits ~10-line TS files calling
+  `delegate({components: [...], prompt})` instead of inline
+  spawn/NDJSON code. The two-key signature from §2.2 is what lets
+  the body be this short — earlier "~15 lines" estimates assumed the
+  7-key signature that R20 trimmed.
 - Per-part `parts/*.md` "Parent-side wiring template" sections
   collapse to a single line per part: "adds `parentSide` to
   `delegate()` call — see `_parent-side.ts`." This dramatically

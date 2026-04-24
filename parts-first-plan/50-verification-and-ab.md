@@ -69,10 +69,15 @@ Before declaring Phase 1 done and entering Phase 2:
      `out-of-library-agent` on ≥2/3 models.
 2. **Cost & turns regression bound.** For each (mirror-task, model)
    cell, `grade.json.cost_total_usd` and turn count must be within
-   +25% of the baseline cell. Median across `$AGENT_BUILDER_TARGETS`
-   must be inside the $0.013–$0.048 band for GLM 5.1.
-3. **Net-new tasks passing.** `composer-review-only` and
-   `composer-full-orchestrator` achieve P0 full-pass on ≥2/3 models.
+   `max(+25%, +$0.02)` of the baseline cell, AND the regression must
+   appear in ≥2 of 3 `$AGENT_BUILDER_TARGETS` to flag. Single-cell
+   regressions are logged but not blocking — on a $0.013 baseline
+   cell, +25% is $0.003, inside run-to-run noise. Median across
+   `$AGENT_BUILDER_TARGETS` must be inside the $0.013–$0.048 band
+   for GLM 5.1.
+3. **Net-new tasks passing.** `composer-review-only` achieves P0
+   full-pass on ≥2/3 models. `composer-full-orchestrator` is Phase
+   1.6 per `30-composer-tasks.md` and does not gate Phase 2.
 4. **Prompt lint green.** `npm run validate-prompts` passes on all
    `composer-*` tasks.
 5. **Unit tests green.** `npx tsx --test scripts/grader/__tests__/*.test.ts`.
@@ -103,8 +108,12 @@ Per round, produce a single `summary.md` with a table:
 ```
 
 Diff against baseline via `scripts/grader/report-diff.sh` (TODO —
-small new script, ~30 lines of awk + sort). Regressions surface as
-red rows.
+small new script, ~30 lines of awk + sort). Spec: reads two
+`grade.json` files (baseline, current), diffs on (P0 pass count,
+`cost_total_usd`, turn count, exit status), prints a markdown table
+with red rows when any metric exceeds the `max(+25%, +$0.02)` bound
+from pass criterion #2. No new dependencies; `jq` for extraction,
+`awk` for the comparison, `sort` for stable row order.
 
 ## Rollback
 
