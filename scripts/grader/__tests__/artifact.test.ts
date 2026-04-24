@@ -52,4 +52,19 @@ describe("findSpawnInvocations", () => {
     assert.deepEqual(spawns[0].eFlagComponents, ["emit-summary.ts"]);
     assert.deepEqual(spawns[1].eFlagComponents, ["cwd-guard.ts", "stage-write.ts"]);
   });
+
+  it("resolves consts whose RHS is an absolute-path string literal", () => {
+    // Gemini-3-flash shape: inline the full path instead of reassembling
+    // via path.resolve(...). The inner filename isn't directly quote-
+    // bounded (slashes live inside the quotes), so the prior extractor
+    // fell back to the raw identifier.
+    const ABS_PATH_SRC = `
+      const CWD_GUARD = "/home/user/AgentFactory/pi-sandbox/.pi/components/cwd-guard.ts";
+      const STAGE_WRITE_TOOL = "/home/user/AgentFactory/pi-sandbox/.pi/components/stage-write.ts";
+      const child = spawn("pi", ["-e", CWD_GUARD, "-e", STAGE_WRITE_TOOL, "--mode", "json", "--tools", "stage_write,ls", "--no-extensions", "-p", "x"]);
+    `;
+    const spawns = findSpawnInvocations(ABS_PATH_SRC);
+    assert.equal(spawns.length, 1);
+    assert.deepEqual(spawns[0].eFlagComponents, ["cwd-guard.ts", "stage-write.ts"]);
+  });
 });

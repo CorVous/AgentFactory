@@ -5,3 +5,4 @@ npm-debug.log*
 .DS_Store
 dist/
 pi-sandbox/.pi/scratch/
+scripts/task-runner/tasks/generated/

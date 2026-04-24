@@ -87,7 +87,7 @@ settled.
 ### Invoking the skill
 
 Preferred: `npm run agent-maker` / `npm run agent-maker:i`. Both wrap
-`scripts/approach-b-framework/agent-maker.sh`, which runs pi in a
+`scripts/task-runner/agent-maker.sh`, which runs pi in a
 **per-run isolated cwd** under `pi-sandbox/.pi/scratch/runs/<label>/`
 with the pi-agent-builder skill loaded at an absolute path, a narrow
 `--tools read,sandbox_write,sandbox_edit,ls,grep` allowlist, and the
@@ -109,7 +109,7 @@ npm run agent-maker:i              # uses $TASK_MODEL
 npm run agent-maker:i -- -m google/gemini-3-flash-preview
 
 # Batch across $AGENT_BUILDER_TARGETS (one run per model, sequential):
-scripts/approach-b-framework/run-task.sh recon-agent -r my-label
+scripts/task-runner/run-task.sh recon-agent -r my-label
 ```
 
 Both npm scripts source `models.env` first, so `$TASK_MODEL` etc. are
@@ -344,9 +344,10 @@ generation), a separate class of issues surfaces:
   on top of a stale one for an unrelated test.
 - **Don't hand Claude Code a plan that says "copy a big file verbatim,
   then edit sections" and expect it to emit the result in a single
-  `Write` call.** We hit this with `scripts/grade-deferred-writer.sh`
-  (571 lines / 23 KB of escape-heavy bash — nested quote regexes,
-  heredocs, `awk -F:` + `printf`-built JSON). Every attempt crashed
+  `Write` call.** We hit this with the old bash grader
+  `scripts/grade-deferred-writer.sh` (571 lines / 23 KB of escape-heavy
+  bash — nested quote regexes, heredocs, `awk -F:` + `printf`-built
+  JSON; since deleted). Every attempt crashed
   at the same point: the small rubric committed fine, then the
   grader copy died mid-`Write`. The failure is some mix of
   per-response output-token ceiling, JSON-escape corruption of the
@@ -359,6 +360,27 @@ generation), a separate class of issues surfaces:
   in a different but equally bad way. Treat "re-emit a >~300-line
   transformed copy via a single `Write`" as the anti-pattern and
   always decompose it into `cp` + targeted `Edit`s.
+- **Recon behavioral probe runs `behavioral=partial` on `$TASK_MODEL`
+  (deepseek-v3.2).** The grader looks for a `.md`/`.txt` file under
+  `.pi/scratch/` containing the `evidence_anchor` string (e.g.
+  `SKILL.md`). Generated recon extensions write that file only when
+  their child pi (also on `$TASK_MODEL`) calls the `emit_summary` stub
+  tool — and deepseek-v3.2 regularly skips the stub call on recon
+  prompts, so the parent's handler returns via the silent
+  `summaries.length === 0` branch (`ctx.ui.notify` is a no-op in
+  print mode, so the failure doesn't surface in NDJSON). This affects
+  the hand-authored `recon-agent` task equally — confirmed with an
+  A/B re-run on haiku — so it is a model-capability ceiling, not a
+  harness regression. Narrowing the agent-maker skill symlink
+  (`agent-maker.sh` only mounts `skills/$SKILL_NAME`, not the whole
+  tree) and the `seedReconFixture` helper in
+  `scripts/grader/lib/probes.ts` both stay in
+  place as correct test-isolation; neither flips the partial. If you
+  need to close it later, options are: (a) use `$LEAD_MODEL` for the
+  recon probe's child specifically, (b) log the child's stdout to a
+  scratch file so the silent early-exit branches become visible, or
+  (c) relax the evidence check. For now, treat recon `behavioral=
+  partial` as an expected "mostly passing" ceiling.
 
 ## Repo layout
 

@@ -17,8 +17,8 @@
 #   agent-maker.sh recon-agent -m anthropic/claude-haiku-4.5 -s pi-agent-builder --grade
 #   agent-maker.sh --interactive -m google/gemini-3-flash-preview
 #
-# Task definition lives at scripts/approach-b-framework/tasks/<task>/test.yaml
-# (schema: grader/lib/test-spec.ts). The file declares which skill to
+# Task definition lives at scripts/task-runner/tasks/<task>/test.yaml
+# (schema: scripts/grader/lib/test-spec.ts). The file declares which skill to
 # invoke, the expected outcome (assembly + pattern, or gap), the
 # natural-language prompt, and the behavioral probe args.
 #
@@ -134,12 +134,16 @@ mkdir -p \
   "$CWD/artifacts/child-tools" \
   "$CWD/artifacts/stray"
 
-# Symlink the shared skills dir so tasks whose PROBE_ARGS reference a
-# relative path like "skills/pi-agent-builder" (as fixture for a recon
-# probe) resolve correctly when the behavioral probe runs from $CWD.
-# The skill is read-only from the run's perspective.
-if [[ ! -e "$CWD/skills" ]]; then
-  ln -s "$SANDBOX/skills" "$CWD/skills"
+# Expose ONLY the skill under test into the run's cwd — never the whole
+# skills/ tree. A broad symlink would let pi auto-discover every skill
+# in pi-sandbox/skills/ (e.g. pi-agent-builder leaking into a run that
+# should only exercise pi-agent-assembler), so we narrow to one.
+# Behavioral probes that reference other skill paths (e.g. recon's
+# default probe targets skills/pi-agent-builder) rely on probes.ts
+# seedReconFixture to place a minimal SKILL.md fixture at runtime.
+mkdir -p "$CWD/skills"
+if [[ ! -e "$CWD/skills/$SKILL_NAME" ]]; then
+  ln -s "$SANDBOX/skills/$SKILL_NAME" "$CWD/skills/$SKILL_NAME"
 fi
 
 echo ">>> agent-maker label=$LABEL model=$MODEL mode=$( [[ $INTERACTIVE -eq 1 ]] && echo interactive || echo one-shot )"
@@ -156,7 +160,7 @@ if [[ $INTERACTIVE -eq 1 ]]; then
       PI_SKIP_UPDATE_CHECK=1 \
       PI_SANDBOX_ROOT="$CWD" \
       "$REPO/node_modules/.bin/pi" \
-        --no-context-files --no-session \
+        --no-context-files --no-session --no-skills \
         --provider openrouter --model "$MODEL" \
         --skill "$SKILL" \
         -e "$GUARD" \
@@ -174,7 +178,7 @@ set +e
     PI_SKIP_UPDATE_CHECK=1 \
     PI_SANDBOX_ROOT="$CWD" \
     "$REPO/node_modules/.bin/pi" \
-      --no-context-files --no-session \
+      --no-context-files --no-session --no-skills \
       --provider openrouter --model "$MODEL" \
       --skill "$SKILL" \
       -e "$GUARD" \
