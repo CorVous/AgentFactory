@@ -28,6 +28,17 @@ survey AND a draft step appear in the ask; only promote to
 `orchestrator` when the user explicitly mentions multiple sub-tasks
 or LLM review.
 
+**Stop early on network I/O.** Some asks read superficially like a
+pattern (e.g. "summarize an external API endpoint" echoes recon's
+"summarize", "audit") but require an I/O channel no pattern's child
+has — `http`/`https`, websockets, webhooks, remote APIs, downloads.
+No pattern's `--tools` allowlist includes network verbs, and no
+component wraps `fetch`/`http` on behalf of a sub-pi. Emit GAP
+directly (step 5); do NOT improvise `node:child_process`,
+`globalThis.fetch`, or `curl` calls inside the parent handler — that
+violates the cardinal "compose, don't author" rule even when the
+pattern shape otherwise matches.
+
 If NO pattern matches, go straight to step 5.
 
 ## 2. Pick parts
@@ -42,7 +53,7 @@ channel at all — its `--tools` allowlist is read-only.
 
 If the pattern's parts list doesn't cover what the user's prompt
 needs (e.g. the user wants a staged-write drafter that ALSO needs
-bash access inside the sandbox), that's a GAP. Go to step 5.
+bash or http access inside the sandbox), that's a GAP. Go to step 5.
 
 ## 3. Emit glue
 
