@@ -35,7 +35,6 @@ import type {
 } from "./_parent-side.ts";
 
 const COMPONENT_NAMES = [
-  "cwd-guard",
   "stage-write",
   "emit-summary",
   "review",
@@ -105,11 +104,14 @@ export default function (pi: ExtensionAPI) {
             StringEnum(COMPONENT_NAMES as unknown as string[]),
             {
               description:
-                "Components the runner imports as `parentSide` and passes " +
-                "to delegate(). cwd-guard is required for any phase whose " +
-                "child does fs work (read or write); list it explicitly " +
-                "and pair it with a `tools` list that picks the sandbox_* " +
-                "verbs the role needs.",
+                "Role-specific components the runner imports as " +
+                "`parentSide` and passes to delegate(). DO NOT include " +
+                "`cwd-guard` or `sandbox-fs` — they are auto-injected by " +
+                "the runner (cwd-guard universally, sandbox-fs whenever " +
+                "any sandbox_* verb appears in `tools`). List only the " +
+                "stubs the role needs (`stage-write`, `emit-summary`, " +
+                "etc.); pair with a `tools` list that picks the sandbox_* " +
+                "verbs the role's child needs.",
               minItems: 1,
               maxItems: 5,
             },
