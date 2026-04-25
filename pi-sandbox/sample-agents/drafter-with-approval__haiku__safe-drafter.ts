@@ -57,7 +57,7 @@ export default function (pi: ExtensionAPI) {
           "-e", CWD_GUARD,
           "-e", STAGE_WRITE_TOOL,
           "--mode", "json",
-          "--tools", "stage_write,ls",
+          "--tools", "stage_write,sandbox_ls",
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -68,7 +68,11 @@ export default function (pi: ExtensionAPI) {
         {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: sandboxRoot,
-          env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: "sandbox_ls",
+          },
         },
       );
 

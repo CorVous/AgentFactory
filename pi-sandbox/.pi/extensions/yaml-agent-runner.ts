@@ -21,7 +21,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { parse as yamlParse } from "yaml";
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { makeCwdGuard, type SandboxVerb } from "../components/cwd-guard.ts";
 import { parentSide as EMIT_AGENT_SPEC } from "../components/emit-agent-spec.ts";
 import { parentSide as EMIT_SUMMARY } from "../components/emit-summary.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
@@ -31,17 +31,37 @@ import { delegate } from "../lib/delegate.ts";
 const AGENTS_DIR = path.resolve(process.cwd(), ".pi", "agents");
 export const MAX_BRIEF_BYTES = 16_000;
 
-// Static name → parentSide map. Kept to the components a single-spawn or
-// sequential-phases-with-brief runner can actually drive: cwd-guard,
-// stage-write, emit-summary, emit-agent-spec. Adding `review` /
-// `run-deferred-writer` here would not make them work — `delegate()`
-// doesn't manage the RPC loop they require — so they are rejected at
-// validation time instead (see `validateSpec`).
-const COMPONENTS: Record<string, ParentSide<any, unknown>> = {
-  "cwd-guard": CWD_GUARD,
-  "stage-write": STAGE_WRITE,
-  "emit-summary": EMIT_SUMMARY,
-  "emit-agent-spec": EMIT_AGENT_SPEC,
+// Sandbox verbs cwd-guard can register. The yaml runner derives the
+// per-phase verb set as the intersection of the phase's explicit `tools`
+// list and this set.
+const SANDBOX_VERBS: ReadonlySet<string> = new Set<SandboxVerb>([
+  "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
+  "sandbox_write", "sandbox_edit",
+]);
+
+// name → builder. Most components have a fixed parentSide; cwd-guard is
+// a factory whose verb set depends on the phase's declared tools, so its
+// builder reads the phase's explicit tools list to decide what to lift.
+// Adding `review` / `run-deferred-writer` here would not make them work
+// — `delegate()` doesn't manage the RPC loop they require — so they are
+// rejected at validation time instead (see `validateSpec`).
+type ComponentBuilder = (
+  phaseTools: ReadonlyArray<string>,
+) => ParentSide<any, unknown>;
+
+const COMPONENTS: Record<string, ComponentBuilder> = {
+  "cwd-guard": (phaseTools) => {
+    const verbs = phaseTools.filter((t) => SANDBOX_VERBS.has(t)) as SandboxVerb[];
+    if (verbs.length === 0) {
+      throw new Error(
+        "cwd-guard requires at least one sandbox_* verb in the phase's tools list",
+      );
+    }
+    return makeCwdGuard({ verbs });
+  },
+  "stage-write": () => STAGE_WRITE,
+  "emit-summary": () => EMIT_SUMMARY,
+  "emit-agent-spec": () => EMIT_AGENT_SPEC,
 };
 
 export interface PhaseSpec {
@@ -105,7 +125,7 @@ export default function (pi: ExtensionAPI) {
         if (spec.composition === "single-spawn") {
           const phase = spec.phases[0];
           await delegate(ctx, {
-            components: phase.components.map((n) => COMPONENTS[n]),
+            components: phase.components.map((n) => COMPONENTS[n](phase.tools ?? [])),
             prompt: substitute(phase.prompt, baseSubs),
             skill: spec.skill,
             toolsOverride: phase.tools,
@@ -117,7 +137,7 @@ export default function (pi: ExtensionAPI) {
         const scoutPhase = spec.phases[0];
         const draftPhase = spec.phases[1];
         const scoutResult = await delegate(ctx, {
-          components: scoutPhase.components.map((n) => COMPONENTS[n]),
+          components: scoutPhase.components.map((n) => COMPONENTS[n](scoutPhase.tools ?? [])),
           prompt: substitute(scoutPhase.prompt, baseSubs),
           skill: spec.skill,
           toolsOverride: scoutPhase.tools,
@@ -142,7 +162,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         await delegate(ctx, {
-          components: draftPhase.components.map((n) => COMPONENTS[n]),
+          components: draftPhase.components.map((n) => COMPONENTS[n](draftPhase.tools ?? [])),
           prompt: substitute(draftPhase.prompt, { ...baseSubs, brief }),
           skill: spec.skill,
           toolsOverride: draftPhase.tools,
@@ -233,7 +253,9 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
     // Optional explicit tools allowlist. When set, must be a non-empty
     // string array AND must cover every tool each declared component
     // contributes — otherwise a typo silently strips a component's
-    // ability to do its job.
+    // ability to do its job. cwd-guard is a factory: its required tools
+    // are the intersection of the spec's `tools` and SANDBOX_VERBS, so
+    // the check becomes "at least one sandbox_* verb is present."
     let tools: string[] | undefined;
     if (pr.tools !== undefined) {
       if (
@@ -246,9 +268,21 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
         );
       }
       tools = pr.tools as string[];
+      const componentNames = components as string[];
+      if (componentNames.includes("cwd-guard")) {
+        const sandboxVerbsInTools = tools.filter((t) => SANDBOX_VERBS.has(t));
+        if (sandboxVerbsInTools.length === 0) {
+          throw new Error(
+            `${file}: phases[${i}] declares cwd-guard but tools contains no ` +
+              `sandbox_* verb. Add at least one of: ${[...SANDBOX_VERBS].join(", ")}.`,
+          );
+        }
+      }
       const declared = new Set<string>();
-      for (const c of components as string[]) {
-        for (const t of COMPONENTS[c].tools) declared.add(t);
+      for (const c of componentNames) {
+        if (c === "cwd-guard") continue; // handled above
+        const fixed = COMPONENTS[c]([]);
+        for (const t of fixed.tools) declared.add(t);
       }
       const missing = [...declared].filter((t) => !tools!.includes(t));
       if (missing.length > 0) {
@@ -256,6 +290,15 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
           `${file}: phases[${i}].tools is missing tools required by ` +
             `declared components: ${missing.join(", ")}. Either add them ` +
             `to the explicit list or drop the offending components.`,
+        );
+      }
+    } else {
+      // No explicit tools list — cwd-guard cannot infer a verb set, so
+      // require an explicit declaration whenever cwd-guard is used.
+      if ((components as string[]).includes("cwd-guard")) {
+        throw new Error(
+          `${file}: phases[${i}] declares cwd-guard but provides no \`tools\` ` +
+            `list. cwd-guard requires an explicit subset of sandbox_* verbs.`,
         );
       }
     }

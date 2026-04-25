@@ -73,10 +73,10 @@ vs. author-TS":
   session has `/agent-composer <task>` available alongside the
   script form `npm run agent-composer -- -p "<task>"`. Both load
   the composer skill with a tool allowlist that exposes ONLY
-  `read,ls,grep,emit_agent_spec` — no write verbs, so the model
-  cannot author code, only declare a spec. The script form stays
-  in place as the bootstrap-recovery path (you can't compose with
-  a broken composer).
+  `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec` — no write
+  verbs, so the model cannot author code, only declare a spec. The
+  script form stays in place as the bootstrap-recovery path (you
+  can't compose with a broken composer).
 - **`pi-agent-builder`** — from-scratch authorship. Use when the
   composer flagged a gap, or for shapes the composer cannot
   express (custom UI widgets, compaction strategies, event-only
@@ -148,10 +148,17 @@ When an extension delegates to a child `pi` process:
 
 - Pass `--no-extensions` to the child — prevents recursive sub-agents.
 - Whitelist the child's tools (`--tools <verbs>`) to match its role.
-  Drafter children typically get `stage_write,ls` (no `read`); recon
-  children get `ls,grep,glob`. Omit every verb the role doesn't need —
-  `read` on a writer leaks the "stub is the only write channel"
-  guarantee, and default tool sets invite `bash` loops.
+  Drafter children typically get `stage_write,sandbox_ls` (no
+  `sandbox_read`); recon children get
+  `sandbox_ls,sandbox_grep,sandbox_glob`. Built-in
+  `read`/`ls`/`grep`/`glob`/`write`/`edit` are forbidden across the
+  project — cwd-guard's path-validated `sandbox_*` family is the
+  only sanctioned fs surface (load it via
+  `makeCwdGuard({verbs:[...]})` from
+  `pi-sandbox/.pi/components/cwd-guard.ts`). Omit every verb the
+  role doesn't need — `sandbox_read` on a writer leaks the "stub is
+  the only write channel" guarantee, and default tool sets invite
+  `bash` loops (`bash` is also forbidden).
 - Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
 - Match the tier to the child's role: `$TASK_MODEL` for workers,
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.

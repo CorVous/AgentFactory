@@ -40,23 +40,27 @@ const STAGE_WRITE = path.resolve(
 ```
 
 Pass `-e <STAGE_WRITE>` to the child. Pair with `-e <CWD_GUARD>`
-so the two are loaded together (stage-write does not provide its
-own write channel; cwd-guard's `sandbox_write` covers any
-non-staged scratch writes the child might also do).
+configured with read-only verbs (e.g.
+`makeCwdGuard({verbs: ["sandbox_ls"]})`) so the drafter has a
+read surface but no real write tool — `stage_write` becomes the
+only path-to-disk by construction.
 
 ## Required `--tools` allowlist contribution
 
 ```
-stage_write,ls
+stage_write,sandbox_ls
 ```
 
-Add `read` ONLY if the drafter genuinely needs to read existing
-files — `read` weakens the "stage_write is the only write channel"
-guarantee by letting the drafter echo an existing file's contents
-back out. Prefer feeding relevant existing content into the prompt.
+Add `sandbox_read` ONLY if the drafter genuinely needs to read
+existing files — `sandbox_read` weakens the "stage_write is the
+only write channel" guarantee by letting the drafter echo an
+existing file's contents back out. Prefer feeding relevant
+existing content into the prompt.
 
-Never add `write`, `edit`, or `bash` — they're real write channels
-and defeat the stub.
+Never add built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`
+(forbidden), `bash`, or the cwd-guard write verbs
+`sandbox_write`/`sandbox_edit` — they're real write channels and
+defeat the stub.
 
 ## Parent-side wiring
 

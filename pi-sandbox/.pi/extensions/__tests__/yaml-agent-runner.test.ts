@@ -110,6 +110,7 @@ const VALID_SINGLE_SPAWN: Record<string, unknown> = {
     {
       name: "draft",
       components: ["cwd-guard", "stage-write"],
+      tools: ["sandbox_ls", "stage_write"],
       prompt: "Do {args}",
     },
   ],
@@ -121,10 +122,16 @@ const VALID_SEQUENTIAL: Record<string, unknown> = {
   description: "Sequential scout-then-draft.",
   composition: "sequential-phases-with-brief",
   phases: [
-    { name: "scout", components: ["emit-summary"], prompt: "scout {args}" },
+    {
+      name: "scout",
+      components: ["cwd-guard", "emit-summary"],
+      tools: ["sandbox_ls", "sandbox_read", "sandbox_grep", "sandbox_glob", "emit_summary"],
+      prompt: "scout {args}",
+    },
     {
       name: "draft",
       components: ["cwd-guard", "stage-write"],
+      tools: ["sandbox_ls", "stage_write"],
       prompt: "draft using {brief}",
     },
   ],
@@ -142,7 +149,7 @@ describe("validateSpec — happy paths", () => {
     const spec: AgentSpec = validateSpec(VALID_SEQUENTIAL, "std.yml");
     assert.equal(spec.composition, "sequential-phases-with-brief");
     assert.equal(spec.phases.length, 2);
-    assert.deepEqual(spec.phases[0].components, ["emit-summary"]);
+    assert.deepEqual(spec.phases[0].components, ["cwd-guard", "emit-summary"]);
     assert.deepEqual(spec.phases[1].components, ["cwd-guard", "stage-write"]);
   });
 });
@@ -193,8 +200,8 @@ describe("validateSpec — composition / phase rules", () => {
           {
             ...VALID_SINGLE_SPAWN,
             phases: [
-              { components: ["cwd-guard"], prompt: "a" },
-              { components: ["cwd-guard"], prompt: "b" },
+              { components: ["cwd-guard"], tools: ["sandbox_ls"], prompt: "a" },
+              { components: ["cwd-guard"], tools: ["sandbox_ls"], prompt: "b" },
             ],
           },
           "x.yml",
@@ -289,11 +296,9 @@ describe("validateSpec — explicit tools allowlist", () => {
           {
             components: ["cwd-guard", "stage-write"],
             tools: [
-              "read",
-              "sandbox_write",
-              "sandbox_edit",
-              "ls",
-              "grep",
+              "sandbox_read",
+              "sandbox_ls",
+              "sandbox_grep",
               "stage_write",
             ],
             prompt: "p",
@@ -303,11 +308,9 @@ describe("validateSpec — explicit tools allowlist", () => {
       "x.yml",
     );
     assert.deepEqual(spec.phases[0].tools, [
-      "read",
-      "sandbox_write",
-      "sandbox_edit",
-      "ls",
-      "grep",
+      "sandbox_read",
+      "sandbox_ls",
+      "sandbox_grep",
       "stage_write",
     ]);
   });
@@ -321,8 +324,8 @@ describe("validateSpec — explicit tools allowlist", () => {
             phases: [
               {
                 components: ["cwd-guard", "stage-write"],
-                // missing stage_write
-                tools: ["sandbox_write", "sandbox_edit"],
+                // missing stage_write — cwd-guard is fine because sandbox_ls is a sandbox verb
+                tools: ["sandbox_ls"],
                 prompt: "p",
               },
             ],
@@ -330,6 +333,47 @@ describe("validateSpec — explicit tools allowlist", () => {
           "x.yml",
         ),
       /tools is missing tools required by declared components/,
+    );
+  });
+
+  it("rejects cwd-guard with no sandbox_* verb in tools", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_SINGLE_SPAWN,
+            phases: [
+              {
+                components: ["cwd-guard", "stage-write"],
+                // stage_write is fine, but cwd-guard needs at least one sandbox verb
+                tools: ["stage_write"],
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /declares cwd-guard but tools contains no sandbox_\* verb/,
+    );
+  });
+
+  it("rejects cwd-guard without an explicit tools list", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_SINGLE_SPAWN,
+            phases: [
+              {
+                components: ["cwd-guard", "stage-write"],
+                // no tools field at all
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /declares cwd-guard but provides no `tools` list/,
     );
   });
 

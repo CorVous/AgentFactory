@@ -41,7 +41,13 @@ import type {
 const PHASE_TIMEOUT_MS = 180_000;
 const MAX_FILES_PROMOTABLE = 50;
 const PREVIEW_LINES_PER_FILE = 20;
-const FORBIDDEN_TOOLS = new Set(["write", "edit", "bash"]);
+// Built-in fs verbs the child must never see — cwd-guard's path-validated
+// `sandbox_*` family is the only fs channel allowed. `bash` is forbidden
+// because we have no sandboxed equivalent yet.
+const FORBIDDEN_TOOLS = new Set([
+  "write", "edit", "bash",
+  "read", "ls", "grep", "glob",
+]);
 
 export interface DelegateOpts {
   components: ReadonlyArray<ParentSide<any, unknown>>;

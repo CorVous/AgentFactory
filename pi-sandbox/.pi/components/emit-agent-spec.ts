@@ -105,8 +105,10 @@ export default function (pi: ExtensionAPI) {
             {
               description:
                 "Components the runner imports as `parentSide` and passes " +
-                "to delegate(). cwd-guard is implicit for any write-capable " +
-                "phase but should still be listed explicitly.",
+                "to delegate(). cwd-guard is required for any phase whose " +
+                "child does fs work (read or write); list it explicitly " +
+                "and pair it with a `tools` list that picks the sandbox_* " +
+                "verbs the role needs.",
               minItems: 1,
               maxItems: 5,
             },

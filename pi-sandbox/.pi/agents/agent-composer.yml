@@ -7,10 +7,11 @@ phases:
   - name: compose
     components:
       - emit-agent-spec
+      - cwd-guard
     tools:
-      - read
-      - ls
-      - grep
+      - sandbox_read
+      - sandbox_ls
+      - sandbox_grep
       - emit_agent_spec
     prompt: |
       Use the pi-agent-composer skill to compose an agent that satisfies

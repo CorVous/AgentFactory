@@ -81,14 +81,21 @@ describe("isKnownComponent", () => {
 describe("forbiddenToolHits", () => {
   it("flags write/edit/bash in any spawn", () => {
     const src = `
-      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,bash,ls", "--no-extensions", "-p", "x"]);
+      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,bash,sandbox_ls", "--no-extensions", "-p", "x"]);
     `;
     const spawns = findSpawnInvocations(src);
     assert.deepEqual(forbiddenToolHits(spawns), ["bash"]);
   });
+  it("flags built-in fs verbs (read/ls/grep/glob)", () => {
+    const src = `
+      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,read,ls,grep,glob", "--no-extensions", "-p", "x"]);
+    `;
+    const spawns = findSpawnInvocations(src);
+    assert.deepEqual(forbiddenToolHits(spawns).sort(), ["glob", "grep", "ls", "read"]);
+  });
   it("returns empty for safe allowlists", () => {
     const src = `
-      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,sandbox_edit,ls,read", "--no-extensions", "-p", "x"]);
+      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,sandbox_edit,sandbox_ls,sandbox_read", "--no-extensions", "-p", "x"]);
     `;
     const spawns = findSpawnInvocations(src);
     assert.deepEqual(forbiddenToolHits(spawns), []);
@@ -122,7 +129,7 @@ function ctx(
 const FAKE_BLOB_DRAFTER_APPROVAL = `
   const STAGE_WRITE = "/abs/components/stage-write.ts";
   const CWD_GUARD = "/abs/components/cwd-guard.ts";
-  spawn("pi", ["-e", CWD_GUARD, "-e", STAGE_WRITE, "--mode", "json", "--tools", "stage_write,ls", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r } });
+  spawn("pi", ["-e", CWD_GUARD, "-e", STAGE_WRITE, "--mode", "json", "--tools", "stage_write,sandbox_ls", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r, PI_SANDBOX_VERBS: "sandbox_ls" } });
   // tool_execution_start handling
   if (event.toolName === "stage_write") staged.push(event.args);
   ctx.ui.confirm("promote?");
@@ -135,7 +142,7 @@ const FAKE_BLOB_REVIEW_GATED = `
   const STAGE_WRITE = "/abs/components/stage-write.ts";
   const CWD_GUARD = "/abs/components/cwd-guard.ts";
   const REVIEW = "/abs/components/review.ts";
-  spawn("pi", ["-e", CWD_GUARD, "-e", REVIEW, "--mode", "rpc", "--tools", "review,run_deferred_writer", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r } });
+  spawn("pi", ["-e", CWD_GUARD, "-e", REVIEW, "--mode", "rpc", "--tools", "review,run_deferred_writer", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r, PI_SANDBOX_VERBS: "sandbox_ls" } });
   // tool_execution_start handling for review
   if (event.toolName === "review") verdicts.push(event.args);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -143,8 +150,9 @@ const FAKE_BLOB_REVIEW_GATED = `
 `;
 
 const FAKE_BLOB_EMIT_ONLY = `
+  const CWD_GUARD = "/abs/components/cwd-guard.ts";
   const EMIT = "/abs/components/emit-summary.ts";
-  spawn("pi", ["-e", EMIT, "--mode", "json", "--tools", "emit_summary,ls,read,grep,glob", "--no-extensions", "-p", "x"]);
+  spawn("pi", ["-e", CWD_GUARD, "-e", EMIT, "--mode", "json", "--tools", "emit_summary,sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r, PI_SANDBOX_VERBS: "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob" } });
   if (event.type === "tool_execution_start" && event.toolName === "emit_summary") {
     const safe = body.slice(0, 16384);
     summaries.push({ title: args.title, body: safe });
@@ -249,9 +257,10 @@ describe("wiringChecks: review", () => {
 
 const THIN_AGENT_BLOB = `
   import path from "node:path";
-  import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+  import { makeCwdGuard } from "../components/cwd-guard.ts";
   import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
   import { delegate } from "../lib/delegate.ts";
+  const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_ls"] });
   pi.registerCommand("x", {
     handler: async (args, ctx) => {
       await delegate(ctx, {
@@ -267,11 +276,12 @@ const INLINE_AGENT_BLOB = `
 `;
 
 const ORCHESTRATOR_BLOB = `
-  import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+  import { makeCwdGuard } from "../components/cwd-guard.ts";
   import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
   import { parentSide as REVIEW } from "../components/review.ts";
   import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
   import { delegate } from "../lib/delegate.ts";
+  const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_ls"] });
   const stageHook = { ...STAGE_WRITE, harvest() {} };
   const result = await delegate(ctx, { components: [CWD_GUARD, stageHook], prompt: p });
   REVIEW.harvest(ev, reviewState);

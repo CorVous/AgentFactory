@@ -26,13 +26,14 @@ That's the whole parts list. No staging, no review.
 ## `--tools` allowlist on the child
 
 ```
-read,sandbox_write,sandbox_edit,ls,grep
+sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep
 ```
 
-`glob` is a reasonable addition if the drafter needs to search the
-existing tree. Never include `write`, `edit`, or `bash` — cwd-guard
-would still reject an out-of-sandbox path on its own tools, but the
-built-ins aren't sandboxed and defeat the guard.
+`sandbox_glob` is a reasonable addition if the drafter needs to
+search the existing tree. Never include built-in `read`, `ls`,
+`grep`, `glob`, `write`, `edit`, or `bash` — those are forbidden
+across the project; only the path-validated `sandbox_*` family is
+allowed.
 
 ## Model tier
 
@@ -107,12 +108,13 @@ export default function (pi: ExtensionAPI) {
         `TODO:AGENT_PROMPT Reply DONE and stop.`;
 
       let writes = 0;
+      const VERBS = "sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep";
       const child = spawn(
         "pi",
         [
           "-e", CWD_GUARD,
           "--mode", "json",
-          "--tools", "read,sandbox_write,sandbox_edit,ls,grep",
+          "--tools", VERBS,
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -123,7 +125,11 @@ export default function (pi: ExtensionAPI) {
         {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: sandboxRoot,
-          env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: VERBS,
+          },
         },
       );
 
@@ -176,8 +182,11 @@ export default function (pi: ExtensionAPI) {
 
 - `-e CWD_GUARD` present on the spawn args.
 - `PI_SANDBOX_ROOT: sandboxRoot` in child env.
-- `"--tools", "read,sandbox_write,sandbox_edit,ls,grep"` (glob
-  optional) — no `write`, no `edit`, no `bash`, no `stage_write`.
+- `"--tools", "sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep"`
+  (`sandbox_glob` optional) — no built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`,
+  no `bash`, no `stage_write`.
+- Child env includes `PI_SANDBOX_VERBS` listing the exact subset of
+  sandbox verbs the allowlist uses, so cwd-guard registers only those.
 - `"--no-extensions"` and `"--no-session"`.
 - `setTimeout(..., PHASE_TIMEOUT_MS)` + `child.kill("SIGKILL")`.
 - `stdio: ["ignore", "pipe", "pipe"]`.

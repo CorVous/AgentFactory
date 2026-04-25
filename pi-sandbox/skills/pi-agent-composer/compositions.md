@@ -27,7 +27,8 @@ before each `delegate()` call:
   drafter-with-approval (stages via `stage_write`, parent confirms,
   parent promotes).
 - **Component sets that infer to this:**
-  - `[emit-summary]` — recon, no write channel.
+  - `[cwd-guard, emit-summary]` — recon (read-only sandbox verbs +
+    `emit_summary`).
   - `[cwd-guard]` — confined drafter; child writes directly.
   - `[cwd-guard, stage-write]` — drafter with approval (human gate).
 - **YAML to emit:**
@@ -38,6 +39,7 @@ before each `delegate()` call:
   composition: single-spawn
   phases:
     - components: [cwd-guard, stage-write]
+      tools: [sandbox_ls, stage_write]   # cwd-guard registers only sandbox_ls
       prompt: |
         You are a DRAFTER. Task: {args}.
         Stage files via stage_write under {sandboxRoot}.
@@ -66,11 +68,13 @@ before each `delegate()` call:
   composition: sequential-phases-with-brief
   phases:
     - name: scout
-      components: [emit-summary]
+      components: [cwd-guard, emit-summary]
+      tools: [sandbox_ls, sandbox_read, sandbox_grep, sandbox_glob, emit_summary]
       prompt: |
         Survey {args}. Use emit_summary for each finding.
     - name: draft
       components: [cwd-guard, stage-write]
+      tools: [sandbox_ls, stage_write]
       prompt: |
         Task: {args}
 

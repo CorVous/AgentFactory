@@ -8,9 +8,13 @@
 
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { makeCwdGuard } from "../components/cwd-guard.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
 import { delegate } from "../lib/delegate.ts";
+
+// Drafter needs read access to inspect the existing project; writes go
+// through stage_write, so no sandbox_write/sandbox_edit verbs.
+const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_read", "sandbox_ls"] });
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("deferred-writer", {
@@ -29,7 +33,7 @@ Nothing you do will touch disk until the user approves. To create a file, call t
 Rules:
 - Do NOT call any \`write\` tool — only \`stage_write\`.
 - Paths must be relative, inside ${sandboxRoot}, no \`..\` segments.
-- To inspect the existing project, use \`read\` / \`ls\` on ABSOLUTE paths under ${sandboxRoot}.
+- To inspect the existing project, use \`sandbox_read\` / \`sandbox_ls\` with paths relative to ${sandboxRoot}.
 - Stop after you've staged everything the task needs. Reply DONE and stop.`;
 
       await delegate(ctx, {

@@ -24,12 +24,17 @@ confabulated agent.
    new child-tools, new stub shapes, or new NDJSON harvesters
    inside this skill. You also cannot author TypeScript — your
    tool allowlist exposes `emit_agent_spec` plus read verbs only.
-2. **`cwd-guard` on every write-capable phase.** Every phase whose
-   `components` array includes a write-capable part (`stage-write`,
-   or any future direct-write component) MUST also include
-   `cwd-guard`. The runner pins `PI_SANDBOX_ROOT` automatically via
-   `cwd-guard`'s `parentSide.env`. The sole exception is a
-   read-only phase whose only output channel is `emit_summary`.
+2. **`cwd-guard` on every fs-capable phase.** Every phase whose
+   child needs *any* filesystem access — read, write, list, grep,
+   glob — MUST include `cwd-guard`. cwd-guard is the only sanctioned
+   fs surface; the pi built-ins `read`/`ls`/`grep`/`glob`/`write`/`edit`
+   are forbidden project-wide. Pick the verb subset the role needs
+   in the phase's `tools` list (e.g. `[sandbox_ls, sandbox_read,
+   stage_write]` for a drafter-with-approval); the runner builds
+   cwd-guard with exactly those verbs and pins `PI_SANDBOX_ROOT` +
+   `PI_SANDBOX_VERBS` automatically. The sole exception is a phase
+   whose child does no fs work at all (e.g. a delegator whose only
+   tools are `run_deferred_writer,review`).
 3. **Output via `emit_agent_spec` only.** The tool writes
    `.pi/agents/<name>.yml`; the runner picks it up on the next pi
    startup. You cannot write `.ts`, `.yml`, or any other file
@@ -46,7 +51,7 @@ template" the parent extension copy-adapts).
 
 | Component | Role | When to use |
 | --- | --- | --- |
-| `cwd-guard.ts` | Sandbox for child writes | **REQUIRED on every write-capable sub-pi spawn.** Registers `sandbox_write` + `sandbox_edit`; both reject paths outside `$PI_SANDBOX_ROOT`. Replaces built-in `write` / `edit`. Skip only when the child is read-only + `emit_summary`. |
+| `cwd-guard.ts` | Cwd-safe filesystem surface | **REQUIRED on every fs-capable sub-pi spawn.** Registers path-validated `sandbox_read`/`sandbox_ls`/`sandbox_grep`/`sandbox_glob`/`sandbox_write`/`sandbox_edit` — the role picks the subset via the phase's `tools` list. Replaces every built-in fs verb (which are forbidden). Skip only when the child does no fs work at all. |
 | `stage-write.ts` | Stub drafter channel | The child should draft files the *parent previews and approves* before anything hits disk. Child calls `stage_write({path, content})`; parent harvests from NDJSON `tool_execution_start` events and `fs.writeFileSync`s only on user approval (or LLM verdict, when paired with `review`). |
 | `emit-summary.ts` | Stub structured-output channel | The child should return one or more *named summaries* instead of free-form assistant text. Child calls `emit_summary({title, body})`; parent harvests from NDJSON, caps byte-length per body, and persists to `.pi/scratch/<title>.md` or assembles into a brief for a follow-on phase. |
 | `review.ts` | Stub reviewer verdict | A reviewer LLM renders `approve`/`revise` on staged drafts. Parent harvests verdicts; `approve` ⇒ promote, `revise` ⇒ re-dispatch the drafter with the feedback string. When `review` is in the component set, the LLM is the gate — no `ctx.ui.confirm` fires. |
@@ -98,7 +103,10 @@ worth the pause.
   `sandbox_write` tools. The only way to commit a result is
   `emit_agent_spec`. A finished session that didn't call it
   produced nothing.
-- **Skipping cwd-guard on a write-capable phase.** Non-negotiable
+- **Skipping cwd-guard on an fs-capable phase.** Non-negotiable
+  on every phase whose child needs any fs access — including
+  read-only roles. cwd-guard owns the entire cwd-safe fs surface
+  and the built-in fs verbs are forbidden. Non-negotiable
   on every phase whose components include `stage-write` or any
   future direct-write part. The one exception is a read-only
   phase whose only output channel is `emit_summary`.

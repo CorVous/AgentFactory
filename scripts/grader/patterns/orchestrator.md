@@ -46,9 +46,14 @@ On each **drafter** child the pattern dispatches:
 
 ## `--tools` allowlist
 
-- **Delegator:** `run_deferred_writer,review` — nothing else.
-- **Drafter:** `stage_write,ls` (or `stage_write,ls,read` if
-  explicitly needed).
+- **Delegator:** `run_deferred_writer,review` — nothing else. The
+  delegator does no fs work, so cwd-guard is NOT loaded on this
+  spawn.
+- **Drafter:** `stage_write,sandbox_ls` (or
+  `stage_write,sandbox_ls,sandbox_read` if explicitly needed). NO
+  built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`, no `bash`, and
+  NO `sandbox_write`/`sandbox_edit` — `stage_write` is the only
+  write channel.
 
 ## Model tiers
 
@@ -131,10 +136,12 @@ export default function (pi: ExtensionAPI) {
       const sandboxRoot = path.resolve(process.cwd());
 
       // 1. Spawn delegator in RPC mode with run_deferred_writer + review.
+      //    cwd-guard is NOT loaded here: the delegator does no fs work
+      //    and cwd-guard now requires PI_SANDBOX_VERBS (which would be
+      //    empty for a no-fs role).
       const delegator = spawn(
         "pi",
         [
-          "-e", CWD_GUARD,
           "-e", RUN_DEFERRED_WRITER_TOOL,
           "-e", REVIEW_TOOL,
           "--mode", "rpc",
@@ -187,16 +194,20 @@ export default function (pi: ExtensionAPI) {
 
 ## Validation checklist
 
-- `-e CWD_GUARD`, `-e RUN_DEFERRED_WRITER_TOOL`, `-e REVIEW_TOOL`
-  on the delegator spawn.
+- `-e RUN_DEFERRED_WRITER_TOOL`, `-e REVIEW_TOOL` on the delegator
+  spawn. cwd-guard is NOT loaded on the delegator (it has no fs
+  role and the new strict cwd-guard contract requires
+  `PI_SANDBOX_VERBS`, which would be empty here).
 - `"--mode", "rpc"` on the delegator (NOT `json`).
 - `"--tools", "run_deferred_writer,review"` on the delegator — no
   read or write verbs.
 - `"--no-extensions"` and `"--no-session"` on every spawn.
 - `PI_SANDBOX_ROOT: sandboxRoot` in each child env.
 - Per-drafter spawn follows the `drafter-with-approval` skeleton
-  exactly (same `-e`, same `--tools`, same `PI_SANDBOX_ROOT`,
-  same `stdio`), minus `ctx.ui.confirm`.
+  exactly: `-e CWD_GUARD` + `-e STAGE_WRITE_TOOL`,
+  `--tools "stage_write,sandbox_ls"`, env contains
+  `PI_SANDBOX_ROOT` AND `PI_SANDBOX_VERBS: "sandbox_ls"`, same
+  `stdio`, minus `ctx.ui.confirm`.
 - `MAX_REVISE_ITERATIONS` cap enforced per subtask.
 - `DELEGATOR_TIMEOUT_MS` + `child.kill("SIGKILL")` hard cap on the
   delegator.

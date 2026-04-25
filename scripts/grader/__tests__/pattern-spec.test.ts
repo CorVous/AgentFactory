@@ -11,17 +11,20 @@ describe("pattern-spec", () => {
     const p = loadPatternSpec(REPO_ROOT, "drafter-with-approval");
     assert.deepEqual(p.components, ["cwd-guard.ts", "stage-write.ts"]);
     assert.ok(p.tools.includes("stage_write"));
-    assert.ok(p.tools.includes("ls"));
+    assert.ok(p.tools.includes("sandbox_ls"));
     assert.ok(!p.tools.includes("write"));
+    assert.ok(!p.tools.includes("ls"));
     assert.equal(p.mode, "json");
     assert.equal(p.tier, "TASK_MODEL");
   });
 
-  it("parses recon (no cwd-guard)", () => {
+  it("parses recon (now requires cwd-guard for sandbox read verbs)", () => {
     const p = loadPatternSpec(REPO_ROOT, "recon");
-    assert.deepEqual(p.components, ["emit-summary.ts"]);
+    assert.ok(p.components.includes("cwd-guard.ts"));
+    assert.ok(p.components.includes("emit-summary.ts"));
     assert.ok(p.tools.includes("emit_summary"));
-    assert.ok(p.tools.includes("ls"));
+    assert.ok(p.tools.includes("sandbox_ls"));
+    assert.ok(!p.tools.includes("ls"));
     assert.ok(!p.tools.includes("stage_write"));
     assert.ok(!p.tools.includes("write"));
   });
@@ -31,6 +34,8 @@ describe("pattern-spec", () => {
     assert.deepEqual(p.components, ["cwd-guard.ts"]);
     assert.ok(p.tools.includes("sandbox_write"));
     assert.ok(p.tools.includes("sandbox_edit"));
+    assert.ok(p.tools.includes("sandbox_read"));
+    assert.ok(!p.tools.includes("read"));
     assert.ok(!p.tools.includes("stage_write"));
   });
 
@@ -42,5 +47,7 @@ describe("pattern-spec", () => {
     assert.ok(p.components.includes("stage-write.ts"));
     assert.ok(p.tools.includes("stage_write"));
     assert.ok(p.tools.includes("emit_summary"));
+    assert.ok(p.tools.includes("sandbox_ls"));
+    assert.ok(p.tools.includes("sandbox_read"));
   });
 });

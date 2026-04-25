@@ -415,6 +415,22 @@ export function findDelegateUsage(src: string): DelegateUsage {
     identToComponent.set(im[1], im[2]);
   }
 
+  // cwd-guard is loaded via the makeCwdGuard factory rather than a
+  // direct parentSide import. Detect either the import alone (counts as
+  // "importedComponents") and any `const X = makeCwdGuard(...)` binding
+  // (counts as a usable identifier in the components: [...] array).
+  const factoryImportRe =
+    /import\s*\{\s*makeCwdGuard[^}]*\}\s*from\s*["'][^"']*components\/cwd-guard\.ts["']/;
+  if (factoryImportRe.test(src)) {
+    importedComponents.add("cwd-guard");
+    const factoryBindRe =
+      /\bconst\s+([A-Z_][A-Z0-9_]*)\s*=\s*makeCwdGuard\s*\(/g;
+    let fm: RegExpExecArray | null;
+    while ((fm = factoryBindRe.exec(src))) {
+      identToComponent.set(fm[1], "cwd-guard");
+    }
+  }
+
   const delegateHandles = new Set<string>();
   if (usesDelegate) {
     const delegateCallRe = /\bdelegate\s*\(/g;

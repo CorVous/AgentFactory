@@ -344,7 +344,7 @@ function gradeCompositionFidelity(
       "pass",
     );
     rubric.p0(
-      "no write/edit/bash in child tool allowlist (enforced by delegate())",
+      "no built-in fs verbs (read/ls/grep/glob/write/edit) or bash in child tool allowlist (enforced by delegate())",
       "pass",
     );
     return;
@@ -352,7 +352,6 @@ function gradeCompositionFidelity(
   const allowedTools = new Set<string>(
     unionToolsContribution(declaredComponents, expectation.extra_tools),
   );
-  const safeReadExtras = new Set(["ls", "read", "grep", "glob"]);
   let allSpawnsOk = true;
   const violations: string[] = [];
   for (const s of spawns) {
@@ -362,7 +361,7 @@ function gradeCompositionFidelity(
       continue;
     }
     for (const t of s.tools) {
-      if (!allowedTools.has(t) && !safeReadExtras.has(t)) {
+      if (!allowedTools.has(t)) {
         allSpawnsOk = false;
         violations.push(`unexpected tool: ${t}`);
       }

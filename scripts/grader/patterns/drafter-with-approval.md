@@ -25,12 +25,15 @@ In load order on the child:
 ## `--tools` allowlist on the child
 
 ```
-stage_write,ls
+stage_write,sandbox_ls
 ```
 
-Add `read` only if the drafter genuinely needs to inspect existing
-files. Omit everything else — the pattern depends on `stage_write`
-being the only write path.
+Add `sandbox_read` only if the drafter genuinely needs to inspect
+existing files. Omit everything else — the pattern depends on
+`stage_write` being the only write path. Crucially: do NOT include
+`sandbox_write` or `sandbox_edit`. cwd-guard is loaded only with the
+read verb subset (via `PI_SANDBOX_VERBS`), so it can't even register
+a write tool the child could call.
 
 ## Model tier
 
@@ -107,7 +110,7 @@ export default function (pi: ExtensionAPI) {
           "-e", CWD_GUARD,
           "-e", STAGE_WRITE_TOOL,
           "--mode", "json",
-          "--tools", "stage_write,ls",
+          "--tools", "stage_write,sandbox_ls",
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -118,7 +121,11 @@ export default function (pi: ExtensionAPI) {
         {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: sandboxRoot,
-          env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: "sandbox_ls",
+          },
         },
       );
 
@@ -219,10 +226,14 @@ export default function (pi: ExtensionAPI) {
 - `-e CWD_GUARD` AND `-e STAGE_WRITE_TOOL` both present on the
   spawn args.
 - `PI_SANDBOX_ROOT: sandboxRoot` in the child env.
-- `"--tools", "stage_write,ls"` (or `stage_write,ls,read` if
-  explicitly justified). NO `write`, `edit`, `bash`, or real
-  `sandbox_write` in the allowlist — the drafter should only reach
-  disk via staging.
+- `"--tools", "stage_write,sandbox_ls"` (or
+  `stage_write,sandbox_ls,sandbox_read` if explicitly justified).
+  NO built-in `write`/`edit`/`read`/`ls`/`grep`/`glob`, no `bash`,
+  and NO `sandbox_write`/`sandbox_edit` — the drafter should only
+  reach disk via staging.
+- Child env includes `PI_SANDBOX_VERBS` listing the same sandbox
+  verbs the allowlist uses (no write verbs), so cwd-guard registers
+  no write tool the child could even call.
 - `"--no-extensions"` and `"--no-session"`.
 - `setTimeout(..., PHASE_TIMEOUT_MS)` + `child.kill("SIGKILL")`.
 - `stdio: ["ignore", "pipe", "pipe"]`.

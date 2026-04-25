@@ -69,20 +69,39 @@ export interface ComponentSpec {
   wiringChecks(ctx: WiringContext): Mark[];
 }
 
-const FORBIDDEN_TOOLS = new Set(["write", "edit", "bash"]);
+// Mirrors the runtime forbidden set in pi-sandbox/.pi/lib/delegate.ts.
+// cwd-guard's `sandbox_*` family is the only fs channel allowed; the
+// built-ins read/ls/grep/glob/write/edit and `bash` are never permitted
+// in a child's --tools allowlist.
+const FORBIDDEN_TOOLS = new Set([
+  "write", "edit", "bash",
+  "read", "ls", "grep", "glob",
+]);
+
+// The full menu of sandbox verbs cwd-guard can register. Any spawn whose
+// --tools CSV includes one of these must load cwd-guard.ts (-e flag) and
+// pass PI_SANDBOX_ROOT + PI_SANDBOX_VERBS in the child env.
+const SANDBOX_VERBS: ReadonlySet<string> = new Set([
+  "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
+  "sandbox_write", "sandbox_edit",
+]);
 
 export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
   "cwd-guard": {
     name: "cwd-guard",
     filename: "cwd-guard.ts",
-    toolsContribution: ["sandbox_write", "sandbox_edit"],
+    toolsContribution: [
+      "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
+      "sandbox_write", "sandbox_edit",
+    ],
     wiringChecks({ art, spawns, delegateHandles }) {
       const out: Mark[] = [];
       if (delegateHandles.has("cwd-guard")) {
         // delegate() internally concatenates cwd-guard.parentSide.spawnArgs
-        // (i.e. `-e <cwd-guard.ts>`) and merges PI_SANDBOX_ROOT into env.
-        // The extension body won't contain those string literals, so the
-        // inline anchors below would false-negative; short-circuit instead.
+        // (i.e. `-e <cwd-guard.ts>`) and merges PI_SANDBOX_ROOT +
+        // PI_SANDBOX_VERBS into env. The extension body won't contain
+        // those string literals, so the inline anchors below would
+        // false-negative; short-circuit instead.
         out.push({
           severity: "P0",
           name: "cwd-guard: handled by delegate() runtime",
@@ -90,26 +109,31 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
         });
         return out;
       }
-      const sandboxEnv = /PI_SANDBOX_ROOT/.test(art.extBlob);
+      const sandboxRootEnv = /PI_SANDBOX_ROOT/.test(art.extBlob);
       out.push({
         severity: "P0",
         name: "cwd-guard: PI_SANDBOX_ROOT in child env",
-        status: sandboxEnv ? "pass" : "fail",
+        status: sandboxRootEnv ? "pass" : "fail",
       });
-      const writeCapableSpawn = spawns.some(
-        (s) =>
-          s.tools.includes("sandbox_write") || s.tools.includes("sandbox_edit"),
+      const sandboxVerbsEnv = /PI_SANDBOX_VERBS/.test(art.extBlob);
+      out.push({
+        severity: "P0",
+        name: "cwd-guard: PI_SANDBOX_VERBS in child env",
+        status: sandboxVerbsEnv ? "pass" : "fail",
+      });
+      const fsCapableSpawn = spawns.some((s) =>
+        s.tools.some((t) => SANDBOX_VERBS.has(t)),
       );
       const cwdGuardLoaded = spawns.some((s) =>
         s.eFlagComponents.includes("cwd-guard.ts"),
       );
       out.push({
         severity: "P0",
-        name: "cwd-guard: -e cwd-guard.ts on every write-capable spawn",
-        status: writeCapableSpawn && !cwdGuardLoaded ? "fail" : "pass",
+        name: "cwd-guard: -e cwd-guard.ts on every fs-capable spawn",
+        status: fsCapableSpawn && !cwdGuardLoaded ? "fail" : "pass",
         note:
-          writeCapableSpawn && !cwdGuardLoaded
-            ? "spawn lists sandbox_write/sandbox_edit but did not load cwd-guard.ts"
+          fsCapableSpawn && !cwdGuardLoaded
+            ? "spawn lists a sandbox_* verb but did not load cwd-guard.ts"
             : undefined,
       });
       return out;

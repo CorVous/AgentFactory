@@ -1,10 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { makeCwdGuard } from "../components/cwd-guard.ts";
 import { parentSide as REVIEW } from "../components/review.ts";
 import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+
+// Drafter children inspect the existing tree via sandbox_read/sandbox_ls
+// and write through the stage_write stub; the cwd-guard *write* verbs
+// are deliberately excluded so stage_write is the only path-to-disk.
+const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_read", "sandbox_ls"] });
 import type {
   DispatchRequestsState,
   ReviewCall,
@@ -170,10 +175,10 @@ type DrafterOutcome = {
 };
 
 // Drafter goes through delegate(autoPromote: false) so the LLM reviewer —
-// not ctx.ui.confirm — is the gate. Uses CWD_GUARD alongside STAGE_WRITE
-// because drafters may call `read` / `ls` on sandbox paths and the guard
-// supplies the tool allowlist contribution for those verbs plus the
-// PI_SANDBOX_ROOT env. `onStage` wraps STAGE_WRITE.harvest so the
+// not ctx.ui.confirm — is the gate. Uses CWD_GUARD (built above with
+// `verbs: [sandbox_read, sandbox_ls]`) alongside STAGE_WRITE so the
+// drafter can inspect the existing tree but its only write channel is
+// the stage_write stub. `onStage` wraps STAGE_WRITE.harvest so the
 // per-stage_write dashboard update still fires live rather than batched
 // at child-close.
 async function runDrafter(
@@ -189,7 +194,7 @@ To create a file, call 'stage_write' with a relative 'path' (inside the project 
 Rules:
 - Only 'stage_write'. No real write tools.
 - Paths relative, inside ${sandboxRoot}, no '..'.
-- Use 'read' / 'ls' on absolute paths under ${sandboxRoot} to explore.
+- Use 'sandbox_read' / 'sandbox_ls' with paths relative to ${sandboxRoot} to explore.
 - Stop after staging everything. Reply DONE.`;
   const prompt = feedback && feedback.length > 0
     ? `${base}\n\nThis is a REVISION pass. Previous attempt had issues. Apply this feedback verbatim:\n${feedback.map(f => `- ${f}`).join("\n")}`

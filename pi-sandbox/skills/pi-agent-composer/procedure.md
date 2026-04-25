@@ -12,7 +12,7 @@ Examples (non-exhaustive — the table is authoritative):
 
 | User says… | Implies component(s) |
 | --- | --- |
-| "summarize", "survey", "audit", "explore", "map out", "index" (no draft step follows) | `emit-summary` |
+| "summarize", "survey", "audit", "explore", "map out", "index" (no draft step follows) | `cwd-guard`, `emit-summary` |
 | "draft a file and show me", "stage, then approve", "preview before writing" | `cwd-guard`, `stage-write` |
 | "write X into `<dir>`", "no approval needed", batch / scripted run | `cwd-guard` |
 | "look at X, then write Y", "given what's there, produce the missing W" | `cwd-guard`, `emit-summary`, `stage-write` |
@@ -36,12 +36,16 @@ If NO signal maps to any component, go straight to step 5.
 Take the union of components implied by step 1's signals. Then
 apply the implicit-`cwd-guard` rule:
 
-- If the set contains any write-capable part (`stage-write`, or any
-  spawn that loads `cwd-guard.ts` for `sandbox_write`/`sandbox_edit`),
-  add `cwd-guard` to the set.
-- If the set contains only `emit-summary` (read-only child), do NOT
-  add `cwd-guard` — it's redundant and the rails grader will flag
-  the child's allowlist as wider than necessary.
+- If any phase's child needs *any* fs access (read OR write), add
+  `cwd-guard` to that phase's component set. cwd-guard owns the
+  entire cwd-safe fs surface; the built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`
+  are forbidden across the project.
+- The phase's `tools` list determines which sandbox verbs cwd-guard
+  registers. A recon phase lifts `sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob`;
+  a drafter-with-approval lifts `sandbox_ls` (writes go via stage_write);
+  a confined-drafter lifts the read verbs plus `sandbox_write,sandbox_edit`.
+- Skip `cwd-guard` only when the phase has NO fs role at all (e.g.
+  a delegator whose only tools are `run_deferred_writer,review`).
 
 If a signal points at a component the library doesn't have (e.g.
 "open a websocket and stream events"), that's a GAP. Go to step 5.
@@ -102,10 +106,13 @@ emit_agent_spec({
 })
 ```
 
-Drop `cwd-guard` from the array when the set is `[emit-summary]`
-(read-only recon, no write channel). The runner's `delegate()`
-calls infer the model tier automatically — `$TASK_MODEL` here
-because neither `review` nor `run-deferred-writer` are present.
+Keep `cwd-guard` whenever any phase's child needs fs access — even
+read-only recon needs it, because the built-in `read`/`ls`/`grep`/`glob`
+verbs are forbidden and cwd-guard's `sandbox_read`/`sandbox_ls`/`sandbox_grep`/`sandbox_glob`
+are the only sanctioned read surface. Drop `cwd-guard` only when a
+phase does no fs work at all. The runner's `delegate()` calls infer
+the model tier automatically — `$TASK_MODEL` here because neither
+`review` nor `run-deferred-writer` are present.
 
 ### Example (sequential-phases-with-brief — covers
 ### `[cwd-guard, emit-summary, stage-write]`)
@@ -119,7 +126,8 @@ emit_agent_spec({
   phases: [
     {
       name: "scout",
-      components: ["emit-summary"],          // read-only; no cwd-guard
+      components: ["cwd-guard", "emit-summary"],   // recon also needs cwd-guard for sandbox_read/ls/grep/glob
+      tools: ["sandbox_ls", "sandbox_read", "sandbox_grep", "sandbox_glob", "emit_summary"],
       prompt: "Survey {args}. Use emit_summary for each finding."
     },
     {

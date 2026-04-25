@@ -37,27 +37,32 @@ Two phases; each phase uses the parts from its underlying pattern.
 
 **Recon phase (child 1):**
 
-1. `emit-summary.ts` — the child emits one or more structured
+1. `cwd-guard.ts` — supplies the path-validated read verbs
+   (`sandbox_read`, `sandbox_ls`, `sandbox_grep`, `sandbox_glob`).
+   `PI_SANDBOX_VERBS` lists only the read verbs, so cwd-guard
+   registers no write tool.
+2. `emit-summary.ts` — the child emits one or more structured
    summaries; the parent harvests `{title, body}` from NDJSON.
 
 **Drafter phase (child 2):**
 
-1. `cwd-guard.ts` — safety backstop; drafter writes via
-   `stage_write` but cwd-guard is loaded in case a future pattern
-   tweak adds a real write primitive.
+1. `cwd-guard.ts` — supplies `sandbox_read` / `sandbox_ls` for the
+   drafter's read needs. `PI_SANDBOX_VERBS` excludes the write verbs,
+   so even though cwd-guard is loaded, no `sandbox_write`/`sandbox_edit`
+   is registered. `stage_write` is the only write channel.
 2. `stage-write.ts` — the stub write channel. Parent previews via
    `ctx.ui.confirm` and promotes on approval.
 
 ## `--tools` allowlist
 
-- **Recon child:** `ls,read,grep,glob,emit_summary` — exactly the
-  recon allowlist.
-- **Drafter child:** `stage_write,ls` (or `stage_write,ls,read`
-  if the drafter needs to inspect additional files beyond what the
-  recon brief conveys).
+- **Recon child:** `sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob,emit_summary`
+  — exactly the recon allowlist.
+- **Drafter child:** `stage_write,sandbox_ls` (or
+  `stage_write,sandbox_ls,sandbox_read` if the drafter needs to
+  inspect additional files beyond what the recon brief conveys).
 
-Nothing else in either. No `write`, `edit`, `bash`, or real
-`sandbox_write` on either child.
+Nothing else in either. No built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`,
+no `bash`, and NO `sandbox_write`/`sandbox_edit` on either child.
 
 ## Model tiers
 
@@ -156,10 +161,12 @@ export default function (pi: ExtensionAPI) {
       const sandboxRoot = path.resolve(process.cwd());
 
       // ---- Phase 1: recon child ---------------------------------------
+      const RECON_VERBS = "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob";
       const reconPrompt =
         `You are a RECON AGENT. Survey ${sandboxRoot} (and subdirectories the ` +
         `user task references) and produce bounded summaries via emit_summary. ` +
-        `Use only 'ls', 'read', 'grep', 'glob' (no write, no edit, no bash). ` +
+        `Use only 'sandbox_ls', 'sandbox_read', 'sandbox_grep', 'sandbox_glob' ` +
+        `(no write, no edit, no bash). ` +
         `Call emit_summary({title, body}) with body <= ${SUMMARY_BYTE_CAP} bytes ` +
         `per call. ` +
         `TODO:AGENT_PROMPT_RECON ` +
@@ -170,9 +177,10 @@ export default function (pi: ExtensionAPI) {
       const reconChild = spawn(
         "pi",
         [
+          "-e", CWD_GUARD,
           "-e", EMIT_SUMMARY,
           "--mode", "json",
-          "--tools", "ls,read,grep,glob,emit_summary",
+          "--tools", `${RECON_VERBS},emit_summary`,
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -180,7 +188,15 @@ export default function (pi: ExtensionAPI) {
           "--thinking", "off",
           "-p", reconPrompt,
         ],
-        { stdio: ["ignore", "pipe", "pipe"], cwd: sandboxRoot },
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          cwd: sandboxRoot,
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: RECON_VERBS,
+          },
+        },
       );
 
       let reconBuffer = "";
@@ -246,13 +262,14 @@ export default function (pi: ExtensionAPI) {
         `TODO:AGENT_PROMPT_DRAFTER Reply DONE and stop.`;
 
       const stagedWrites: Array<{ path: unknown; content: unknown }> = [];
+      const DRAFTER_VERBS = "sandbox_ls";
       const drafterChild = spawn(
         "pi",
         [
           "-e", CWD_GUARD,
           "-e", STAGE_WRITE_TOOL,
           "--mode", "json",
-          "--tools", "stage_write,ls",
+          "--tools", `stage_write,${DRAFTER_VERBS}`,
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -263,7 +280,11 @@ export default function (pi: ExtensionAPI) {
         {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: sandboxRoot,
-          env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: DRAFTER_VERBS,
+          },
         },
       );
 
@@ -375,22 +396,27 @@ anchor.
 
 **Recon child (first spawn):**
 
-- `-e <abs path ending in components/emit-summary.ts>`.
-- `"--tools", "ls,read,grep,glob,emit_summary"`.
+- `-e <abs path ending in components/cwd-guard.ts>` AND
+  `-e <abs path ending in components/emit-summary.ts>`.
+- `"--tools", "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob,emit_summary"`.
+- Child env: `PI_SANDBOX_ROOT: sandboxRoot` AND `PI_SANDBOX_VERBS`
+  listing the read-only sandbox subset.
 - `"--no-extensions"` and `"--no-session"`.
 - NDJSON parser matches on
   `e.type === "tool_execution_start" && e.toolName === "emit_summary"`
   and reads `title`/`body` from `e.args`.
 - `RECON_TIMEOUT_MS` + `child.kill("SIGKILL")`.
 - Per-summary byte cap (`Buffer.byteLength` or `.slice(0, N)`).
-- No `PI_SANDBOX_ROOT` on this spawn (no write channel to sandbox).
 
 **Drafter child (second spawn):**
 
 - `-e <abs path ending in components/cwd-guard.ts>` AND
   `-e <abs path ending in components/stage-write.ts>`.
-- `PI_SANDBOX_ROOT: sandboxRoot` in the child env.
-- `"--tools", "stage_write,ls"` (or `,ls,read` if justified).
+- `PI_SANDBOX_ROOT: sandboxRoot` AND `PI_SANDBOX_VERBS: "sandbox_ls"`
+  (or `"sandbox_ls,sandbox_read"` if justified) in the child env.
+  NO write verbs — `stage_write` is the only write channel.
+- `"--tools", "stage_write,sandbox_ls"` (or `,sandbox_ls,sandbox_read`
+  if justified).
 - `"--no-extensions"` and `"--no-session"`.
 - NDJSON parser matches on
   `e.toolName === "stage_write"` and reads `path`/`content` from
