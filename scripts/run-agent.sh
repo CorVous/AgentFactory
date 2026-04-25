@@ -121,22 +121,82 @@ if [[ -z "${TASK_MODEL:-}" && -f "$REPO/models.env" ]]; then
   set -a; source "$REPO/models.env"; set +a
 fi
 
+if [[ $INTERACTIVE -eq 1 && -z "$NAME" ]]; then
+  # No name → just open pi from the sandbox cwd. Auto-discovered
+  # yaml-agent-runner still registers every spec's slash command, so
+  # the user can type `/<slash> <args>` at the prompt. `exec` replaces
+  # this script's process with pi.
+  cd "$SANDBOX"
+  exec env \
+    PI_SKIP_UPDATE_CHECK=1 \
+    "$REPO/node_modules/.bin/pi" \
+      --no-context-files \
+      --provider openrouter
+fi
+
 if [[ $INTERACTIVE -eq 1 ]]; then
-  # Drop into pi from the sandbox cwd. The yaml-agent-runner registers
-  # every spec's slash command on startup, so the user can type
-  # `/<slash> <args>` at the prompt. When a name was given, surface the
-  # exact slash to type as a one-line hint on stderr (stdout is pi's TUI).
-  if [[ -n "$SLASH" ]]; then
-    echo "[run-agent] Interactive mode. Type: /$SLASH <args>" >&2
+  # With a name, replicate the agent's surface in the parent pi session:
+  # load the YAML's skill, mount its components via -e, apply its tools
+  # allowlist. This makes `agent:i <name>` feel like the agent rather
+  # than just "pi from the sandbox where the slash happens to be
+  # registered". Same shape as scripts/agent-composer.sh -i, but driven
+  # by the YAML instead of hardcoded.
+  INFO="$("$REPO/node_modules/.bin/tsx" "$REPO/scripts/yaml-agent-info.ts" "$SPEC")" || {
+    echo "Failed to read agent spec: $SPEC" >&2
+    exit 2
+  }
+  COMPOSITION=""
+  SKILL=""
+  TOOLS=""
+  COMPONENTS=""
+  eval "$INFO"
+
+  if [[ "$COMPOSITION" != "single-spawn" ]]; then
+    echo "Interactive mode supports single-spawn agents only (got: $COMPOSITION)." >&2
+    echo "For multi-phase agents use one-shot: npm run agent -- $NAME <task>" >&2
+    exit 2
   fi
-  (
-    cd "$SANDBOX"
-    exec env \
-      PI_SKIP_UPDATE_CHECK=1 \
-      "$REPO/node_modules/.bin/pi" \
-        --no-context-files \
-        --provider openrouter
-  )
+
+  PI_SKILL_ARGS=()
+  if [[ -n "$SKILL" ]]; then
+    SKILL_ABS="$SANDBOX/$SKILL"
+    if [[ ! -d "$SKILL_ABS" ]]; then
+      echo "Skill path not found: $SKILL_ABS" >&2
+      exit 2
+    fi
+    # --no-skills + --skill <path> override pattern (proven in
+    # scripts/agent-composer.sh:92,110-112): --no-skills suppresses
+    # auto-loaded skills, --skill loads the explicit one.
+    PI_SKILL_ARGS=(--no-skills --skill "$SKILL_ABS")
+  fi
+
+  PI_EXT_ARGS=()
+  if [[ -n "$COMPONENTS" ]]; then
+    IFS=',' read -ra COMPS <<< "$COMPONENTS"
+    for c in "${COMPS[@]}"; do
+      COMP_PATH="$SANDBOX/.pi/components/$c.ts"
+      if [[ ! -f "$COMP_PATH" ]]; then
+        echo "Component file not found: $COMP_PATH" >&2
+        exit 2
+      fi
+      PI_EXT_ARGS+=(-e "$COMP_PATH")
+    done
+  fi
+
+  PI_TOOL_ARGS=()
+  [[ -n "$TOOLS" ]] && PI_TOOL_ARGS=(--tools "$TOOLS")
+
+  echo "[run-agent] Interactive /$SLASH (skill=${SKILL:-none}, tools=${TOOLS:-default}, components=${COMPONENTS:-none})" >&2
+  cd "$SANDBOX"
+  exec env \
+    PI_SKIP_UPDATE_CHECK=1 \
+    PI_SANDBOX_ROOT="$SANDBOX" \
+    "$REPO/node_modules/.bin/pi" \
+      --no-context-files --no-session \
+      --provider openrouter \
+      "${PI_SKILL_ARGS[@]}" \
+      "${PI_EXT_ARGS[@]}" \
+      "${PI_TOOL_ARGS[@]}"
 fi
 
 # Compose the prompt: "/<slash> <args joined>". Empty args yield "/<slash>",
