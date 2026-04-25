@@ -208,6 +208,43 @@ This rail pairs with the sandbox rails in *For every writer /
 mutator* below — a narrow allowlist is how you prove the child
 *can't* write outside the staged channel.
 
+### Component fs access (always on)
+
+When authoring a new component under `pi-sandbox/.pi/components/`,
+follow the privileged-vs-stub split:
+
+- **Default: pure stub.** The child registers a stub tool that
+  takes the LLM's intent as args and returns ok; the parent
+  harvests args from the NDJSON event stream and performs any
+  fs/network/state-changing work itself. No `node:fs` import in
+  the child. Reference: `stage-write.ts`, `emit-summary.ts`,
+  `review.ts`, `run-deferred-writer.ts`. The repo's import scan
+  (`pi-sandbox/.pi/lib/component-policy.ts`) rejects any
+  unprivileged component that imports `node:fs`,
+  `node:child_process`, `node:net`, etc.
+- **For LLM-driven fs.** Don't author a custom tool — request the
+  appropriate `sandbox_*` verb in `--tools`. `sandbox-fs.ts` is
+  auto-injected by `delegate()` (and the YAML runner) whenever a
+  sandbox verb appears, and registers exactly the requested
+  subset.
+- **Privileged exception (rare).** If you genuinely need
+  synchronous fs feedback in the child's `execute()` (like
+  `emit-agent-spec.ts` writing a YAML spec), three steps:
+  1. Add an entry to `PRIVILEGED_IMPORTS` in
+     `pi-sandbox/.pi/lib/component-policy.ts` listing exactly the
+     `node:*` modules you need.
+  2. Add the file to `ROLE_COMPONENTS` in the same file (so the
+     path allowlist accepts it).
+  3. Import `validate` from `./cwd-guard.ts` and call it on every
+     absolute path immediately before the `fs.*` call. `validate()`
+     does lex+realpath containment against `$PI_SANDBOX_ROOT`.
+- **cwd-guard's auditor backstops every spawn.** Even if you
+  forget to call `validate()` in your tool body, cwd-guard's
+  child-side `pi.on("tool_call")` handler walks args for
+  absolute-path strings on every tool call and rejects out-of-cwd
+  paths. Defense-in-depth, not a substitute for per-body
+  validation.
+
 ## For every slash command
 
 - **Emit a `ctx.ui.notify` at every phase boundary.** Commands have no

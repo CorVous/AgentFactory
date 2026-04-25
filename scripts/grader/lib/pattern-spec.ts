@@ -13,6 +13,7 @@ export interface PatternSpec {
 
 const COMPONENT_FILENAMES = new Set([
   "cwd-guard.ts",
+  "sandbox-fs.ts",
   "stage-write.ts",
   "emit-summary.ts",
   "review.ts",

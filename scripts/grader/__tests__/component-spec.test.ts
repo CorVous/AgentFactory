@@ -81,14 +81,21 @@ describe("isKnownComponent", () => {
 describe("forbiddenToolHits", () => {
   it("flags write/edit/bash in any spawn", () => {
     const src = `
-      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,bash,ls", "--no-extensions", "-p", "x"]);
+      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,bash,sandbox_ls", "--no-extensions", "-p", "x"]);
     `;
     const spawns = findSpawnInvocations(src);
     assert.deepEqual(forbiddenToolHits(spawns), ["bash"]);
   });
+  it("flags built-in fs verbs (read/ls/grep/glob)", () => {
+    const src = `
+      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,read,ls,grep,glob", "--no-extensions", "-p", "x"]);
+    `;
+    const spawns = findSpawnInvocations(src);
+    assert.deepEqual(forbiddenToolHits(spawns).sort(), ["glob", "grep", "ls", "read"]);
+  });
   it("returns empty for safe allowlists", () => {
     const src = `
-      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,sandbox_edit,ls,read", "--no-extensions", "-p", "x"]);
+      const c = spawn("pi", ["-e", "cwd-guard.ts", "--tools", "sandbox_write,sandbox_edit,sandbox_ls,sandbox_read", "--no-extensions", "-p", "x"]);
     `;
     const spawns = findSpawnInvocations(src);
     assert.deepEqual(forbiddenToolHits(spawns), []);
@@ -122,7 +129,7 @@ function ctx(
 const FAKE_BLOB_DRAFTER_APPROVAL = `
   const STAGE_WRITE = "/abs/components/stage-write.ts";
   const CWD_GUARD = "/abs/components/cwd-guard.ts";
-  spawn("pi", ["-e", CWD_GUARD, "-e", STAGE_WRITE, "--mode", "json", "--tools", "stage_write,ls", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r } });
+  spawn("pi", ["-e", CWD_GUARD, "-e", STAGE_WRITE, "--mode", "json", "--tools", "stage_write,sandbox_ls", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r, PI_SANDBOX_VERBS: "sandbox_ls" } });
   // tool_execution_start handling
   if (event.toolName === "stage_write") staged.push(event.args);
   ctx.ui.confirm("promote?");
@@ -135,7 +142,7 @@ const FAKE_BLOB_REVIEW_GATED = `
   const STAGE_WRITE = "/abs/components/stage-write.ts";
   const CWD_GUARD = "/abs/components/cwd-guard.ts";
   const REVIEW = "/abs/components/review.ts";
-  spawn("pi", ["-e", CWD_GUARD, "-e", REVIEW, "--mode", "rpc", "--tools", "review,run_deferred_writer", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r } });
+  spawn("pi", ["-e", CWD_GUARD, "-e", REVIEW, "--mode", "rpc", "--tools", "review,run_deferred_writer", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r, PI_SANDBOX_VERBS: "sandbox_ls" } });
   // tool_execution_start handling for review
   if (event.toolName === "review") verdicts.push(event.args);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -143,8 +150,9 @@ const FAKE_BLOB_REVIEW_GATED = `
 `;
 
 const FAKE_BLOB_EMIT_ONLY = `
+  const CWD_GUARD = "/abs/components/cwd-guard.ts";
   const EMIT = "/abs/components/emit-summary.ts";
-  spawn("pi", ["-e", EMIT, "--mode", "json", "--tools", "emit_summary,ls,read,grep,glob", "--no-extensions", "-p", "x"]);
+  spawn("pi", ["-e", CWD_GUARD, "-e", EMIT, "--mode", "json", "--tools", "emit_summary,sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob", "--no-extensions", "-p", "x"], { env: { PI_SANDBOX_ROOT: r, PI_SANDBOX_VERBS: "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob" } });
   if (event.type === "tool_execution_start" && event.toolName === "emit_summary") {
     const safe = body.slice(0, 16384);
     summaries.push({ title: args.title, body: safe });
@@ -247,15 +255,20 @@ describe("wiringChecks: review", () => {
 
 /* -------- findDelegateUsage (Phase 2.5) ----------------------------- */
 
+// Thin-agent fixtures after the auto-injection split: cwd-guard and
+// sandbox-fs are NOT imported or referenced — the runner injects them.
+// Each user-listed component (stage-write, etc.) appears via the
+// `parentSide as X` import alias and shows up in the delegate()
+// call's `components` array.
 const THIN_AGENT_BLOB = `
   import path from "node:path";
-  import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
   import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
   import { delegate } from "../lib/delegate.ts";
   pi.registerCommand("x", {
     handler: async (args, ctx) => {
       await delegate(ctx, {
-        components: [CWD_GUARD, STAGE_WRITE],
+        components: [STAGE_WRITE],
+        extraTools: ["sandbox_ls"],
         prompt: "p",
       });
     },
@@ -267,24 +280,31 @@ const INLINE_AGENT_BLOB = `
 `;
 
 const ORCHESTRATOR_BLOB = `
-  import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+  import { cwdGuardSide } from "../components/cwd-guard.ts";
   import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
   import { parentSide as REVIEW } from "../components/review.ts";
   import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
   import { delegate } from "../lib/delegate.ts";
   const stageHook = { ...STAGE_WRITE, harvest() {} };
-  const result = await delegate(ctx, { components: [CWD_GUARD, stageHook], prompt: p });
+  const result = await delegate(ctx, { components: [stageHook], extraTools: ["sandbox_ls"], prompt: p });
   REVIEW.harvest(ev, reviewState);
   RUN_DEFERRED_WRITER.harvest(ev, dispatchState);
-  spawn("pi", ["--mode", "rpc", "--tools", "run_deferred_writer,review"]);
+  spawn("pi", ["--mode", "rpc", ...cwdGuardSide.spawnArgs, "--tools", "run_deferred_writer,review"]);
 `;
 
 describe("findDelegateUsage", () => {
   it("detects a thin-agent pattern", () => {
     const u = findDelegateUsage(THIN_AGENT_BLOB);
     assert.equal(u.usesDelegate, true);
-    assert.deepEqual([...u.importedComponents].sort(), ["cwd-guard", "stage-write"]);
-    assert.deepEqual([...u.delegateHandles].sort(), ["cwd-guard", "stage-write"]);
+    // Extension imports only stage-write directly; cwd-guard and
+    // sandbox-fs are auto-injected and never appear as imports.
+    assert.deepEqual([...u.importedComponents].sort(), ["stage-write"]);
+    // delegateHandles always includes the auto-injected pair when
+    // delegate() is used, plus any explicitly-listed components.
+    assert.deepEqual(
+      [...u.delegateHandles].sort(),
+      ["cwd-guard", "sandbox-fs", "stage-write"],
+    );
   });
 
   it("reports usesDelegate=false for an inline-spawn agent", () => {
@@ -299,7 +319,14 @@ describe("findDelegateUsage", () => {
     assert.equal(u.usesDelegate, true);
     // stageHook wraps STAGE_WRITE — should be picked up via the wrapper scan.
     assert.ok(u.delegateHandles.has("stage-write"), [...u.delegateHandles].join(","));
+    // cwd-guard and sandbox-fs are auto-injected, so they're always in
+    // delegateHandles when usesDelegate.
     assert.ok(u.delegateHandles.has("cwd-guard"));
+    assert.ok(u.delegateHandles.has("sandbox-fs"));
+    // The orchestrator imports cwd-guard's parentSide directly to drive
+    // the RPC delegator spawn; that counts as importedComponents but not
+    // delegateHandles per se (auto-injection covers that).
+    assert.ok(u.importedComponents.has("cwd-guard"));
     // review and run-deferred-writer are imported (for their harvesters)
     // but drive the RPC spawn inline — not in delegateHandles.
     assert.ok(u.importedComponents.has("review"));

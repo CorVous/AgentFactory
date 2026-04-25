@@ -21,27 +21,28 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { parse as yamlParse } from "yaml";
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
 import { parentSide as EMIT_AGENT_SPEC } from "../components/emit-agent-spec.ts";
 import { parentSide as EMIT_SUMMARY } from "../components/emit-summary.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
 import type { EmitSummaryResult, ParentSide } from "../components/_parent-side.ts";
 import { delegate } from "../lib/delegate.ts";
+import { reservedComponentNames } from "../lib/auto-inject.ts";
 
 const AGENTS_DIR = path.resolve(process.cwd(), ".pi", "agents");
 export const MAX_BRIEF_BYTES = 16_000;
 
-// Static name → parentSide map. Kept to the components a single-spawn or
-// sequential-phases-with-brief runner can actually drive: cwd-guard,
-// stage-write, emit-summary, emit-agent-spec. Adding `review` /
-// `run-deferred-writer` here would not make them work — `delegate()`
-// doesn't manage the RPC loop they require — so they are rejected at
-// validation time instead (see `validateSpec`).
-const COMPONENTS: Record<string, ParentSide<any, unknown>> = {
-  "cwd-guard": CWD_GUARD,
-  "stage-write": STAGE_WRITE,
-  "emit-summary": EMIT_SUMMARY,
-  "emit-agent-spec": EMIT_AGENT_SPEC,
+// User-listable components. cwd-guard and sandbox-fs are NOT here —
+// they're auto-injected by delegate() via the POLICIES /
+// TOOL_PROVIDERS registries. Listing them in a phase's `components`
+// is rejected by validateSpec.
+//
+// Adding `review` / `run-deferred-writer` here would not make them
+// work — `delegate()` doesn't manage the RPC loop they require — so
+// they are rejected at validation time instead (see `validateSpec`).
+const COMPONENTS: Record<string, () => ParentSide<any, unknown>> = {
+  "stage-write": () => STAGE_WRITE,
+  "emit-summary": () => EMIT_SUMMARY,
+  "emit-agent-spec": () => EMIT_AGENT_SPEC,
 };
 
 export interface PhaseSpec {
@@ -105,7 +106,7 @@ export default function (pi: ExtensionAPI) {
         if (spec.composition === "single-spawn") {
           const phase = spec.phases[0];
           await delegate(ctx, {
-            components: phase.components.map((n) => COMPONENTS[n]),
+            components: phase.components.map((n) => COMPONENTS[n]()),
             prompt: substitute(phase.prompt, baseSubs),
             skill: spec.skill,
             toolsOverride: phase.tools,
@@ -117,7 +118,7 @@ export default function (pi: ExtensionAPI) {
         const scoutPhase = spec.phases[0];
         const draftPhase = spec.phases[1];
         const scoutResult = await delegate(ctx, {
-          components: scoutPhase.components.map((n) => COMPONENTS[n]),
+          components: scoutPhase.components.map((n) => COMPONENTS[n]()),
           prompt: substitute(scoutPhase.prompt, baseSubs),
           skill: spec.skill,
           toolsOverride: scoutPhase.tools,
@@ -142,7 +143,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         await delegate(ctx, {
-          components: draftPhase.components.map((n) => COMPONENTS[n]),
+          components: draftPhase.components.map((n) => COMPONENTS[n]()),
           prompt: substitute(draftPhase.prompt, { ...baseSubs, brief }),
           skill: spec.skill,
           toolsOverride: draftPhase.tools,
@@ -206,6 +207,7 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
     if (!Array.isArray(components) || components.length === 0) {
       throw new Error(`${file}: phases[${i}].components must be non-empty`);
     }
+    const reserved = reservedComponentNames();
     for (const c of components) {
       if (typeof c !== "string") {
         throw new Error(`${file}: phases[${i}].components has non-string entry`);
@@ -215,6 +217,12 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
           `${file}: phases[${i}] declares "${c}", which requires the ` +
             `RPC-delegator topology. Not runnable via delegate(). ` +
             `Use pi-agent-builder.`,
+        );
+      }
+      if (reserved.has(c)) {
+        throw new Error(
+          `${file}: phases[${i}].components must not list "${c}" — ` +
+            `auto-injected by the runner.`,
         );
       }
       if (!COMPONENTS[c]) {
@@ -233,7 +241,10 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
     // Optional explicit tools allowlist. When set, must be a non-empty
     // string array AND must cover every tool each declared component
     // contributes — otherwise a typo silently strips a component's
-    // ability to do its job.
+    // ability to do its job. The auto-injected sandbox-fs surface is
+    // activated by `tools` containing at least one sandbox_* verb;
+    // delegate() handles that automatically, so the runner doesn't
+    // need its own intersection check.
     let tools: string[] | undefined;
     if (pr.tools !== undefined) {
       if (
@@ -248,7 +259,8 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
       tools = pr.tools as string[];
       const declared = new Set<string>();
       for (const c of components as string[]) {
-        for (const t of COMPONENTS[c].tools) declared.add(t);
+        const fixed = COMPONENTS[c]();
+        for (const t of fixed.tools) declared.add(t);
       }
       const missing = [...declared].filter((t) => !tools!.includes(t));
       if (missing.length > 0) {

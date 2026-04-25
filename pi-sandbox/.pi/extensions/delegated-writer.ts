@@ -1,10 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
+import { cwdGuardSide } from "../components/cwd-guard.ts";
 import { parentSide as REVIEW } from "../components/review.ts";
 import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
+
+// Drafter children inspect the existing tree via sandbox_read/sandbox_ls
+// (auto-injected sandbox-fs registers them) and write through the
+// stage_write stub; the sandbox-fs *write* verbs are deliberately
+// excluded so stage_write is the only path-to-disk. cwd-guard is
+// auto-injected by delegate() so we don't list it here either.
 import type {
   DispatchRequestsState,
   ReviewCall,
@@ -170,10 +176,10 @@ type DrafterOutcome = {
 };
 
 // Drafter goes through delegate(autoPromote: false) so the LLM reviewer —
-// not ctx.ui.confirm — is the gate. Uses CWD_GUARD alongside STAGE_WRITE
-// because drafters may call `read` / `ls` on sandbox paths and the guard
-// supplies the tool allowlist contribution for those verbs plus the
-// PI_SANDBOX_ROOT env. `onStage` wraps STAGE_WRITE.harvest so the
+// not ctx.ui.confirm — is the gate. Uses CWD_GUARD (built above with
+// `verbs: [sandbox_read, sandbox_ls]`) alongside STAGE_WRITE so the
+// drafter can inspect the existing tree but its only write channel is
+// the stage_write stub. `onStage` wraps STAGE_WRITE.harvest so the
 // per-stage_write dashboard update still fires live rather than batched
 // at child-close.
 async function runDrafter(
@@ -189,7 +195,7 @@ To create a file, call 'stage_write' with a relative 'path' (inside the project 
 Rules:
 - Only 'stage_write'. No real write tools.
 - Paths relative, inside ${sandboxRoot}, no '..'.
-- Use 'read' / 'ls' on absolute paths under ${sandboxRoot} to explore.
+- Use 'sandbox_read' / 'sandbox_ls' with paths relative to ${sandboxRoot} to explore.
 - Stop after staging everything. Reply DONE.`;
   const prompt = feedback && feedback.length > 0
     ? `${base}\n\nThis is a REVISION pass. Previous attempt had issues. Apply this feedback verbatim:\n${feedback.map(f => `- ${f}`).join("\n")}`
@@ -217,7 +223,8 @@ Rules:
     : STAGE_WRITE;
 
   const result = await delegate(ctx, {
-    components: [CWD_GUARD, stageHook],
+    components: [stageHook],
+    extraTools: ["sandbox_read", "sandbox_ls"],
     prompt,
     autoPromote: false,
   });
@@ -244,9 +251,18 @@ class DelegatorSession {
   constructor(leadModel: string, sandboxRoot: string) {
     // -e flags and --tools CSV come from parentSide contributions so the
     // RPC delegator shares its "how to load these stubs" knowledge with
-    // the rest of the composer library (rails.md §1, §8).
-    const spawnArgs = [...RUN_DEFERRED_WRITER.spawnArgs, ...REVIEW.spawnArgs];
+    // the rest of the composer library (rails.md §1, §8). The delegator
+    // does no fs work — only run_deferred_writer + review stubs — so it
+    // loads cwd-guard alone (no sandbox-fs). cwd-guard's auditor
+    // (`pi.on("tool_call")`) still runs, blocking any out-of-cwd path
+    // arg the delegator LLM might pass to a stub.
+    const spawnArgs = [
+      ...cwdGuardSide.spawnArgs,
+      ...RUN_DEFERRED_WRITER.spawnArgs,
+      ...REVIEW.spawnArgs,
+    ];
     const tools = [...RUN_DEFERRED_WRITER.tools, ...REVIEW.tools].join(",");
+    const guardEnv = cwdGuardSide.env({ cwd: sandboxRoot });
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",
@@ -254,7 +270,11 @@ class DelegatorSession {
       ...spawnArgs,
       "--tools", tools,
       "--provider", "openrouter", "--model", leadModel,
-    ], { stdio: ["pipe", "pipe", "pipe"], cwd: sandboxRoot });
+    ], {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: sandboxRoot,
+      env: { ...process.env, ...guardEnv },
+    });
 
     this.child.stdout!.on("data", (d) => this.onStdout(d));
     this.child.stderr!.on("data", (d) => { this.stderr += d.toString(); });

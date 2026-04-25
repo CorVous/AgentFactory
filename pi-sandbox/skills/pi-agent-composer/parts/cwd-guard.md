@@ -4,77 +4,110 @@
 
 ## What it does
 
-Pi extension that registers two tools — `sandbox_write` and
-`sandbox_edit` — which validate every write/edit target against
-`$PI_SANDBOX_ROOT`. Both reject absolute paths and `..` segments
-that resolve outside the root.
+The cwd-policy component. After the policy/surface split, cwd-guard
+owns three things:
 
-## When to use
+1. **The `validate(p, root)` helper.** Lex + realpath check that `p`
+   resolves inside `root`. Throws on escape (including symlink
+   escapes). Exported for any privileged component (sandbox-fs,
+   stage-write, emit-agent-spec) that does its own fs work to call
+   before any `fs.*` syscall.
+2. **The `PI_SANDBOX_ROOT` env contract.** The parentSide sets it
+   from the spawn cwd; the child-side default-export asserts it's
+   present and fails fast otherwise.
+3. **Runtime path-arg auditing.** The default-export attaches
+   `pi.on("tool_call")` and walks args for absolute-path strings,
+   running `validate()` on each. Catches out-of-cwd paths passed to
+   *any* registered tool, including future role components that take
+   a path arg without remembering to call `validate()` themselves.
 
-**Always, on every write-capable sub-pi spawn.** The child's
-`--tools` allowlist should include `sandbox_write,sandbox_edit`
-and exclude the built-in `write` / `edit`, so the only write path
-out of the child is validated.
+cwd-guard registers ZERO LLM-visible tools. The actual `sandbox_*`
+verb surface lives in `sandbox-fs.ts` (see `parts/sandbox-fs.md`).
 
-Exception: a read-only child whose only output channel is
-`emit_summary` (no filesystem contact, no write verbs in the
-allowlist). The recon-style single-spawn topology takes that
-exception.
+## Auto-injection
 
-## Load mechanism
+cwd-guard is the only entry in `pi-sandbox/.pi/lib/policies.ts`'s
+`POLICIES` registry today. `delegate()` and the YAML runner walk
+`POLICIES` and prepend each entry's parentSide to every spawn's
+component list automatically. **You never list `cwd-guard` in a
+phase's `components:` array — the runner rejects it with an
+"auto-injected; do not list" error.**
 
-```ts
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+The defense-in-depth rule "every spawn loads cwd-guard, no
+exceptions" is now enforced by code, not by convention. Even
+no-fs roles (RPC delegators with only `run_deferred_writer,review`)
+get the auditor handler attached, so a bad path arg passed to any
+stub tool is rejected at runtime.
 
-const CWD_GUARD = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "components",
-  "cwd-guard.ts",
-);
-```
+## When to compose
 
-Pass as `-e <CWD_GUARD>` in the child's spawn args. Compute the
-path from the parent extension's own file location so the layout
-ships with the project and doesn't depend on `$HOME` or the user's
-cwd.
+- **Don't list it.** Auto-injected. Listing it in a phase's
+  `components:` is a validation error.
+- **Don't reference it from a YAML spec at all.** `tools` controls
+  whether sandbox-fs is auto-injected (any `sandbox_*` token activates
+  it); `components` lists role-specific stubs (`stage-write`,
+  `emit-summary`, etc).
 
 ## Required `--tools` allowlist contribution
 
-```
-sandbox_write,sandbox_edit
-```
-
-Plus any read-only verbs the child role needs (`ls`, `read`,
-`grep`, `glob`). Do NOT include `write`, `edit`, or `bash` — those
-defeat the sandbox.
+None. cwd-guard registers no LLM-visible tools.
 
 ## Required env contribution
 
-`PI_SANDBOX_ROOT` MUST be set to an absolute path in the child's
-env (typically the parent's `process.cwd()`). cwd-guard throws at
-load time if the env var is missing.
+- `PI_SANDBOX_ROOT` — set automatically by cwd-guard's parentSide
+  (`env: ({cwd}) => ({ PI_SANDBOX_ROOT: cwd })`). The auto-injector
+  merges this into every child env. You don't set it manually for
+  delegate-driven spawns.
 
 ## Parent-side wiring
 
-Adds `cwd-guard.parentSide` to the `delegate()` call's
-`components` array. `delegate()` unions `parentSide.tools`
-(`read, sandbox_write, sandbox_edit, ls, grep`), pushes
-`-e <cwd-guard.ts>` into the child argv, and sets
-`PI_SANDBOX_ROOT: <cwd>` on the child env. cwd-guard is a
-**negative wiring case** for harvest — the child's
-`sandbox_write` / `sandbox_edit` write directly via their own
-`execute` (inside the child process, after path-validating
-against `PI_SANDBOX_ROOT`), so `parentSide.harvest` is a no-op
-and `parentSide.finalize` returns `{}`.
+The auto-injector handles it. For hand-rolled spawns that bypass
+`delegate()` (e.g. `delegated-writer.ts:DelegatorSession`,
+`safe-drafter.ts`, the orchestrator's drafter), import the
+singleton:
 
 ```ts
-import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
-import { delegate } from "../lib/delegate.ts";
+import { cwdGuardSide } from "../components/cwd-guard.ts";
 
-await delegate(ctx, { components: [CWD_GUARD], prompt });
-// confined-drafter shape; pair with STAGE_WRITE for drafter-with-approval.
+const spawnArgs = [...cwdGuardSide.spawnArgs, /* others */];
+const env = { ...process.env, ...cwdGuardSide.env({ cwd: sandboxRoot }) };
 ```
 
-See `_parent-side.ts` for the exact `ParentSide` shape.
+For composer-emitted YAML specs, do nothing — the runner injects.
+
+## Validate() helper
+
+Privileged components that need `node:fs` (sandbox-fs.ts,
+stage-write.ts, emit-agent-spec.ts) import `validate` from
+cwd-guard and call it on every absolute path before the `fs.*`
+call:
+
+```ts
+import { validate } from "./cwd-guard.ts";
+// ...
+const dest = path.resolve(sandboxRoot, relPath);
+validate(dest, sandboxRoot);  // throws on escape
+fs.writeFileSync(dest, content, "utf8");
+```
+
+See `parts/sandbox-fs.md` for the canonical six-tool example;
+`AGENTS.md` "Authoring a new component" describes the pattern in
+detail.
+
+## Auditor blocking semantics
+
+The `pi.on("tool_call")` handler returns `{ block: true, reason }`
+to abort a tool call. The two block conditions:
+
+1. **Tool name doesn't match the allowed-prefix set.** Allowed:
+   `sandbox_*`, `stage_*`, `emit_*`, `run_*`, `review`. Anything
+   else (e.g. a hypothetical `exec_shell`) is blocked at the
+   tool_call event before the body runs.
+2. **An absolute-path arg escapes `PI_SANDBOX_ROOT`.** Walks args
+   recursively; for each string starting with `/`, calls
+   `validate()`. The first violation aborts the call.
+
+This is defense-in-depth. The primary enforcement for sandbox tool
+calls is sandbox-fs's per-body `validate()`. The auditor backstops
+that and covers role-component tools whose authors might forget to
+validate themselves.

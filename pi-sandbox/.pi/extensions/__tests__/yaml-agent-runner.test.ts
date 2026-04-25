@@ -101,6 +101,9 @@ describe("buildBrief", () => {
 
 /* ---------- validateSpec --------------------------------------------- */
 
+// Fixtures: cwd-guard and sandbox-fs are auto-injected by delegate(),
+// so user-listed `components` arrays must NOT include them. The runner
+// rejects either name with an "auto-injected; do not list" error.
 const VALID_SINGLE_SPAWN: Record<string, unknown> = {
   name: "demo",
   slash: "demo",
@@ -109,7 +112,8 @@ const VALID_SINGLE_SPAWN: Record<string, unknown> = {
   phases: [
     {
       name: "draft",
-      components: ["cwd-guard", "stage-write"],
+      components: ["stage-write"],
+      tools: ["sandbox_ls", "stage_write"],
       prompt: "Do {args}",
     },
   ],
@@ -121,10 +125,16 @@ const VALID_SEQUENTIAL: Record<string, unknown> = {
   description: "Sequential scout-then-draft.",
   composition: "sequential-phases-with-brief",
   phases: [
-    { name: "scout", components: ["emit-summary"], prompt: "scout {args}" },
+    {
+      name: "scout",
+      components: ["emit-summary"],
+      tools: ["sandbox_ls", "sandbox_read", "sandbox_grep", "sandbox_glob", "emit_summary"],
+      prompt: "scout {args}",
+    },
     {
       name: "draft",
-      components: ["cwd-guard", "stage-write"],
+      components: ["stage-write"],
+      tools: ["sandbox_ls", "stage_write"],
       prompt: "draft using {brief}",
     },
   ],
@@ -143,7 +153,7 @@ describe("validateSpec — happy paths", () => {
     assert.equal(spec.composition, "sequential-phases-with-brief");
     assert.equal(spec.phases.length, 2);
     assert.deepEqual(spec.phases[0].components, ["emit-summary"]);
-    assert.deepEqual(spec.phases[1].components, ["cwd-guard", "stage-write"]);
+    assert.deepEqual(spec.phases[1].components, ["stage-write"]);
   });
 });
 
@@ -193,8 +203,8 @@ describe("validateSpec — composition / phase rules", () => {
           {
             ...VALID_SINGLE_SPAWN,
             phases: [
-              { components: ["cwd-guard"], prompt: "a" },
-              { components: ["cwd-guard"], prompt: "b" },
+              { components: ["stage-write"], tools: ["stage_write"], prompt: "a" },
+              { components: ["stage-write"], tools: ["stage_write"], prompt: "b" },
             ],
           },
           "x.yml",
@@ -271,11 +281,51 @@ describe("validateSpec — phase shape", () => {
         validateSpec(
           {
             ...VALID_SINGLE_SPAWN,
-            phases: [{ components: ["cwd-guard"], prompt: 42 }],
+            phases: [{ components: ["stage-write"], prompt: 42 }],
           },
           "x.yml",
         ),
       /prompt must be a non-empty string/,
+    );
+  });
+
+  it("rejects components listing 'cwd-guard' (auto-injected)", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_SINGLE_SPAWN,
+            phases: [
+              {
+                components: ["cwd-guard", "stage-write"],
+                tools: ["stage_write"],
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /must not list "cwd-guard" — auto-injected/,
+    );
+  });
+
+  it("rejects components listing 'sandbox-fs' (auto-injected)", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_SINGLE_SPAWN,
+            phases: [
+              {
+                components: ["sandbox-fs", "stage-write"],
+                tools: ["sandbox_ls", "stage_write"],
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /must not list "sandbox-fs" — auto-injected/,
     );
   });
 });
@@ -287,13 +337,11 @@ describe("validateSpec — explicit tools allowlist", () => {
         ...VALID_SINGLE_SPAWN,
         phases: [
           {
-            components: ["cwd-guard", "stage-write"],
+            components: ["stage-write"],
             tools: [
-              "read",
-              "sandbox_write",
-              "sandbox_edit",
-              "ls",
-              "grep",
+              "sandbox_read",
+              "sandbox_ls",
+              "sandbox_grep",
               "stage_write",
             ],
             prompt: "p",
@@ -303,11 +351,9 @@ describe("validateSpec — explicit tools allowlist", () => {
       "x.yml",
     );
     assert.deepEqual(spec.phases[0].tools, [
-      "read",
-      "sandbox_write",
-      "sandbox_edit",
-      "ls",
-      "grep",
+      "sandbox_read",
+      "sandbox_ls",
+      "sandbox_grep",
       "stage_write",
     ]);
   });
@@ -320,9 +366,9 @@ describe("validateSpec — explicit tools allowlist", () => {
             ...VALID_SINGLE_SPAWN,
             phases: [
               {
-                components: ["cwd-guard", "stage-write"],
+                components: ["stage-write"],
                 // missing stage_write
-                tools: ["sandbox_write", "sandbox_edit"],
+                tools: ["sandbox_ls"],
                 prompt: "p",
               },
             ],
@@ -339,7 +385,7 @@ describe("validateSpec — explicit tools allowlist", () => {
         validateSpec(
           {
             ...VALID_SINGLE_SPAWN,
-            phases: [{ components: ["cwd-guard"], tools: [], prompt: "p" }],
+            phases: [{ components: ["stage-write"], tools: [], prompt: "p" }],
           },
           "x.yml",
         ),

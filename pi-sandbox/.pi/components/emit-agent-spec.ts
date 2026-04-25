@@ -26,6 +26,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import { stringify as yamlStringify } from "yaml";
+import { validate } from "./cwd-guard.ts";
 import type {
   EmitAgentSpecResult,
   EmitAgentSpecState,
@@ -34,7 +35,6 @@ import type {
 } from "./_parent-side.ts";
 
 const COMPONENT_NAMES = [
-  "cwd-guard",
   "stage-write",
   "emit-summary",
   "review",
@@ -104,9 +104,14 @@ export default function (pi: ExtensionAPI) {
             StringEnum(COMPONENT_NAMES as unknown as string[]),
             {
               description:
-                "Components the runner imports as `parentSide` and passes " +
-                "to delegate(). cwd-guard is implicit for any write-capable " +
-                "phase but should still be listed explicitly.",
+                "Role-specific components the runner imports as " +
+                "`parentSide` and passes to delegate(). DO NOT include " +
+                "`cwd-guard` or `sandbox-fs` — they are auto-injected by " +
+                "the runner (cwd-guard universally, sandbox-fs whenever " +
+                "any sandbox_* verb appears in `tools`). List only the " +
+                "stubs the role needs (`stage-write`, `emit-summary`, " +
+                "etc.); pair with a `tools` list that picks the sandbox_* " +
+                "verbs the role's child needs.",
               minItems: 1,
               maxItems: 5,
             },
@@ -141,6 +146,12 @@ export default function (pi: ExtensionAPI) {
           `path escapes agents dir: ${params.name} -> ${destReal}`,
         );
       }
+      // Defense-in-depth: route through cwd-guard's canonical
+      // validator (lex + realpath) before mkdir+write. The lex check
+      // above already restricts to AGENTS_DIR; validate() additionally
+      // rejects symlink escapes (e.g. an in-bounds destReal that
+      // resolves outside the sandbox via a symlinked subdir).
+      validate(destReal, ROOT);
       if (fs.existsSync(destReal)) {
         throw new Error(
           `${params.name}.yml already exists. Pick a different name; ` +

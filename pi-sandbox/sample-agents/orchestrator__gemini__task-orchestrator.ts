@@ -37,6 +37,10 @@ const CWD_GUARD = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "cwd-guard.ts",
 );
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
 
 type StagedWrite = {
   relPath: string;
@@ -202,7 +206,7 @@ To create a file, call 'stage_write' with a relative 'path' (inside the project 
 Rules:
 - Only 'stage_write'. No real write tools.
 - Paths relative, inside ${sandboxRoot}, no '..'.
-- Use 'read' / 'ls' on absolute paths under ${sandboxRoot} to explore.
+- Use 'sandbox_read' / 'sandbox_ls' with paths relative to ${sandboxRoot} to explore.
 - Stop after staging everything. Reply DONE.`;
   const prompt = feedback && feedback.length > 0
     ? `${base}\n\nThis is a REVISION pass. Previous attempt had issues. Apply this feedback verbatim:\n${feedback.map(f => `- ${f}`).join("\n")}`
@@ -212,15 +216,20 @@ Rules:
     const child = spawn("pi", [
       "--mode", "json",
       "-e", CWD_GUARD,
+      "-e", SANDBOX_FS,
       "-e", STAGE_WRITE_TOOL,
       "-p", prompt,
       "--no-extensions", "--no-session", "--thinking", "off",
-      "--tools", "stage_write,ls,read",
+      "--tools", "stage_write,sandbox_ls,sandbox_read",
       "--provider", "openrouter", "--model", taskModel,
     ], {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: sandboxRoot,
-      env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot }
+      env: {
+        ...process.env,
+        PI_SANDBOX_ROOT: sandboxRoot,
+        PI_SANDBOX_VERBS: "sandbox_ls,sandbox_read",
+      },
     });
 
     let buffer = "";
@@ -277,6 +286,12 @@ class DelegatorSession {
   private closed = false;
 
   constructor(leadModel: string, sandboxRoot: string) {
+    // Delegator does no fs work — its only tools are the RPC stubs
+    // run_deferred_writer + review. cwd-guard is loaded as
+    // defense-in-depth: every sub-pi spawn in this project loads
+    // cwd-guard, period. sandbox-fs is NOT loaded because there are
+    // no sandbox_* verbs in --tools; the delegator's tool surface
+    // stays exactly run_deferred_writer + review.
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",
@@ -289,7 +304,10 @@ class DelegatorSession {
     ], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: sandboxRoot,
-      env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot }
+      env: {
+        ...process.env,
+        PI_SANDBOX_ROOT: sandboxRoot,
+      },
     });
 
     this.child.stdout!.on("data", (d) => this.onStdout(d));

@@ -19,16 +19,26 @@ The child remains read-only.
 
 In load order on the child:
 
-1. `emit-summary.ts` — the stub the child calls with `{title, body}`
+1. `cwd-guard.ts` — universal cwd policy. Sets `PI_SANDBOX_ROOT`
+   from the spawn cwd, exports `validate()`, and attaches a
+   `pi.on("tool_call")` auditor that walks args for absolute-path
+   strings and rejects any that escape the sandbox. Required on
+   every sub-pi spawn, including recon, even though it registers
+   zero LLM-visible tools.
+2. `sandbox-fs.ts` — the path-validated fs tool surface. Registers
+   the read verbs (`sandbox_read`, `sandbox_ls`, `sandbox_grep`,
+   `sandbox_glob`) when their tokens appear in `PI_SANDBOX_VERBS`.
+   The pi built-ins `read`/`ls`/`grep`/`glob` are forbidden across
+   the project, so sandbox-fs is mandatory whenever the child needs
+   to read the filesystem. The parent passes `PI_SANDBOX_VERBS`
+   listing only the read verbs (no `sandbox_write`/`sandbox_edit`),
+   so sandbox-fs registers no write channel and the recon child
+   remains read-only by construction.
+3. `emit-summary.ts` — the stub the child calls with `{title, body}`
    to hand a structured summary back to the parent. The child MUST
    NOT produce summaries as free-form assistant text — the parent
    harvests `emit_summary` calls from the NDJSON event stream and
    has no robust way to use text-in-message.
-
-`cwd-guard.ts` is deliberately **not** loaded. Recon children have
-no write channel at all; the `--tools` allowlist is read-only plus
-`emit_summary` (the stub has no filesystem contact). Adding
-cwd-guard would only pollute the tool surface.
 
 The parent's role:
 
@@ -44,12 +54,13 @@ The parent's role:
 
 ## `--tools` allowlist
 
-Exactly read-only verbs plus the emit stub:
-`ls,read,grep,glob,emit_summary`.
+Exactly the sandbox read verbs plus the emit stub:
+`sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob,emit_summary`.
 
-Forbidden: `write`, `edit`, `stage_write`, `bash`. The allowlist
-is what makes this pattern "recon" — anything that can mutate
-state disqualifies it.
+Forbidden: every built-in fs verb (`read`, `ls`, `grep`, `glob`,
+`write`, `edit`), `bash`, and `stage_write`. The allowlist is what
+makes this pattern "recon" — anything that can mutate state
+disqualifies it.
 
 ## Model tier
 
@@ -78,6 +89,15 @@ const EMIT_SUMMARY = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "emit-summary.ts",
 );
+const CWD_GUARD = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "cwd-guard.ts",
+);
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
+const RECON_VERBS = "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("TODO:CMD_NAME", {
@@ -93,8 +113,12 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("TASK_MODEL env var not set. Source models.env.", "error");
         return;
       }
-      if (!fs.existsSync(EMIT_SUMMARY)) {
-        ctx.ui.notify(`emit-summary missing at ${EMIT_SUMMARY}`, "error");
+      if (
+        !fs.existsSync(EMIT_SUMMARY) ||
+        !fs.existsSync(CWD_GUARD) ||
+        !fs.existsSync(SANDBOX_FS)
+      ) {
+        ctx.ui.notify(`recon components missing; check pi-sandbox/.pi/components/`, "error");
         return;
       }
       const sandboxRoot = path.resolve(process.cwd());
@@ -106,8 +130,9 @@ export default function (pi: ExtensionAPI) {
 
       const agentPrompt =
         `You are a RECON AGENT. Survey ${targetAbs} and produce bounded ` +
-        `summaries. Use only 'ls', 'read', 'grep', 'glob' (no write, no edit, ` +
-        `no bash). Instead of producing a final assistant message, call ` +
+        `summaries. Use only 'sandbox_ls', 'sandbox_read', 'sandbox_grep', ` +
+        `'sandbox_glob' (no write, no edit, no bash). Instead of producing a ` +
+        `final assistant message, call ` +
         `emit_summary({title, body}) with a short title and a body <= ${SUMMARY_BYTE_CAP} ` +
         `bytes naming the files/directories you actually saw. Call it once for ` +
         `the overall directory survey; call it a second time only if you have ` +
@@ -118,9 +143,11 @@ export default function (pi: ExtensionAPI) {
       const child = spawn(
         "pi",
         [
+          "-e", CWD_GUARD,
+          "-e", SANDBOX_FS,
           "-e", EMIT_SUMMARY,
           "--mode", "json",
-          "--tools", "ls,read,grep,glob,emit_summary",
+          "--tools", `${RECON_VERBS},emit_summary`,
           "--no-extensions",
           "--provider", "openrouter",
           "--model", MODEL,
@@ -128,7 +155,15 @@ export default function (pi: ExtensionAPI) {
           "--thinking", "off",
           "-p", agentPrompt,
         ],
-        { stdio: ["ignore", "pipe", "pipe"], cwd: sandboxRoot },
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          cwd: sandboxRoot,
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: RECON_VERBS,
+          },
+        },
       );
 
       let buffer = "";
@@ -211,11 +246,18 @@ contains each of these anchors:
 
 - `registerCommand("TODO:CMD_NAME"` — replaced with the chosen
   slash command name.
-- `-e <abs path ending in components/emit-summary.ts>` on the spawn
-  args. Resolve the path relative to the parent extension's own
+- `-e <abs path ending in components/cwd-guard.ts>` AND
+  `-e <abs path ending in components/sandbox-fs.ts>` AND
+  `-e <abs path ending in components/emit-summary.ts>` on the spawn
+  args. Resolve paths relative to the parent extension's own
   `import.meta.url`, NOT from `$HOME` or cwd.
-- `"--tools", "ls,read,grep,glob,emit_summary"` — read-only verbs
-  plus the emit stub. No `write`, `edit`, `stage_write`, or `bash`.
+- `"--tools", "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob,emit_summary"`
+  — sandbox read verbs plus the emit stub. No built-in
+  `read`/`ls`/`grep`/`glob`/`write`/`edit`, no `stage_write`, no
+  `sandbox_write`, no `sandbox_edit`, no `bash`.
+- Child env includes `PI_SANDBOX_ROOT: sandboxRoot` AND
+  `PI_SANDBOX_VERBS: "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob"`
+  (the read-only subset; cwd-guard registers no write tools).
 - `"--no-extensions"` on the spawn args.
 - NDJSON parser matches on
   `e.type === "tool_execution_start" && e.toolName === "emit_summary"`
@@ -227,6 +269,5 @@ contains each of these anchors:
   (or `.slice(0, SUMMARY_BYTE_CAP)` on each body).
 - `fs.writeFileSync(outPath, combined, "utf8")` — parent writes the
   summary (not the child). Path scoped to `.pi/scratch/`.
-- NO `-e <…stage-write…>`, NO `-e <…cwd-guard…>`. Recon loads only
-  `emit-summary.ts`.
+- NO `-e <…stage-write…>`. Recon's only output channel is `emit_summary`.
 - NO `ctx.ui.confirm` call. Recon has no side effect to gate.

@@ -50,16 +50,18 @@ or the user's cwd.
 
 ## Required `--tools` allowlist contribution
 
-Include `emit_summary` plus whatever read-only verbs the child
-role needs. For recon:
+Include `emit_summary` plus whatever sandbox read verbs the child
+role needs (paired with cwd-guard via `makeCwdGuard({verbs:[...]})`
+on the parent side). For recon:
 
 ```
-ls,read,grep,glob,emit_summary
+sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob,emit_summary
 ```
 
-Never add `write`, `edit`, `stage_write`, or `bash` in a
-composition that uses `emit_summary` as its primary output channel
-— they undermine the "structured-output-only" contract.
+Never add built-in `read`/`ls`/`grep`/`glob`/`write`/`edit` (all
+forbidden), `bash`, `stage_write`, `sandbox_write`, or `sandbox_edit`
+in a composition that uses `emit_summary` as its primary output
+channel — they undermine the "structured-output-only" contract.
 
 ## Parent-side wiring
 

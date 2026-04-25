@@ -71,8 +71,10 @@ just before each `delegate()` call.
 
 ## Required `--tools` allowlist contribution
 
-`emit_agent_spec`. The composer harness adds `read,ls,grep`
-alongside; no write verbs are exposed.
+`emit_agent_spec`. The composer harness pairs this with cwd-guard
+loaded with `verbs: ["sandbox_read", "sandbox_ls", "sandbox_grep"]`
+so the composer can introspect the project before emitting the
+spec; no write verbs are exposed.
 
 ## Parent-side wiring
 

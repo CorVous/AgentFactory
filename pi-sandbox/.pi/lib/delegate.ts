@@ -32,6 +32,7 @@ import type {
   StagedWritePlan,
   UiCtx,
 } from "../components/_parent-side.ts";
+import { augmentComponents } from "./auto-inject.ts";
 
 // Matches the orchestrator's drafter timeout from the pre-delegate era
 // (`delegated-writer.ts::DRAFTER_TIMEOUT_MS`). The delegated-writer's
@@ -41,7 +42,13 @@ import type {
 const PHASE_TIMEOUT_MS = 180_000;
 const MAX_FILES_PROMOTABLE = 50;
 const PREVIEW_LINES_PER_FILE = 20;
-const FORBIDDEN_TOOLS = new Set(["write", "edit", "bash"]);
+// Built-in fs verbs the child must never see — cwd-guard's path-validated
+// `sandbox_*` family is the only fs channel allowed. `bash` is forbidden
+// because we have no sandboxed equivalent yet.
+const FORBIDDEN_TOOLS = new Set([
+  "write", "edit", "bash",
+  "read", "ls", "grep", "glob",
+]);
 
 export interface DelegateOpts {
   components: ReadonlyArray<ParentSide<any, unknown>>;
@@ -91,15 +98,13 @@ export async function delegate(
   opts: DelegateOpts,
 ): Promise<DelegateResult> {
   const cwd = process.cwd();
-  const names = new Set(opts.components.map((c) => c.name));
 
-  const model = resolveModel(ctx, opts, names);
-  if (!model) {
-    return emptyResult("no model resolved");
-  }
-
-  const toolsCsv = unionTools(opts);
-  const forbiddenHits = toolsCsv.split(",").filter((t) => FORBIDDEN_TOOLS.has(t));
+  // Compute the final --tools token set up front: needed both for the
+  // child --tools arg AND to drive auto-injection (sandbox-fs activates
+  // iff a sandbox_* token is in the set).
+  const tokens = unionToolsAsSet(opts);
+  const toolsCsv = [...tokens].join(",");
+  const forbiddenHits = [...tokens].filter((t) => FORBIDDEN_TOOLS.has(t));
   if (forbiddenHits.length > 0) {
     ctx.ui.notify(
       `delegate(): forbidden tool(s) in component union: ${forbiddenHits.join(",")}`,
@@ -108,14 +113,32 @@ export async function delegate(
     return emptyResult(`forbidden tools: ${forbiddenHits.join(",")}`);
   }
 
+  // Auto-inject every entry in POLICIES (universal) + every TOOL_PROVIDER
+  // whose ownedTokens intersect `tokens`. Throws if any user-supplied
+  // component shares a name with an auto-injected one, or if any -e path
+  // fails the component-policy checks (path allowlist + import scan).
+  let augmented: ReadonlyArray<ParentSide<any, unknown>>;
+  try {
+    augmented = augmentComponents(opts.components, tokens);
+  } catch (e) {
+    ctx.ui.notify(`delegate(): ${(e as Error).message}`, "error");
+    return emptyResult((e as Error).message);
+  }
+
+  const names = new Set(augmented.map((c) => c.name));
+  const model = resolveModel(ctx, opts, names);
+  if (!model) {
+    return emptyResult("no model resolved");
+  }
+
   const spawnArgs: string[] = [];
-  for (const c of opts.components) spawnArgs.push(...c.spawnArgs);
+  for (const c of augmented) spawnArgs.push(...c.spawnArgs);
 
   const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const c of opts.components) Object.assign(env, c.env({ cwd }));
+  for (const c of augmented) Object.assign(env, c.env({ cwd }));
 
   const states = new Map<ParentSide, unknown>();
-  for (const c of opts.components) states.set(c, c.initialState());
+  for (const c of augmented) states.set(c, c.initialState());
 
   ctx.ui.notify(
     `delegate → spawn pi (model=${model}, tools=${toolsCsv}, components=${[...names].join(",")}${opts.skill ? `, skill=${opts.skill}` : ""})`,
@@ -137,13 +160,13 @@ export async function delegate(
     ],
     cwd,
     env,
-    components: opts.components,
+    components: augmented,
     states,
   });
 
   // Finalize every component; aggregate by name.
   const byComponent = new Map<string, unknown>();
-  for (const c of opts.components) {
+  for (const c of augmented) {
     const r = await c.finalize(states.get(c) as never, { ctx, sandboxRoot: cwd });
     byComponent.set(c.name, r);
   }
@@ -210,14 +233,14 @@ function resolveModel(
   return value;
 }
 
-function unionTools(opts: DelegateOpts): string {
+function unionToolsAsSet(opts: DelegateOpts): Set<string> {
   if (opts.toolsOverride && opts.toolsOverride.length > 0) {
-    return [...opts.toolsOverride].join(",");
+    return new Set(opts.toolsOverride);
   }
   const set = new Set<string>();
   for (const c of opts.components) for (const t of c.tools) set.add(t);
   for (const t of opts.extraTools ?? []) set.add(t);
-  return [...set].join(",");
+  return set;
 }
 
 interface ChildOutcome {
