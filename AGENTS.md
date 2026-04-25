@@ -115,11 +115,20 @@ cwd. The shared `pi-sandbox/.pi/{extensions,components}/` is never
 touched, so concurrent invocations don't race.
 
 ```sh
-# Composer (YAML output, write-restricted spawn):
+# Generic launcher — dispatch any YAML-defined agent by its filename
+# stem; forwards to `pi -p "/<slash> <args>"` from the sandbox cwd.
+# Works for agent-composer and any agent the composer emits. Run with
+# no args to list available agents.
+npm run agent
+npm run agent -- agent-composer "Drafter that stages writes for approval"
+
+# Composer-specific scripts (kept as bootstrap-recovery path — work
+# even if the YAML or runner is broken):
 npm run agent-composer -- -p "Drafter that stages writes for approval"
 npm run agent-composer:i                                 # interactive
 
-# Assembler / Builder (TS output via agent-maker):
+# Assembler / Builder (TS output via agent-maker, separate path
+# because of per-run isolated cwd):
 # One-shot (task-driven, auto-graded):
 npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 --grade
 
