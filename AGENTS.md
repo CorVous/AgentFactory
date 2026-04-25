@@ -74,11 +74,15 @@ vs. author-TS":
   reads `.pi/agents/*.yml` and registers a slash command per spec,
   dispatching each phase via `delegate()`. Covers `single-spawn`
   and `sequential-phases-with-brief`; emits GAP for the
-  orchestrator topology. Driven by `npm run agent-composer` /
-  `:i`, which runs pi with the composer skill loaded and a tool
-  allowlist that exposes ONLY `read,ls,grep,emit_agent_spec` — no
-  write verbs, so the model cannot author code, only declare a
-  spec.
+  orchestrator topology. The composer is itself self-hosted as
+  `pi-sandbox/.pi/agents/agent-composer.yml`, so any `npm run pi`
+  session has `/agent-composer <task>` available alongside the
+  script form `npm run agent-composer -- -p "<task>"`. Both load
+  the composer skill with a tool allowlist that exposes ONLY
+  `read,ls,grep,emit_agent_spec` — no write verbs, so the model
+  cannot author code, only declare a spec. The script form stays
+  in place as the bootstrap-recovery path (you can't compose with
+  a broken composer).
 - **`pi-agent-assembler`** — composes already-tested parts from
   `pi-sandbox/.pi/components/` (cwd-guard, stage-write, review)
   into agents matching one of four patterns: `recon`,

@@ -168,3 +168,15 @@ export interface DispatchRequestsState {
 export interface DispatchRequestsResult {
   tasks: string[];
 }
+
+// emit-agent-spec — child writes a YAML spec via the parent-loaded
+// `emit_agent_spec` tool; the parent harvests success metadata for logs
+// only (the file write is the side effect, not the harvested payload).
+export interface EmitAgentSpecState {
+  wrote: boolean;
+  name?: string;
+}
+export interface EmitAgentSpecResult {
+  wrote: boolean;
+  name?: string;
+}
