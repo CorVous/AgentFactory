@@ -39,6 +39,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
 AGENTS_DIR="$SANDBOX/.pi/agents"
+RUNNER_PATH="$SANDBOX/.pi/extensions/yaml-agent-runner.ts"
 
 usage() { sed -n '2,32p' "$0"; }
 
@@ -122,15 +123,18 @@ if [[ -z "${TASK_MODEL:-}" && -f "$REPO/models.env" ]]; then
 fi
 
 if [[ $INTERACTIVE -eq 1 && -z "$NAME" ]]; then
-  # No name → just open pi from the sandbox cwd. Auto-discovered
-  # yaml-agent-runner still registers every spec's slash command, so
-  # the user can type `/<slash> <args>` at the prompt. `exec` replaces
-  # this script's process with pi.
+  # No name → open pi from the sandbox cwd with only yaml-agent-runner
+  # explicitly loaded. `--no-extensions` suppresses auto-discovery of
+  # the legacy deferred-writer / delegated-writer extensions; `-e`
+  # re-adds the runner so the YAML-defined slash commands are still
+  # available. `exec` replaces this script's process with pi.
   cd "$SANDBOX"
   exec env \
     PI_SKIP_UPDATE_CHECK=1 \
     "$REPO/node_modules/.bin/pi" \
       --no-context-files \
+      --no-extensions \
+      -e "$RUNNER_PATH" \
       --provider openrouter
 fi
 
@@ -187,12 +191,16 @@ if [[ $INTERACTIVE -eq 1 ]]; then
   [[ -n "$TOOLS" ]] && PI_TOOL_ARGS=(--tools "$TOOLS")
 
   echo "[run-agent] Interactive /$SLASH (skill=${SKILL:-none}, tools=${TOOLS:-default}, components=${COMPONENTS:-none})" >&2
+  # --no-extensions: the user chats with the agent's LLM directly, so
+  # auto-discovered slashes (yaml-agent-runner, deferred-writer, etc.)
+  # are unwanted. The agent's own surface comes from --skill, the -e'd
+  # components, and the --tools allowlist below.
   cd "$SANDBOX"
   exec env \
     PI_SKIP_UPDATE_CHECK=1 \
     PI_SANDBOX_ROOT="$SANDBOX" \
     "$REPO/node_modules/.bin/pi" \
-      --no-context-files --no-session \
+      --no-context-files --no-session --no-extensions \
       --provider openrouter \
       "${PI_SKILL_ARGS[@]}" \
       "${PI_EXT_ARGS[@]}" \
@@ -208,10 +216,16 @@ fi
 
 (
   cd "$SANDBOX"
+  # --no-extensions + explicit -e on yaml-agent-runner: the parent only
+  # needs the runner to recognize the slash and dispatch via delegate;
+  # the actual worker is the dispatched child (which gets its own
+  # --no-extensions from delegate.ts). Suppresses unrelated auto-loaded
+  # extensions in the parent.
   exec env \
     PI_SKIP_UPDATE_CHECK=1 \
     "$REPO/node_modules/.bin/pi" \
-      --no-context-files --no-session \
+      --no-context-files --no-session --no-extensions \
+      -e "$RUNNER_PATH" \
       --mode json \
       -p "$PROMPT"
 )
