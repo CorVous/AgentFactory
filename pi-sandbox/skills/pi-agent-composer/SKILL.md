@@ -69,7 +69,13 @@ above — `delegate()` and the YAML runner pick it up automatically.
 The composer's only write tool is `emit_agent_spec` (loaded into
 the parent session via `pi -e .pi/components/emit-agent-spec.ts`).
 It validates the spec against composition rules and writes
-`.pi/agents/<name>.yml`. Detail in `parts/emit-agent-spec.md`.
+`.pi/agents/<name>.yml` after a **user approval gate** —
+`ctx.ui.confirm` shows the full YAML to the user; on deny the
+call returns `isError: true, details.cancelled: true` and nothing
+is written. Treat denial as a request for revision: ask the user
+what they want changed and re-emit with their reply baked in
+(do NOT silently retry with a different name). Detail in
+`parts/emit-agent-spec.md`.
 
 ## Compositions catalog
 
