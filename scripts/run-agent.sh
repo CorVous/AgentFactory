@@ -164,12 +164,15 @@ echo "[run-agent] /$SLASH (skill=${SKILL:-none}, tools=${TOOLS:-default}, compon
 # are unwanted. The agent's surface comes from --skill, the -e'd
 # components, and the --tools allowlist below.
 cd "$SANDBOX"
+# `${arr[@]+"${arr[@]}"}` expands to the array's contents, or to nothing
+# when the array is empty. Plain `"${arr[@]}"` errors under `set -u` on
+# bash 3.2 (macOS default) when the array has no elements.
 exec env \
   PI_SKIP_UPDATE_CHECK=1 \
   PI_SANDBOX_ROOT="$SANDBOX" \
   "$REPO/node_modules/.bin/pi" \
     --no-context-files --no-session --no-extensions \
     --provider openrouter \
-    "${PI_SKILL_ARGS[@]}" \
-    "${PI_EXT_ARGS[@]}" \
-    "${PI_TOOL_ARGS[@]}"
+    ${PI_SKILL_ARGS[@]+"${PI_SKILL_ARGS[@]}"} \
+    ${PI_EXT_ARGS[@]+"${PI_EXT_ARGS[@]}"} \
+    ${PI_TOOL_ARGS[@]+"${PI_TOOL_ARGS[@]}"}
