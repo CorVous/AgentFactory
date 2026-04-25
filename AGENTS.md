@@ -121,6 +121,8 @@ touched, so concurrent invocations don't race.
 # no args to list available agents.
 npm run agent
 npm run agent -- agent-composer "Drafter that stages writes for approval"
+npm run agent:i                                  # plain pi REPL in sandbox
+npm run agent:i -- agent-composer                # REPL + slash hint
 
 # Composer-specific scripts (kept as bootstrap-recovery path — work
 # even if the YAML or runner is broken):
