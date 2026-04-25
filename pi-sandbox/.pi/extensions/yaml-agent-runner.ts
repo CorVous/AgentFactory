@@ -22,7 +22,6 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { parse as yamlParse } from "yaml";
 import { parentSide as CWD_GUARD } from "../components/cwd-guard.ts";
-import { parentSide as EMIT_AGENT_SPEC } from "../components/emit-agent-spec.ts";
 import { parentSide as EMIT_SUMMARY } from "../components/emit-summary.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
 import type { EmitSummaryResult, ParentSide } from "../components/_parent-side.ts";
@@ -33,26 +32,19 @@ const MAX_BRIEF_BYTES = 16_000;
 
 // Static name → parentSide map. Kept to the components a single-spawn or
 // sequential-phases-with-brief runner can actually drive: cwd-guard,
-// stage-write, emit-summary, emit-agent-spec. Adding `review` /
-// `run-deferred-writer` here would not make them work — `delegate()`
-// doesn't manage the RPC loop they require — so they are rejected at
-// validation time instead (see `validateSpec`).
+// stage-write, emit-summary. Adding `review` / `run-deferred-writer`
+// here would not make them work — `delegate()` doesn't manage the RPC
+// loop they require — so they are rejected at validation time instead
+// (see `validateSpec`).
 const COMPONENTS: Record<string, ParentSide<any, unknown>> = {
   "cwd-guard": CWD_GUARD,
   "stage-write": STAGE_WRITE,
   "emit-summary": EMIT_SUMMARY,
-  "emit-agent-spec": EMIT_AGENT_SPEC,
 };
 
 interface PhaseSpec {
   name?: string;
   components: string[];
-  /** Optional explicit child --tools allowlist for this phase. When set,
-   *  becomes the child's tool surface verbatim (passed through delegate's
-   *  `toolsOverride`). When omitted, delegate unions the components'
-   *  declared tools. The validator requires every component's declared
-   *  tools to be present in this list when set. */
-  tools?: string[];
   prompt: string;
 }
 
@@ -61,10 +53,6 @@ interface AgentSpec {
   slash: string;
   description: string;
   composition: "single-spawn" | "sequential-phases-with-brief";
-  /** Optional skill path; passed as `--skill <path>` (with `--no-skills`
-   *  for override semantics) on every phase's child spawn. Resolved
-   *  relative to pi's cwd (the sandbox root) at registration time. */
-  skill?: string;
   phases: PhaseSpec[];
 }
 
@@ -107,8 +95,6 @@ export default function (pi: ExtensionAPI) {
           await delegate(ctx, {
             components: phase.components.map((n) => COMPONENTS[n]),
             prompt: substitute(phase.prompt, baseSubs),
-            skill: spec.skill,
-            toolsOverride: phase.tools,
           });
           return;
         }
@@ -119,8 +105,6 @@ export default function (pi: ExtensionAPI) {
         const scoutResult = await delegate(ctx, {
           components: scoutPhase.components.map((n) => COMPONENTS[n]),
           prompt: substitute(scoutPhase.prompt, baseSubs),
-          skill: spec.skill,
-          toolsOverride: scoutPhase.tools,
         });
         const summaries =
           (scoutResult.byComponent.get("emit-summary") as
@@ -146,8 +130,6 @@ export default function (pi: ExtensionAPI) {
         await delegate(ctx, {
           components: draftPhase.components.map((n) => COMPONENTS[n]),
           prompt: substitute(draftPhase.prompt, { ...baseSubs, brief }),
-          skill: spec.skill,
-          toolsOverride: draftPhase.tools,
         });
       },
     });
@@ -219,41 +201,9 @@ function validateSpec(raw: unknown, file: string): AgentSpec {
       throw new Error(`${file}: phases[${i}].prompt must be a non-empty string`);
     }
     const nameRaw = pr.name;
-
-    // Optional explicit tools allowlist. When set, must be a non-empty
-    // string array AND must cover every tool each declared component
-    // contributes — otherwise a typo silently strips a component's
-    // ability to do its job.
-    let tools: string[] | undefined;
-    if (pr.tools !== undefined) {
-      if (
-        !Array.isArray(pr.tools) ||
-        pr.tools.length === 0 ||
-        !pr.tools.every((t) => typeof t === "string" && t.length > 0)
-      ) {
-        throw new Error(
-          `${file}: phases[${i}].tools must be a non-empty array of strings`,
-        );
-      }
-      tools = pr.tools as string[];
-      const declared = new Set<string>();
-      for (const c of components as string[]) {
-        for (const t of COMPONENTS[c].tools) declared.add(t);
-      }
-      const missing = [...declared].filter((t) => !tools!.includes(t));
-      if (missing.length > 0) {
-        throw new Error(
-          `${file}: phases[${i}].tools is missing tools required by ` +
-            `declared components: ${missing.join(", ")}. Either add them ` +
-            `to the explicit list or drop the offending components.`,
-        );
-      }
-    }
-
     return {
       name: typeof nameRaw === "string" ? nameRaw : undefined,
       components: components as string[],
-      tools,
       prompt: promptRaw,
     };
   });
@@ -273,27 +223,7 @@ function validateSpec(raw: unknown, file: string): AgentSpec {
     );
   }
 
-  // Optional skill — string path resolved against pi's cwd (sandbox root).
-  // Required to be an existing directory if set.
-  let skill: string | undefined;
-  if (r.skill !== undefined) {
-    if (typeof r.skill !== "string" || r.skill.length === 0) {
-      throw new Error(`${file}: skill must be a non-empty string when set`);
-    }
-    const resolved = path.resolve(process.cwd(), r.skill);
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(resolved);
-    } catch {
-      throw new Error(`${file}: skill path does not exist: ${resolved}`);
-    }
-    if (!stat.isDirectory()) {
-      throw new Error(`${file}: skill path is not a directory: ${resolved}`);
-    }
-    skill = resolved;
-  }
-
-  return { name, slash, description, composition, skill, phases };
+  return { name, slash, description, composition, phases };
 }
 
 function expectString(

@@ -59,16 +59,6 @@ export interface DelegateOpts {
    *  its drafter spawns because its LLM reviewer is the gate, not the
    *  human confirm prompt. */
   autoPromote?: boolean;
-  /** Path passed as `--skill <path>` to the child pi. When set, also
-   *  passes `--no-skills` (override pattern proven in
-   *  `scripts/agent-composer.sh:92,110`) so the child loads only this
-   *  skill — independent of the always-on `--no-extensions`. */
-  skill?: string;
-  /** Override the union-of-components tool list. When set, becomes the
-   *  child's --tools allowlist verbatim. Caller is responsible for
-   *  ensuring every tool the components need is present. The runner
-   *  validates this for YAML-driven agents; direct callers should too. */
-  toolsOverride?: string[];
 }
 
 export interface DelegateResult {
@@ -118,7 +108,7 @@ export async function delegate(
   for (const c of opts.components) states.set(c, c.initialState());
 
   ctx.ui.notify(
-    `delegate → spawn pi (model=${model}, tools=${toolsCsv}, components=${[...names].join(",")}${opts.skill ? `, skill=${opts.skill}` : ""})`,
+    `delegate → spawn pi (model=${model}, tools=${toolsCsv}, components=${[...names].join(",")})`,
     "info",
   );
 
@@ -131,7 +121,6 @@ export async function delegate(
       "--provider", "openrouter",
       "--model", model,
       "--tools", toolsCsv,
-      ...(opts.skill ? ["--no-skills", "--skill", opts.skill] : []),
       ...spawnArgs,
       "-p", opts.prompt,
     ],
@@ -211,9 +200,6 @@ function resolveModel(
 }
 
 function unionTools(opts: DelegateOpts): string {
-  if (opts.toolsOverride && opts.toolsOverride.length > 0) {
-    return [...opts.toolsOverride].join(",");
-  }
   const set = new Set<string>();
   for (const c of opts.components) for (const t of c.tools) set.add(t);
   for (const t of opts.extraTools ?? []) set.add(t);
