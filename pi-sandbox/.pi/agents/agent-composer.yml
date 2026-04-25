@@ -2,7 +2,11 @@ name: agent-composer
 slash: agent-composer
 description: Compose a pi agent by emitting a YAML spec via the pi-agent-composer skill.
 composition: single-spawn
-skill: skills/pi-agent-composer
+# No `skill:` here — the composer skill is bundled by the
+# `emit-agent-spec` component itself (it injects the skill catalog via
+# `before_agent_start`). The `skill:` field is still honored by the
+# runner / launcher / delegate; future agents that don't bundle a skill
+# in their components can opt in via this field.
 phases:
   - name: compose
     components:

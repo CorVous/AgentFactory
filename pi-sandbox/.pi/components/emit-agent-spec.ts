@@ -1,29 +1,40 @@
 // emit-agent-spec.ts — output channel for the pi-agent-composer skill.
 //
 // Loaded into a pi session via `pi -e <path>`. The default-exported
-// factory registers `emit_agent_spec`, whose `execute()` writes a YAML
-// spec to `<PI_SANDBOX_ROOT>/.pi/agents/<spec.name>.yml`. The composer's
-// tool allowlist exposes ONLY `emit_agent_spec` plus read verbs, so the
-// LLM has no other write channel; the tool's TypeBox schema IS the YAML
-// spec shape, eliminating manual YAML formatting by the model.
+// factory does two things on every load:
+//  1. Registers `emit_agent_spec`, whose `execute()` writes a YAML spec
+//     to `<PI_SANDBOX_ROOT>/.pi/agents/<spec.name>.yml`. The tool's
+//     TypeBox schema IS the YAML spec shape, eliminating manual YAML
+//     formatting by the model.
+//  2. Subscribes to `before_agent_start` and injects the composer
+//     skill catalog into the system prompt — the same XML
+//     `<available_skills>` block pi would generate from
+//     `--skill skills/pi-agent-composer`. This means loading this
+//     extension is sufficient to "be" the composer; callers no longer
+//     need to pass `--skill` separately. Same path runs in interactive
+//     parents and delegate-spawned children, since `before_agent_start`
+//     fires in every pi mode (agent-session.js:761).
 //
 // At runtime the file is read back by `.pi/extensions/yaml-agent-runner.ts`
 // (auto-discovered when pi runs in `pi-sandbox/`), which globs
 // `.pi/agents/*.yml` and registers one slash command per spec.
 //
 // Also exports a `parentSide` so `delegate()` can drive a child that
-// needs `emit_agent_spec`. This is what lets the composer self-host as
-// `.pi/agents/agent-composer.yml` — the runner imports this parentSide,
-// `delegate()` spawns a child pi with `-e <this file>`, and the child
-// LLM calls the tool whose `execute()` writes the YAML on disk. The
-// parent harvests `tool_execution_start` for logging only; the actual
-// success signal is the file existing on disk after the child exits.
+// needs `emit_agent_spec`. The runner imports this parentSide, then
+// `delegate()` spawns a child pi with `-e <this file>` — the child LLM
+// calls the tool whose `execute()` writes the YAML on disk. The parent
+// harvests `tool_execution_start` for logging only; the actual success
+// signal is the file existing on disk after the child exits.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
+import {
+  formatSkillsForPrompt,
+  loadSkillsFromDir,
+} from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { stringify as yamlStringify } from "yaml";
 import type {
@@ -50,6 +61,26 @@ const COMPOSITIONS = [
 const NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const SLASH_RE = /^[a-z][a-z0-9-]{1,40}$/;
 
+// Compute the composer skill catalog block once at module load. Same
+// shape pi produces for `--skill <dir>`: an `<available_skills>` XML
+// block listing the skill name, description, and on-disk location.
+// LLM reads SKILL.md (and subfiles) on demand via its `read` tool.
+const SKILL_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "skills",
+  "pi-agent-composer",
+);
+const SKILL_BLOCK = (() => {
+  if (!fs.existsSync(SKILL_DIR)) return "";
+  const { skills } = loadSkillsFromDir({
+    dir: SKILL_DIR,
+    source: "extension:emit-agent-spec",
+  });
+  return formatSkillsForPrompt(skills);
+})();
+
 export default function (pi: ExtensionAPI) {
   const ROOT = process.env.PI_SANDBOX_ROOT;
   if (!ROOT) {
@@ -57,6 +88,15 @@ export default function (pi: ExtensionAPI) {
   }
   const ROOT_ABS = path.resolve(ROOT);
   const AGENTS_DIR = path.join(ROOT_ABS, ".pi", "agents");
+
+  if (SKILL_BLOCK) {
+    // Append the composer skill catalog to every turn's system prompt.
+    // Fires in interactive REPL parents and in delegate-spawned `-p`
+    // children alike (agent-session.js:761 emits unconditionally).
+    pi.on("before_agent_start", (event) => ({
+      systemPrompt: event.systemPrompt + SKILL_BLOCK,
+    }));
+  }
 
   pi.registerTool({
     name: "emit_agent_spec",
