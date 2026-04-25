@@ -375,6 +375,135 @@ function escapeRe(s: string): string {
 }
 
 /**
+ * Shape of a generated extension's use of `pi-sandbox/.pi/lib/delegate.ts`
+ * (Phase 2.2 onward). `delegateHandles` is the set of components whose
+ * rail checks can be trusted to `delegate()`'s implementation rather
+ * than to inline extension code — every component that is both imported
+ * (from `../components/<name>.ts`) and covered by the `delegate()` call
+ * site falls into this set. Review + run-deferred-writer are typically
+ * *not* in this set because the orchestrator's RPC loop imports their
+ * harvesters but drives its own spawn / event loop.
+ */
+export interface DelegateUsage {
+  usesDelegate: boolean;
+  importedComponents: Set<string>;
+  delegateHandles: Set<string>;
+}
+
+/**
+ * Detect whether the extension calls `delegate(...)` from the shared
+ * runtime and which components it imports from `../components/*.ts`.
+ * Regex-based on purpose — composer output varies in formatting and an
+ * AST would fight with every new model.
+ *
+ * `delegateHandles` is conservative: a component is included only when
+ * it is imported *and* its identifier appears inside a `delegate(...)`
+ * call's `components: [...]` array — either directly or via a locally-
+ * defined wrapper that references it (the `stageHook` pattern used by
+ * the RPC orchestrator's drafter spawn).
+ */
+export function findDelegateUsage(src: string): DelegateUsage {
+  const usesDelegate = /\bdelegate\s*\(/.test(src);
+
+  const importedComponents = new Set<string>();
+  const identToComponent = new Map<string, string>();
+  const importRe =
+    /import\s*\{\s*parentSide\s+as\s+([A-Z_][A-Z0-9_]*)[^}]*\}\s*from\s*["'][^"']*components\/([a-z-]+)\.ts["']/g;
+  let im: RegExpExecArray | null;
+  while ((im = importRe.exec(src))) {
+    importedComponents.add(im[2]);
+    identToComponent.set(im[1], im[2]);
+  }
+
+  const delegateHandles = new Set<string>();
+  if (usesDelegate) {
+    const delegateCallRe = /\bdelegate\s*\(/g;
+    let dm: RegExpExecArray | null;
+    while ((dm = delegateCallRe.exec(src))) {
+      // Pull out the `components: [...]` array if present within the
+      // call argument (bounded lookahead; composer output is compact).
+      const after = src.slice(dm.index, dm.index + 4000);
+      const cm = /components\s*:\s*\[([^\]]+)\]/.exec(after);
+      if (!cm) continue;
+      const items = cm[1].split(",").map((s) => s.trim()).filter(Boolean);
+      for (const item of items) {
+        const idMatch = /[A-Za-z_$][A-Za-z0-9_$]*/.exec(item);
+        if (!idMatch) continue;
+        const directComponent = identToComponent.get(idMatch[0]);
+        if (directComponent) {
+          delegateHandles.add(directComponent);
+          continue;
+        }
+        // Fallback: the array element is a locally-defined identifier
+        //(camelCase or PascalCase) that wraps an imported component —
+        // e.g. the orchestrator's `stageHook = { ...STAGE_WRITE, ... }`.
+        // Scan the source for the ident's binding body and any
+        // imported UPPER_CASE ident it spreads/references.
+        const wrapped = resolveWrappedComponent(src, idMatch[0], identToComponent);
+        if (wrapped) delegateHandles.add(wrapped);
+      }
+    }
+  }
+
+  return { usesDelegate, importedComponents, delegateHandles };
+}
+
+function resolveWrappedComponent(
+  src: string,
+  ident: string,
+  identToComponent: Map<string, string>,
+): string | null {
+  // Find the binding body: `const <ident> = ...;`. Narrow the scan
+  // window to the bound VALUE (stop at the first bare `;` that isn't
+  // inside nested braces/brackets/parens/strings) so we don't accidentally
+  // match an import referenced later in the file.
+  const bindRe = new RegExp(
+    `(?:const|let|var)\\s+${ident.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*`,
+  );
+  const m = bindRe.exec(src);
+  if (!m) return null;
+  const valueStart = m.index + m[0].length;
+  const value = extractBindingValue(src, valueStart);
+  if (!value) return null;
+  for (const [upperIdent, compName] of identToComponent) {
+    const re = new RegExp(`\\b${upperIdent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    if (re.test(value)) return compName;
+  }
+  return null;
+}
+
+function extractBindingValue(src: string, start: number): string | null {
+  let i = start;
+  let depth = 0;
+  let inString: string | null = null;
+  let escape = false;
+  while (i < src.length) {
+    const ch = src[i];
+    if (escape) {
+      escape = false;
+      i++;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") escape = true;
+      else if (ch === inString) inString = null;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      inString = ch;
+      i++;
+      continue;
+    }
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    else if (ch === "}" || ch === "]" || ch === ")") depth--;
+    else if (ch === ";" && depth === 0) return src.slice(start, i);
+    i++;
+  }
+  return src.slice(start);
+}
+
+/**
  * Find the slash-command slug from the first registerCommand call in any
  * extension file. Returns null if no match.
  */

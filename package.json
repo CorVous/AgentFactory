@@ -8,8 +8,15 @@
     "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
     "agent-maker": "bash -c 'set -a && source models.env && set +a && exec scripts/task-runner/agent-maker.sh \"$@\"' --",
     "agent-maker:i": "bash -c 'set -a && source models.env && set +a && exec scripts/task-runner/agent-maker.sh --interactive \"$@\"' --",
+    "agent-composer": "bash -c 'set -a && source models.env && set +a && exec scripts/agent-composer.sh \"$@\"' --",
+    "agent-composer:i": "bash -c 'set -a && source models.env && set +a && exec scripts/agent-composer.sh -i \"$@\"' --",
+    "agent": "bash -c 'set -a && source models.env && set +a && exec scripts/run-agent.sh \"$@\"' --",
+    "agent:i": "bash -c 'set -a && source models.env && set +a && exec scripts/run-agent.sh -i \"$@\"' --",
     "reverse-pipeline": "bash -c 'set -a && source models.env && set +a && exec tsx scripts/reverse-pipeline/index.ts \"$@\"' --",
-    "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts"
+    "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts",
+    "test:grader": "node --test --import tsx/esm scripts/grader/__tests__/*.test.ts",
+    "test:delegate": "node --test --import tsx/esm pi-sandbox/.pi/components/__tests__/*.test.ts",
+    "validate-prompts": "tsx scripts/grader/validate-prompt.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.69.0"
