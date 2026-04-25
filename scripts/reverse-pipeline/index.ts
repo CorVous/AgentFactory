@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -16,12 +14,11 @@ export interface CliArgs {
   dryRun: boolean;
   nVariants: number;
   maxSeedsPerPattern?: number;
-  runAfter: boolean;
   help: boolean;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
-  const out: CliArgs = { dryRun: false, nVariants: 3, runAfter: false, help: false };
+  const out: CliArgs = { dryRun: false, nVariants: 3, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -33,9 +30,6 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       case "--dry-run":
         out.dryRun = true;
-        break;
-      case "--run":
-        out.runAfter = true;
         break;
       case "--n-variants":
         out.nVariants = Number(argv[++i]);
@@ -64,15 +58,13 @@ function printHelp(): void {
     "Options:",
     "  --pattern <name>       Restrict to one pattern (or 'gap'). Default: all.",
     "  --only <tag>           Process only the curation with this tag.",
-    "  --dry-run              Enumerate + generate prompts only; do not write YAML or run.",
-    "  --run                  After materializing, invoke run-task.sh for each generated task.",
+    "  --dry-run              Enumerate + generate prompts only; do not write YAML.",
     "  --n-variants <k>       Prompt variants per curation; best by heuristic wins. Default 3.",
     "  --max-seeds <k>        Cap phrasing seeds per pattern. Default: all.",
     "  -h, --help             Show this help.",
     "",
     "Env vars read from models.env:",
     "  LEAD_MODEL             Used to drive the pi prompt-generator.",
-    "  AGENT_BUILDER_TARGETS  Inherited by run-task.sh when --run is passed.",
   ];
   console.log(lines.join("\n"));
 }
@@ -162,20 +154,6 @@ async function main(): Promise<void> {
     });
     console.log(`- wrote: ${path.relative(repoRoot, out.yamlPath)}\n`);
     materialized.push({ curation, out });
-  }
-
-  if (args.runAfter && materialized.length > 0) {
-    console.log(`# Running run-task.sh for ${materialized.length} generated task(s)\n`);
-    for (const { out } of materialized) {
-      const runner = path.join(repoRoot, "scripts/task-runner/run-task.sh");
-      const res = spawnSync("bash", [runner, out.relTaskName], {
-        stdio: "inherit",
-        env: process.env,
-      });
-      if (res.status !== 0) {
-        console.error(`  ! run-task.sh failed for ${out.relTaskName}: exit ${res.status}`);
-      }
-    }
   }
 }
 

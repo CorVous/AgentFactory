@@ -155,7 +155,7 @@ describe("serializeTestSpec", () => {
 /* ---------- materialize ---------------------------------------------- */
 
 describe("materialize", () => {
-  it("writes under tasks/generated/<tag>/test.yaml", () => {
+  it("writes under scripts/reverse-pipeline/generated/<tag>/test.yaml", () => {
     const tag = "__unit-test-materialize-full-01";
     const curation: Curation = { ...ASSEMBLY_CURATION, tag };
     const out = materialize(REPO_ROOT, curation, "Draft something, show me first.", {
@@ -168,12 +168,12 @@ describe("materialize", () => {
       assert.ok(fs.existsSync(out.yamlPath));
       assert.equal(
         path.relative(REPO_ROOT, out.yamlPath),
-        path.join("scripts", "task-runner", "tasks", "generated", tag, "test.yaml"),
+        path.join("scripts", "reverse-pipeline", "generated", tag, "test.yaml"),
       );
       assert.equal(out.relTaskName, path.join("generated", tag));
     } finally {
       fs.rmSync(
-        path.join(REPO_ROOT, "scripts", "task-runner", "tasks", "generated", tag),
+        path.join(REPO_ROOT, "scripts", "reverse-pipeline", "generated", tag),
         { recursive: true, force: true },
       );
     }
@@ -182,7 +182,7 @@ describe("materialize", () => {
   it("a second materialize call with the same tag overwrites the YAML", () => {
     const tag = "__unit-test-materialize-full-overwrite-01";
     const curation: Curation = { ...ASSEMBLY_CURATION, tag };
-    const dir = path.join(REPO_ROOT, "scripts", "task-runner", "tasks", "generated", tag);
+    const dir = path.join(REPO_ROOT, "scripts", "reverse-pipeline", "generated", tag);
     try {
       const out1 = materialize(REPO_ROOT, curation, "first", {
         generatorModel: "m",

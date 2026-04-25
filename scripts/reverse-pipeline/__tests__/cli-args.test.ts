@@ -10,7 +10,6 @@ describe("parseArgs", () => {
   it("returns documented defaults for an empty argv", () => {
     const a = parseArgs([]);
     assert.equal(a.dryRun, false);
-    assert.equal(a.runAfter, false);
     assert.equal(a.help, false);
     assert.equal(a.nVariants, 3);
     assert.equal(a.pattern, undefined);
@@ -24,10 +23,13 @@ describe("parseArgs", () => {
     assert.equal(a.only, "gap-foo-01");
   });
 
-  it("parses --dry-run and --run as booleans", () => {
-    const a = parseArgs(["--dry-run", "--run"]);
+  it("parses --dry-run as a boolean", () => {
+    const a = parseArgs(["--dry-run"]);
     assert.equal(a.dryRun, true);
-    assert.equal(a.runAfter, true);
+  });
+
+  it("rejects --run (removed flag) as an unknown argument", () => {
+    assert.throws(() => parseArgs(["--run"]), /Unknown argument: --run/);
   });
 
   it("parses --n-variants and --max-seeds with numeric values", () => {
