@@ -171,7 +171,7 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-function validateNames(name: string, slash: string): void {
+export function validateNames(name: string, slash: string): void {
   if (!NAME_RE.test(name)) {
     throw new Error(
       `name must match ${NAME_RE} (lowercase + digits + dash, 2-41 chars): ${name}`,
@@ -184,7 +184,9 @@ function validateNames(name: string, slash: string): void {
   }
 }
 
-function validatePhases(
+export const COMPOSITION_NAMES = COMPOSITIONS;
+
+export function validatePhases(
   composition: (typeof COMPOSITIONS)[number],
   phases: ReadonlyArray<{ components: string[] }>,
 ): void {

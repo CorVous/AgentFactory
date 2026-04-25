@@ -10,7 +10,7 @@ import {
 import { generatePrompt } from "./curate-to-prompt.ts";
 import { materialize, type MaterializedTask } from "./materialize.ts";
 
-interface CliArgs {
+export interface CliArgs {
   pattern?: string;
   only?: string;
   dryRun: boolean;
@@ -20,7 +20,7 @@ interface CliArgs {
   help: boolean;
 }
 
-function parseArgs(argv: string[]): CliArgs {
+export function parseArgs(argv: string[]): CliArgs {
   const out: CliArgs = { dryRun: false, nVariants: 3, runAfter: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -184,7 +184,15 @@ function resolveRepoRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+// Run main() only when invoked as a script. Importing for tests
+// (e.g. parseArgs in __tests__/cli-args.test.ts) must not auto-run
+// the CLI entry point.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
