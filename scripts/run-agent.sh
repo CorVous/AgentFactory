@@ -9,14 +9,21 @@
 # `npm run pi` thus also become reachable from a single CLI call.
 #
 # Usage:
-#   run-agent.sh                    # list available agents and exit
-#   run-agent.sh -l | --list        # same
-#   run-agent.sh -h | --help        # this help
-#   run-agent.sh <name> [args...]   # dispatch one-shot
+#   run-agent.sh                       # list available agents and exit
+#   run-agent.sh -l | --list           # same
+#   run-agent.sh -h | --help           # this help
+#   run-agent.sh <name> [args...]      # dispatch one-shot (script form)
+#   run-agent.sh -i | --interactive [<name>]
+#                                      # open interactive pi from the
+#                                      # sandbox cwd. When <name> is given,
+#                                      # prints a hint about the slash to
+#                                      # type; otherwise just opens pi.
 #
 # Examples:
 #   npm run agent
 #   npm run agent -- agent-composer "Drafter that stages writes for approval"
+#   npm run agent:i                                  # plain pi REPL
+#   npm run agent:i -- agent-composer                # REPL with hint
 #
 # `<name>` is the YAML filename stem (e.g. `agent-composer` for
 # `pi-sandbox/.pi/agents/agent-composer.yml`). The script reads the
@@ -33,7 +40,9 @@ REPO="$(cd "$HERE/.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
 AGENTS_DIR="$SANDBOX/.pi/agents"
 
-usage() { sed -n '2,28p' "$0"; }
+usage() { sed -n '2,32p' "$0"; }
+
+INTERACTIVE=0
 
 list_agents() {
   echo "Available agents (script form: npm run agent -- <name> [args]):"
@@ -62,37 +71,44 @@ list_agents() {
   echo "                           Use: npm run agent-maker -- <task> [-m <model>] [--grade]"
 }
 
-if [[ $# -eq 0 ]]; then
+NAME=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -l|--list) list_agents; exit 0 ;;
+    -i|--interactive) INTERACTIVE=1; shift ;;
+    -*)
+      echo "Unknown flag: $1" >&2
+      usage >&2
+      exit 2 ;;
+    *)
+      NAME="$1"; shift
+      break ;;  # everything after the name is forwarded as args
+  esac
+done
+
+# No flag, no name → list and exit (the default "what's available" view).
+if [[ $INTERACTIVE -eq 0 && -z "$NAME" ]]; then
   list_agents
   exit 0
 fi
 
-case "$1" in
-  -h|--help) usage; exit 0 ;;
-  -l|--list) list_agents; exit 0 ;;
-  -*)
-    echo "Unknown flag: $1" >&2
-    usage >&2
-    exit 2 ;;
-esac
-
-NAME="$1"
-shift
-
-SPEC="$AGENTS_DIR/$NAME.yml"
-if [[ ! -f "$SPEC" ]]; then
-  SPEC="$AGENTS_DIR/$NAME.yaml"
-fi
-if [[ ! -f "$SPEC" ]]; then
-  echo "No such agent: $NAME (looked under $AGENTS_DIR)." >&2
-  echo "Run 'npm run agent' with no args to see available agents." >&2
-  exit 2
-fi
-
-SLASH="$(awk -F': *' '/^slash:/ { print $2; exit }' "$SPEC" | tr -d '"'"'")"
-if [[ -z "$SLASH" ]]; then
-  echo "Couldn't parse 'slash:' field from $SPEC." >&2
-  exit 2
+SLASH=""
+if [[ -n "$NAME" ]]; then
+  SPEC="$AGENTS_DIR/$NAME.yml"
+  if [[ ! -f "$SPEC" ]]; then
+    SPEC="$AGENTS_DIR/$NAME.yaml"
+  fi
+  if [[ ! -f "$SPEC" ]]; then
+    echo "No such agent: $NAME (looked under $AGENTS_DIR)." >&2
+    echo "Run 'npm run agent' with no args to see available agents." >&2
+    exit 2
+  fi
+  SLASH="$(awk -F': *' '/^slash:/ { print $2; exit }' "$SPEC" | tr -d '"'"'")"
+  if [[ -z "$SLASH" ]]; then
+    echo "Couldn't parse 'slash:' field from $SPEC." >&2
+    exit 2
+  fi
 fi
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
@@ -103,6 +119,24 @@ fi
 if [[ -z "${TASK_MODEL:-}" && -f "$REPO/models.env" ]]; then
   # shellcheck disable=SC1091
   set -a; source "$REPO/models.env"; set +a
+fi
+
+if [[ $INTERACTIVE -eq 1 ]]; then
+  # Drop into pi from the sandbox cwd. The yaml-agent-runner registers
+  # every spec's slash command on startup, so the user can type
+  # `/<slash> <args>` at the prompt. When a name was given, surface the
+  # exact slash to type as a one-line hint on stderr (stdout is pi's TUI).
+  if [[ -n "$SLASH" ]]; then
+    echo "[run-agent] Interactive mode. Type: /$SLASH <args>" >&2
+  fi
+  (
+    cd "$SANDBOX"
+    exec env \
+      PI_SKIP_UPDATE_CHECK=1 \
+      "$REPO/node_modules/.bin/pi" \
+        --no-context-files \
+        --provider openrouter
+  )
 fi
 
 # Compose the prompt: "/<slash> <args joined>". Empty args yield "/<slash>",
