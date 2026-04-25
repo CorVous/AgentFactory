@@ -115,14 +115,13 @@ cwd. The shared `pi-sandbox/.pi/{extensions,components}/` is never
 touched, so concurrent invocations don't race.
 
 ```sh
-# Generic launcher — dispatch any YAML-defined agent by its filename
-# stem; forwards to `pi -p "/<slash> <args>"` from the sandbox cwd.
-# Works for agent-composer and any agent the composer emits. Run with
-# no args to list available agents.
+# Generic launcher — interactive only. Listing with no args shows
+# every YAML-defined agent. Passing a name opens an interactive pi
+# configured AS that agent (skill loaded, components mounted, tool
+# allowlist applied). Use the slash inside `npm run pi` for one-shot
+# dispatch, or revive --mode json -p routing in run-agent.sh later.
 npm run agent
-npm run agent -- agent-composer "Drafter that stages writes for approval"
-npm run agent:i                                  # plain pi REPL in sandbox
-npm run agent:i -- agent-composer                # REPL + slash hint
+npm run agent agent-composer
 
 # Composer-specific scripts (kept as bootstrap-recovery path — work
 # even if the YAML or runner is broken):

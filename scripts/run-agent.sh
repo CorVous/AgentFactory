@@ -1,33 +1,27 @@
 #!/usr/bin/env bash
 # run-agent.sh — generic launcher for any YAML-defined pi agent.
 #
-# Every YAML spec under pi-sandbox/.pi/agents/*.yml registers a slash
-# command via the auto-discovered yaml-agent-runner.ts when pi starts
-# in the sandbox cwd. This script gives those agents a one-shot script
-# form by forwarding to `pi -p "/<slash> <args>"` from inside the
-# sandbox. Agents already reachable interactively as `/<slash>` from
-# `npm run pi` thus also become reachable from a single CLI call.
+# Each YAML spec under pi-sandbox/.pi/agents/*.yml declares a slash
+# command the auto-discovered yaml-agent-runner.ts registers when pi
+# starts in the sandbox. This script reads a chosen spec and opens an
+# interactive pi REPL configured AS that agent — same skill, same
+# components mounted via `-e`, same tool allowlist — so the user chats
+# with the agent's LLM directly. No one-shot dispatch path; for
+# scripted runs use the slash inside `npm run pi`, or revive `-p`
+# routing here later.
 #
 # Usage:
-#   run-agent.sh                       # list available agents and exit
-#   run-agent.sh -l | --list           # same
-#   run-agent.sh -h | --help           # this help
-#   run-agent.sh <name> [args...]      # dispatch one-shot (script form)
-#   run-agent.sh -i | --interactive [<name>]
-#                                      # open interactive pi from the
-#                                      # sandbox cwd. When <name> is given,
-#                                      # prints a hint about the slash to
-#                                      # type; otherwise just opens pi.
+#   run-agent.sh                  # list available agents and exit
+#   run-agent.sh -l | --list      # same
+#   run-agent.sh -h | --help      # this help
+#   run-agent.sh <name>           # open interactive pi for that agent
 #
 # Examples:
 #   npm run agent
-#   npm run agent -- agent-composer "Drafter that stages writes for approval"
-#   npm run agent:i                                  # plain pi REPL
-#   npm run agent:i -- agent-composer                # REPL with hint
+#   npm run agent agent-composer
 #
 # `<name>` is the YAML filename stem (e.g. `agent-composer` for
-# `pi-sandbox/.pi/agents/agent-composer.yml`). The script reads the
-# YAML's `slash:` field as the authoritative slash name.
+# `pi-sandbox/.pi/agents/agent-composer.yml`).
 #
 # `agent-maker` is listed for discoverability but kept as a separate
 # script (scripts/task-runner/agent-maker.sh) because it needs a
@@ -39,14 +33,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
 AGENTS_DIR="$SANDBOX/.pi/agents"
-RUNNER_PATH="$SANDBOX/.pi/extensions/yaml-agent-runner.ts"
 
-usage() { sed -n '2,32p' "$0"; }
-
-INTERACTIVE=0
+usage() { sed -n '2,28p' "$0"; }
 
 list_agents() {
-  echo "Available agents (script form: npm run agent -- <name> [args]):"
+  echo "Available agents (open interactively: npm run agent <name>):"
   echo
   if [[ -d "$AGENTS_DIR" ]]; then
     local found=0
@@ -77,39 +68,31 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     -l|--list) list_agents; exit 0 ;;
-    -i|--interactive) INTERACTIVE=1; shift ;;
     -*)
       echo "Unknown flag: $1" >&2
       usage >&2
       exit 2 ;;
     *)
-      NAME="$1"; shift
-      break ;;  # everything after the name is forwarded as args
+      NAME="$1"; shift; break ;;
   esac
 done
 
-# No flag, no name → list and exit (the default "what's available" view).
-if [[ $INTERACTIVE -eq 0 && -z "$NAME" ]]; then
+if [[ -z "$NAME" ]]; then
   list_agents
   exit 0
 fi
 
-SLASH=""
-if [[ -n "$NAME" ]]; then
-  SPEC="$AGENTS_DIR/$NAME.yml"
-  if [[ ! -f "$SPEC" ]]; then
-    SPEC="$AGENTS_DIR/$NAME.yaml"
-  fi
-  if [[ ! -f "$SPEC" ]]; then
-    echo "No such agent: $NAME (looked under $AGENTS_DIR)." >&2
-    echo "Run 'npm run agent' with no args to see available agents." >&2
-    exit 2
-  fi
-  SLASH="$(awk -F': *' '/^slash:/ { print $2; exit }' "$SPEC" | tr -d '"'"'")"
-  if [[ -z "$SLASH" ]]; then
-    echo "Couldn't parse 'slash:' field from $SPEC." >&2
-    exit 2
-  fi
+if [[ $# -gt 0 ]]; then
+  echo "Extra args after agent name aren't supported (interactive only):" >&2
+  echo "  ignored: $*" >&2
+fi
+
+SPEC="$AGENTS_DIR/$NAME.yml"
+[[ -f "$SPEC" ]] || SPEC="$AGENTS_DIR/$NAME.yaml"
+if [[ ! -f "$SPEC" ]]; then
+  echo "No such agent: $NAME (looked under $AGENTS_DIR)." >&2
+  echo "Run 'npm run agent' with no args to see available agents." >&2
+  exit 2
 fi
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
@@ -122,110 +105,71 @@ if [[ -z "${TASK_MODEL:-}" && -f "$REPO/models.env" ]]; then
   set -a; source "$REPO/models.env"; set +a
 fi
 
-if [[ $INTERACTIVE -eq 1 && -z "$NAME" ]]; then
-  # No name → open pi from the sandbox cwd with only yaml-agent-runner
-  # explicitly loaded. `--no-extensions` suppresses auto-discovery of
-  # the legacy deferred-writer / delegated-writer extensions; `-e`
-  # re-adds the runner so the YAML-defined slash commands are still
-  # available. `exec` replaces this script's process with pi.
-  cd "$SANDBOX"
-  exec env \
-    PI_SKIP_UPDATE_CHECK=1 \
-    "$REPO/node_modules/.bin/pi" \
-      --no-context-files \
-      --no-extensions \
-      -e "$RUNNER_PATH" \
-      --provider openrouter
+# Parse the spec via the tsx helper. Replicates the agent's surface in
+# the parent pi: skill, components mounted via -e, tools allowlist.
+INFO="$("$REPO/node_modules/.bin/tsx" "$REPO/scripts/yaml-agent-info.ts" "$SPEC")" || {
+  echo "Failed to read agent spec: $SPEC" >&2
+  exit 2
+}
+SLASH=""
+COMPOSITION=""
+SKILL=""
+TOOLS=""
+COMPONENTS=""
+eval "$INFO"
+
+if [[ -z "$SLASH" ]]; then
+  echo "Spec is missing a slash field: $SPEC" >&2
+  exit 2
 fi
 
-if [[ $INTERACTIVE -eq 1 ]]; then
-  # With a name, replicate the agent's surface in the parent pi session:
-  # load the YAML's skill, mount its components via -e, apply its tools
-  # allowlist. This makes `agent:i <name>` feel like the agent rather
-  # than just "pi from the sandbox where the slash happens to be
-  # registered". Same shape as scripts/agent-composer.sh -i, but driven
-  # by the YAML instead of hardcoded.
-  INFO="$("$REPO/node_modules/.bin/tsx" "$REPO/scripts/yaml-agent-info.ts" "$SPEC")" || {
-    echo "Failed to read agent spec: $SPEC" >&2
-    exit 2
-  }
-  COMPOSITION=""
-  SKILL=""
-  TOOLS=""
-  COMPONENTS=""
-  eval "$INFO"
+if [[ "$COMPOSITION" != "single-spawn" ]]; then
+  echo "Only single-spawn agents are runnable interactively (got: $COMPOSITION)." >&2
+  echo "Multi-phase agents need scout→draft orchestration that can't run as one REPL." >&2
+  exit 2
+fi
 
-  if [[ "$COMPOSITION" != "single-spawn" ]]; then
-    echo "Interactive mode supports single-spawn agents only (got: $COMPOSITION)." >&2
-    echo "For multi-phase agents use one-shot: npm run agent -- $NAME <task>" >&2
+PI_SKILL_ARGS=()
+if [[ -n "$SKILL" ]]; then
+  SKILL_ABS="$SANDBOX/$SKILL"
+  if [[ ! -d "$SKILL_ABS" ]]; then
+    echo "Skill path not found: $SKILL_ABS" >&2
     exit 2
   fi
+  # --no-skills + --skill <path> override pattern (proven in
+  # scripts/agent-composer.sh:92,110-112): --no-skills suppresses
+  # auto-loaded skills, --skill loads the explicit one.
+  PI_SKILL_ARGS=(--no-skills --skill "$SKILL_ABS")
+fi
 
-  PI_SKILL_ARGS=()
-  if [[ -n "$SKILL" ]]; then
-    SKILL_ABS="$SANDBOX/$SKILL"
-    if [[ ! -d "$SKILL_ABS" ]]; then
-      echo "Skill path not found: $SKILL_ABS" >&2
+PI_EXT_ARGS=()
+if [[ -n "$COMPONENTS" ]]; then
+  IFS=',' read -ra COMPS <<< "$COMPONENTS"
+  for c in "${COMPS[@]}"; do
+    COMP_PATH="$SANDBOX/.pi/components/$c.ts"
+    if [[ ! -f "$COMP_PATH" ]]; then
+      echo "Component file not found: $COMP_PATH" >&2
       exit 2
     fi
-    # --no-skills + --skill <path> override pattern (proven in
-    # scripts/agent-composer.sh:92,110-112): --no-skills suppresses
-    # auto-loaded skills, --skill loads the explicit one.
-    PI_SKILL_ARGS=(--no-skills --skill "$SKILL_ABS")
-  fi
-
-  PI_EXT_ARGS=()
-  if [[ -n "$COMPONENTS" ]]; then
-    IFS=',' read -ra COMPS <<< "$COMPONENTS"
-    for c in "${COMPS[@]}"; do
-      COMP_PATH="$SANDBOX/.pi/components/$c.ts"
-      if [[ ! -f "$COMP_PATH" ]]; then
-        echo "Component file not found: $COMP_PATH" >&2
-        exit 2
-      fi
-      PI_EXT_ARGS+=(-e "$COMP_PATH")
-    done
-  fi
-
-  PI_TOOL_ARGS=()
-  [[ -n "$TOOLS" ]] && PI_TOOL_ARGS=(--tools "$TOOLS")
-
-  echo "[run-agent] Interactive /$SLASH (skill=${SKILL:-none}, tools=${TOOLS:-default}, components=${COMPONENTS:-none})" >&2
-  # --no-extensions: the user chats with the agent's LLM directly, so
-  # auto-discovered slashes (yaml-agent-runner, deferred-writer, etc.)
-  # are unwanted. The agent's own surface comes from --skill, the -e'd
-  # components, and the --tools allowlist below.
-  cd "$SANDBOX"
-  exec env \
-    PI_SKIP_UPDATE_CHECK=1 \
-    PI_SANDBOX_ROOT="$SANDBOX" \
-    "$REPO/node_modules/.bin/pi" \
-      --no-context-files --no-session --no-extensions \
-      --provider openrouter \
-      "${PI_SKILL_ARGS[@]}" \
-      "${PI_EXT_ARGS[@]}" \
-      "${PI_TOOL_ARGS[@]}"
+    PI_EXT_ARGS+=(-e "$COMP_PATH")
+  done
 fi
 
-# Compose the prompt: "/<slash> <args joined>". Empty args yield "/<slash>",
-# which the runner's handler intercepts with a usage notify and exits.
-PROMPT="/$SLASH"
-if [[ $# -gt 0 ]]; then
-  PROMPT="$PROMPT $*"
-fi
+PI_TOOL_ARGS=()
+[[ -n "$TOOLS" ]] && PI_TOOL_ARGS=(--tools "$TOOLS")
 
-(
-  cd "$SANDBOX"
-  # --no-extensions + explicit -e on yaml-agent-runner: the parent only
-  # needs the runner to recognize the slash and dispatch via delegate;
-  # the actual worker is the dispatched child (which gets its own
-  # --no-extensions from delegate.ts). Suppresses unrelated auto-loaded
-  # extensions in the parent.
-  exec env \
-    PI_SKIP_UPDATE_CHECK=1 \
-    "$REPO/node_modules/.bin/pi" \
-      --no-context-files --no-session --no-extensions \
-      -e "$RUNNER_PATH" \
-      --mode json \
-      -p "$PROMPT"
-)
+echo "[run-agent] /$SLASH (skill=${SKILL:-none}, tools=${TOOLS:-default}, components=${COMPONENTS:-none})" >&2
+# --no-extensions: the user chats with the agent's LLM directly, so
+# auto-discovered slashes (yaml-agent-runner, deferred-writer, etc.)
+# are unwanted. The agent's surface comes from --skill, the -e'd
+# components, and the --tools allowlist below.
+cd "$SANDBOX"
+exec env \
+  PI_SKIP_UPDATE_CHECK=1 \
+  PI_SANDBOX_ROOT="$SANDBOX" \
+  "$REPO/node_modules/.bin/pi" \
+    --no-context-files --no-session --no-extensions \
+    --provider openrouter \
+    "${PI_SKILL_ARGS[@]}" \
+    "${PI_EXT_ARGS[@]}" \
+    "${PI_TOOL_ARGS[@]}"

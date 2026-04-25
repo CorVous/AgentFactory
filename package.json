@@ -11,7 +11,6 @@
     "agent-composer": "bash -c 'set -a && source models.env && set +a && exec scripts/agent-composer.sh \"$@\"' --",
     "agent-composer:i": "bash -c 'set -a && source models.env && set +a && exec scripts/agent-composer.sh -i \"$@\"' --",
     "agent": "bash -c 'set -a && source models.env && set +a && exec scripts/run-agent.sh \"$@\"' --",
-    "agent:i": "bash -c 'set -a && source models.env && set +a && exec scripts/run-agent.sh -i \"$@\"' --",
     "reverse-pipeline": "bash -c 'set -a && source models.env && set +a && exec tsx scripts/reverse-pipeline/index.ts \"$@\"' --",
     "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts",
     "test:grader": "node --test --import tsx/esm scripts/grader/__tests__/*.test.ts",
