@@ -24,20 +24,15 @@ confabulated agent.
    new child-tools, new stub shapes, or new NDJSON harvesters
    inside this skill. You also cannot author TypeScript — your
    tool allowlist exposes `emit_agent_spec` plus read verbs only.
-2. **`cwd-guard` on every phase, period.** Every phase MUST include
-   `cwd-guard` in its `components` list — even no-fs roles. cwd-guard
-   is the only sanctioned fs surface; the pi built-ins
-   `read`/`ls`/`grep`/`glob`/`write`/`edit` are forbidden
-   project-wide. For a phase that needs fs access, pick the verb
-   subset the role needs in the phase's `tools` list (e.g.
-   `[sandbox_ls, sandbox_read, stage_write]` for a
-   drafter-with-approval); the runner builds cwd-guard with exactly
-   those verbs and pins `PI_SANDBOX_ROOT` + `PI_SANDBOX_VERBS`
-   automatically. For a no-fs role (e.g. an RPC delegator with only
-   `run_deferred_writer,review`), include `cwd-guard` in components
-   anyway and list zero sandbox verbs in `tools` — cwd-guard loads
-   as defense-in-depth and registers nothing. This way the
-   architecture stays uniform: every sub-pi spawn carries the guard.
+2. **Don't list any auto-injected component in `components:`.**
+   `cwd-guard` and `sandbox-fs` are auto-injected by the runner
+   from the policies + tool-providers registries
+   (`pi-sandbox/.pi/lib/policies.ts`,
+   `pi-sandbox/.pi/lib/tool-providers.ts`). Listing either name in
+   a phase's `components` is a validation error. Drive sandbox-fs
+   activation by putting `sandbox_*` verbs in the phase's `tools`
+   list — the runner builds sandbox-fs with exactly those verbs.
+   cwd-guard always loads (every spawn) regardless of `tools`.
 3. **Output via `emit_agent_spec` only.** The tool writes
    `.pi/agents/<name>.yml`; the runner picks it up on the next pi
    startup. You cannot write `.ts`, `.yml`, or any other file
@@ -54,11 +49,20 @@ template" the parent extension copy-adapts).
 
 | Component | Role | When to use |
 | --- | --- | --- |
-| `cwd-guard.ts` | Cwd-safe filesystem surface | **REQUIRED on every sub-pi spawn.** Registers path-validated `sandbox_read`/`sandbox_ls`/`sandbox_grep`/`sandbox_glob`/`sandbox_write`/`sandbox_edit` — the role picks the subset via the phase's `tools` list. For a no-fs role, list zero sandbox verbs and cwd-guard loads as defense-in-depth without registering any tools. Replaces every built-in fs verb (which are forbidden). |
 | `stage-write.ts` | Stub drafter channel | The child should draft files the *parent previews and approves* before anything hits disk. Child calls `stage_write({path, content})`; parent harvests from NDJSON `tool_execution_start` events and `fs.writeFileSync`s only on user approval (or LLM verdict, when paired with `review`). |
 | `emit-summary.ts` | Stub structured-output channel | The child should return one or more *named summaries* instead of free-form assistant text. Child calls `emit_summary({title, body})`; parent harvests from NDJSON, caps byte-length per body, and persists to `.pi/scratch/<title>.md` or assembles into a brief for a follow-on phase. |
 | `review.ts` | Stub reviewer verdict | A reviewer LLM renders `approve`/`revise` on staged drafts. Parent harvests verdicts; `approve` ⇒ promote, `revise` ⇒ re-dispatch the drafter with the feedback string. When `review` is in the component set, the LLM is the gate — no `ctx.ui.confirm` fires. |
 | `run-deferred-writer.ts` | Stub dispatch verb | A delegator LLM dispatches one drafter per call. Parent harvests `{task}` strings and runs drafter children in parallel via `Promise.all`. Pair with `review.ts` inside an RPC delegator session. |
+
+### Auto-injected (never list in `components:`)
+
+| Component | Role | Activation |
+| --- | --- | --- |
+| `cwd-guard.ts` | Universal cwd policy | Always loaded. Sets `PI_SANDBOX_ROOT`, exports `validate()`, attaches a `pi.on("tool_call")` auditor. Registers no LLM-visible tools. Defined in `pi-sandbox/.pi/lib/policies.ts`. See `parts/cwd-guard.md`. |
+| `sandbox-fs.ts` | Path-validated fs tool surface | Activates iff a `sandbox_*` verb appears in the phase's `tools`. Registers exactly the requested subset of `sandbox_read`/`ls`/`grep`/`glob`/`write`/`edit`. Defined in `pi-sandbox/.pi/lib/tool-providers.ts`. See `parts/sandbox-fs.md`. |
+
+To add a new auto-injected rail later, edit the registry files
+above — `delegate()` and the YAML runner pick it up automatically.
 
 ## Output channel
 
@@ -106,14 +110,12 @@ worth the pause.
   `sandbox_write` tools. The only way to commit a result is
   `emit_agent_spec`. A finished session that didn't call it
   produced nothing.
-- **Skipping cwd-guard on any phase.** Non-negotiable on every
-  phase, including no-fs roles. cwd-guard owns the entire cwd-safe
-  fs surface and the built-in fs verbs are forbidden; loading it
-  unconditionally (with empty verbs when no fs is needed) keeps
-  the architecture uniform. Non-negotiable on every phase whose
-  components include `stage-write` or any
-  future direct-write part. The one exception is a read-only
-  phase whose only output channel is `emit_summary`.
+- **Listing any auto-injected component in `components:`.**
+  `cwd-guard` and `sandbox-fs` are injected by the runner from the
+  policies + tool-providers registries. Listing either name fails
+  validation. Future additions appear automatically — same rule
+  applies. Drive sandbox-fs activation by including `sandbox_*`
+  verbs in `tools`; cwd-guard loads on every spawn unconditionally.
 - **Declaring `review` or `run-deferred-writer` in a phase.**
   `emit_agent_spec` rejects these and the runner refuses to
   register the resulting spec. The orchestrator topology lives in

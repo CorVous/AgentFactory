@@ -15,6 +15,10 @@ const CWD_GUARD = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "cwd-guard.ts",
 );
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "stage-write.ts",
@@ -35,7 +39,11 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("TASK_MODEL env var not set. Source models.env.", "error");
         return;
       }
-      if (!fs.existsSync(STAGE_WRITE_TOOL) || !fs.existsSync(CWD_GUARD)) {
+      if (
+        !fs.existsSync(STAGE_WRITE_TOOL) ||
+        !fs.existsSync(CWD_GUARD) ||
+        !fs.existsSync(SANDBOX_FS)
+      ) {
         ctx.ui.notify("components missing; check pi-sandbox/.pi/components/", "error");
         return;
       }
@@ -55,6 +63,7 @@ export default function (pi: ExtensionAPI) {
         "pi",
         [
           "-e", CWD_GUARD,
+          "-e", SANDBOX_FS,
           "-e", STAGE_WRITE_TOOL,
           "--mode", "json",
           "--tools", "stage_write,sandbox_ls",

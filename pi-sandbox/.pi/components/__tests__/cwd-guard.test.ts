@@ -1,7 +1,13 @@
-// cwd-guard.test.ts — unit tests for the catch-all sandbox component.
-// Covers: env-gated registration (PI_SANDBOX_VERBS filters which tools
-// are registered), path validation rejecting out-of-root + symlink
-// escapes, the makeCwdGuard factory's tools/env contract.
+// cwd-guard.test.ts — tests for the cwd-policy component after the
+// policy/surface split. Covers:
+//   - default-export: PI_SANDBOX_ROOT contract, registers no tools,
+//     attaches a `pi.on("tool_call")` auditor.
+//   - validate(p, root): lex + realpath path validation.
+//   - cwdGuardSide singleton: empty tools, sets PI_SANDBOX_ROOT,
+//     correct spawnArgs.
+//
+// The sandbox_* tool-registration + per-verb path-validation tests
+// migrated to sandbox-fs.test.ts.
 
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
@@ -10,11 +16,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
-  makeCwdGuard,
-  type SandboxVerb,
+  CWD_GUARD_PATH,
+  cwdGuardSide,
+  validate,
 } from "../cwd-guard.ts";
-// Default export exercises the tool-registration path. Imported as a
-// fresh function each time so the stub registry is per-test.
 import cwdGuardLoader from "../cwd-guard.ts";
 
 interface RegisteredTool {
@@ -22,15 +27,29 @@ interface RegisteredTool {
   execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
 }
 
+type ToolCallHandler = (event: {
+  toolName: string;
+  input: unknown;
+}) => unknown;
+
 function makeStubPi() {
   const tools: RegisteredTool[] = [];
+  let toolCallHandler: ToolCallHandler | undefined;
   return {
     pi: {
       registerTool: (def: RegisteredTool) => tools.push(def),
-      // Loader uses only registerTool; supply a no-op for anything else
-      // it might pull from `pi`.
+      on: (channel: string, h: ToolCallHandler) => {
+        if (channel === "tool_call") toolCallHandler = h;
+      },
     } as unknown as Parameters<typeof cwdGuardLoader>[0],
     tools,
+    callAuditor(toolName: string, input: unknown) {
+      if (!toolCallHandler) {
+        throw new Error("auditor not registered");
+      }
+      return toolCallHandler({ toolName, input });
+    },
+    hasAuditor: () => toolCallHandler !== undefined,
   };
 }
 
@@ -55,224 +74,165 @@ function withEnv<T>(
 }
 
 function makeTempRoot(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "cwd-guard-test-"));
+  // realpath the result so /private/var vs /var symlink resolution on
+  // macOS doesn't trip the validate() lex check.
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cwd-guard-test-")));
 }
 
-/* ---------- env gating ----------------------------------------------- */
+/* ---------- default-export contract ----------------------------------- */
 
-describe("cwd-guard: env-gated registration", () => {
+describe("cwd-guard: default export", () => {
   it("throws when PI_SANDBOX_ROOT is missing", () => {
     const { pi } = makeStubPi();
     assert.throws(
       () =>
-        withEnv(
-          { PI_SANDBOX_ROOT: undefined, PI_SANDBOX_VERBS: "sandbox_ls" },
-          () => cwdGuardLoader(pi),
-        ),
+        withEnv({ PI_SANDBOX_ROOT: undefined }, () => cwdGuardLoader(pi)),
       /PI_SANDBOX_ROOT must be set/,
     );
   });
 
-  it("registers zero tools when PI_SANDBOX_VERBS is missing or empty (no-fs role)", () => {
+  it("registers zero tools", () => {
     const root = makeTempRoot();
     const { pi, tools } = makeStubPi();
-    withEnv(
-      { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: undefined },
-      () => cwdGuardLoader(pi),
-    );
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(pi));
     assert.equal(tools.length, 0);
-    const { pi: pi2, tools: tools2 } = makeStubPi();
-    withEnv(
-      { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "" },
-      () => cwdGuardLoader(pi2),
-    );
-    assert.equal(tools2.length, 0);
   });
 
-  it("rejects unknown verbs in PI_SANDBOX_VERBS", () => {
+  it("attaches a tool_call auditor", () => {
     const root = makeTempRoot();
-    const { pi } = makeStubPi();
-    assert.throws(
-      () =>
-        withEnv(
-          { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "sandbox_telnet" },
-          () => cwdGuardLoader(pi),
-        ),
-      /unknown verb/,
-    );
+    const { pi, hasAuditor } = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(pi));
+    assert.equal(hasAuditor(), true);
+  });
+});
+
+/* ---------- tool_call auditor ---------------------------------------- */
+
+describe("cwd-guard: tool_call auditor", () => {
+  it("blocks tool_call with absolute out-of-cwd path arg", () => {
+    const root = makeTempRoot();
+    const stub = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(stub.pi));
+    const result = stub.callAuditor("sandbox_read", { path: "/etc/passwd" }) as {
+      block?: boolean;
+      reason?: string;
+    };
+    assert.equal(result.block, true);
+    assert.match(String(result.reason ?? ""), /escapes sandbox root/);
   });
 
-  it("registers only the verbs listed in PI_SANDBOX_VERBS", () => {
+  it("blocks recursive nested out-of-cwd path arg", () => {
     const root = makeTempRoot();
-    const { pi, tools } = makeStubPi();
-    withEnv(
-      {
-        PI_SANDBOX_ROOT: root,
-        PI_SANDBOX_VERBS: "sandbox_ls,sandbox_read",
-      },
-      () => cwdGuardLoader(pi),
-    );
-    const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["sandbox_ls", "sandbox_read"]);
+    const stub = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(stub.pi));
+    const result = stub.callAuditor("sandbox_grep", {
+      pattern: "x",
+      nested: { paths: ["/etc/passwd"] },
+    }) as { block?: boolean };
+    assert.equal(result.block, true);
   });
 
-  it("registers all six verbs when all are listed", () => {
+  it("allows in-bounds absolute path arg", () => {
     const root = makeTempRoot();
-    const { pi, tools } = makeStubPi();
-    withEnv(
-      {
-        PI_SANDBOX_ROOT: root,
-        PI_SANDBOX_VERBS:
-          "sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob,sandbox_write,sandbox_edit",
-      },
-      () => cwdGuardLoader(pi),
-    );
-    const names = tools.map((t) => t.name).sort();
-    assert.deepEqual(names, [
-      "sandbox_edit",
-      "sandbox_glob",
-      "sandbox_grep",
+    const stub = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(stub.pi));
+    const result = stub.callAuditor("sandbox_read", {
+      path: path.join(root, "x.txt"),
+    }) as { block?: boolean };
+    assert.notEqual(result.block, true);
+  });
+
+  it("allows relative paths (auditor only checks absolute)", () => {
+    const root = makeTempRoot();
+    const stub = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(stub.pi));
+    const result = stub.callAuditor("sandbox_read", {
+      path: "subdir/file.txt",
+    }) as { block?: boolean };
+    assert.notEqual(result.block, true);
+  });
+
+  it("blocks tool with a name not matching the allowed-prefix set", () => {
+    const root = makeTempRoot();
+    const stub = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(stub.pi));
+    const result = stub.callAuditor("exec_shell", {}) as {
+      block?: boolean;
+      reason?: string;
+    };
+    assert.equal(result.block, true);
+    assert.match(String(result.reason ?? ""), /unexpected tool name/);
+  });
+
+  it("allows tools whose names match the allowlisted prefixes", () => {
+    const root = makeTempRoot();
+    const stub = makeStubPi();
+    withEnv({ PI_SANDBOX_ROOT: root }, () => cwdGuardLoader(stub.pi));
+    for (const name of [
       "sandbox_ls",
-      "sandbox_read",
-      "sandbox_write",
-    ]);
-  });
-});
-
-/* ---------- path validation ------------------------------------------ */
-
-describe("cwd-guard: path validation", () => {
-  it("sandbox_write rejects absolute path outside root", async () => {
-    const root = makeTempRoot();
-    const { pi, tools } = makeStubPi();
-    withEnv(
-      { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "sandbox_write" },
-      () => cwdGuardLoader(pi),
-    );
-    const sandboxWrite = tools.find((t) => t.name === "sandbox_write")!;
-    await assert.rejects(
-      () => sandboxWrite.execute("1", { path: "/etc/passwd", content: "x" }),
-      /escapes sandbox root/,
-    );
-  });
-
-  it("sandbox_write rejects '..' that escapes root", async () => {
-    const root = makeTempRoot();
-    const { pi, tools } = makeStubPi();
-    const prevCwd = process.cwd();
-    process.chdir(root);
-    try {
-      withEnv(
-        { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "sandbox_write" },
-        () => cwdGuardLoader(pi),
-      );
-      const sandboxWrite = tools.find((t) => t.name === "sandbox_write")!;
-      await assert.rejects(
-        () =>
-          sandboxWrite.execute("1", {
-            path: "../escape.txt",
-            content: "x",
-          }),
-        /escapes sandbox root/,
-      );
-    } finally {
-      process.chdir(prevCwd);
-    }
-  });
-
-  it("sandbox_read succeeds inside root and returns the file content", async () => {
-    const root = makeTempRoot();
-    const filePath = path.join(root, "hello.txt");
-    fs.writeFileSync(filePath, "hi there", "utf8");
-    const { pi, tools } = makeStubPi();
-    const prevCwd = process.cwd();
-    process.chdir(root);
-    try {
-      withEnv(
-        { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "sandbox_read" },
-        () => cwdGuardLoader(pi),
-      );
-      const sandboxRead = tools.find((t) => t.name === "sandbox_read")!;
-      const result = (await sandboxRead.execute("1", { path: "hello.txt" })) as {
-        content: { type: string; text: string }[];
-      };
-      assert.equal(result.content[0].text, "hi there");
-    } finally {
-      process.chdir(prevCwd);
-    }
-  });
-
-  it("sandbox_ls returns directory entries", async () => {
-    const root = makeTempRoot();
-    fs.writeFileSync(path.join(root, "a.txt"), "");
-    fs.mkdirSync(path.join(root, "sub"));
-    const { pi, tools } = makeStubPi();
-    const prevCwd = process.cwd();
-    process.chdir(root);
-    try {
-      withEnv(
-        { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "sandbox_ls" },
-        () => cwdGuardLoader(pi),
-      );
-      const sandboxLs = tools.find((t) => t.name === "sandbox_ls")!;
-      const result = (await sandboxLs.execute("1", { path: "." })) as {
-        details: { entries: { name: string; kind: string }[] };
-      };
-      const names = result.details.entries.map((e) => e.name).sort();
-      assert.deepEqual(names, ["a.txt", "sub"]);
-    } finally {
-      process.chdir(prevCwd);
+      "stage_write",
+      "emit_summary",
+      "run_deferred_writer",
+      "review",
+    ]) {
+      const result = stub.callAuditor(name, {}) as { block?: boolean };
+      assert.notEqual(result.block, true, `${name} should not be blocked`);
     }
   });
 });
 
-/* ---------- makeCwdGuard factory ------------------------------------- */
+/* ---------- exported validate() --------------------------------------- */
 
-describe("makeCwdGuard factory", () => {
-  it("allows empty verb list (no-fs role; cwd-guard loaded as defense-in-depth)", () => {
-    const ps = makeCwdGuard({ verbs: [] as ReadonlyArray<SandboxVerb> });
-    assert.deepEqual([...ps.tools], []);
-    const env = ps.env({ cwd: "/some/cwd" });
-    assert.equal(env.PI_SANDBOX_ROOT, "/some/cwd");
-    assert.equal(env.PI_SANDBOX_VERBS, "");
+describe("cwd-guard: validate()", () => {
+  it("rejects absolute path outside root", () => {
+    const root = makeTempRoot();
+    assert.throws(() => validate("/etc/passwd", root), /escapes sandbox root/);
   });
 
-  it("throws on unknown verb", () => {
+  it("accepts path inside root", () => {
+    const root = makeTempRoot();
+    const ok = validate(path.join(root, "sub", "file.txt"), root);
+    assert.equal(ok, path.resolve(path.join(root, "sub", "file.txt")));
+  });
+
+  it("rejects symlink that escapes root", () => {
+    const root = makeTempRoot();
+    const escapeTarget = makeTempRoot(); // a separate dir
+    const linkAbs = path.join(root, "trap");
+    fs.symlinkSync(escapeTarget, linkAbs);
     assert.throws(
-      () =>
-        makeCwdGuard({ verbs: ["bogus_verb"] as unknown as SandboxVerb[] }),
-      /unknown verb/,
+      () => validate(path.join(linkAbs, "stolen.txt"), root),
+      /escapes sandbox root via symlink/,
     );
   });
+});
 
-  it("parentSide.tools matches the requested verb subset", () => {
-    const ps = makeCwdGuard({
-      verbs: ["sandbox_read", "sandbox_ls"],
-    });
-    assert.deepEqual([...ps.tools], ["sandbox_read", "sandbox_ls"]);
+/* ---------- cwdGuardSide singleton ------------------------------------ */
+
+describe("cwd-guard: cwdGuardSide parentSide", () => {
+  it("declares zero tools", () => {
+    assert.deepEqual([...cwdGuardSide.tools], []);
   });
 
-  it("env() returns PI_SANDBOX_ROOT and PI_SANDBOX_VERBS", () => {
-    const ps = makeCwdGuard({
-      verbs: ["sandbox_read", "sandbox_grep"],
-    });
-    const env = ps.env({ cwd: "/some/cwd" });
+  it("name is 'cwd-guard'", () => {
+    assert.equal(cwdGuardSide.name, "cwd-guard");
+  });
+
+  it("env({cwd}) sets PI_SANDBOX_ROOT only (no PI_SANDBOX_VERBS)", () => {
+    const env = cwdGuardSide.env({ cwd: "/some/cwd" });
     assert.equal(env.PI_SANDBOX_ROOT, "/some/cwd");
-    assert.equal(env.PI_SANDBOX_VERBS, "sandbox_read,sandbox_grep");
+    assert.equal(env.PI_SANDBOX_VERBS, undefined);
   });
 
-  it("spawnArgs is `['-e', <path-to-cwd-guard.ts>]`", () => {
-    const ps = makeCwdGuard({ verbs: ["sandbox_ls"] });
-    assert.equal(ps.spawnArgs.length, 2);
-    assert.equal(ps.spawnArgs[0], "-e");
-    assert.match(ps.spawnArgs[1], /cwd-guard\.ts$/);
+  it("spawnArgs is `['-e', <CWD_GUARD_PATH>]`", () => {
+    assert.deepEqual([...cwdGuardSide.spawnArgs], ["-e", CWD_GUARD_PATH]);
+    assert.match(CWD_GUARD_PATH, /cwd-guard\.ts$/);
   });
 
   it("harvest is a no-op and finalize returns {}", () => {
-    const ps = makeCwdGuard({ verbs: ["sandbox_ls"] });
-    const state = ps.initialState();
-    ps.harvest({} as Record<string, unknown>, state);
-    const result = ps.finalize(state, {} as never);
+    const state = cwdGuardSide.initialState();
+    cwdGuardSide.harvest({} as Record<string, unknown>, state);
+    const result = cwdGuardSide.finalize(state, {} as never);
     assert.deepEqual(result, {});
   });
 });

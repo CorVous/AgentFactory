@@ -4,131 +4,110 @@
 
 ## What it does
 
-Pi extension that owns the entire cwd-safe filesystem surface.
-Registers path-validated equivalents for every fs-touching built-in:
+The cwd-policy component. After the policy/surface split, cwd-guard
+owns three things:
 
-| Sandbox verb | Replaces | Validation |
-| --- | --- | --- |
-| `sandbox_read`  | `read`  | path under `PI_SANDBOX_ROOT` (lex + realpath) |
-| `sandbox_ls`    | `ls`    | path under `PI_SANDBOX_ROOT` |
-| `sandbox_grep`  | `grep`  | search root under root; results filtered |
-| `sandbox_glob`  | `glob`  | pattern resolves under root; matches filtered |
-| `sandbox_write` | `write` | path under `PI_SANDBOX_ROOT` |
-| `sandbox_edit`  | `edit`  | path under `PI_SANDBOX_ROOT` |
+1. **The `validate(p, root)` helper.** Lex + realpath check that `p`
+   resolves inside `root`. Throws on escape (including symlink
+   escapes). Exported for any privileged component (sandbox-fs,
+   stage-write, emit-agent-spec) that does its own fs work to call
+   before any `fs.*` syscall.
+2. **The `PI_SANDBOX_ROOT` env contract.** The parentSide sets it
+   from the spawn cwd; the child-side default-export asserts it's
+   present and fails fast otherwise.
+3. **Runtime path-arg auditing.** The default-export attaches
+   `pi.on("tool_call")` and walks args for absolute-path strings,
+   running `validate()` on each. Catches out-of-cwd paths passed to
+   *any* registered tool, including future role components that take
+   a path arg without remembering to call `validate()` themselves.
 
-Both lex and realpath checks fire, so symlink-based escapes are
-caught even when a harness mounts directories into the cwd via
-`ln -s`.
+cwd-guard registers ZERO LLM-visible tools. The actual `sandbox_*`
+verb surface lives in `sandbox-fs.ts` (see `parts/sandbox-fs.md`).
 
-The pi built-ins `read`/`ls`/`grep`/`glob`/`write`/`edit` and `bash`
-are **forbidden** project-wide (the runtime delegate() rejects any
-spawn whose `--tools` CSV includes them). cwd-guard is the only
-sanctioned fs surface.
+## Auto-injection
 
-## When to use
+cwd-guard is the only entry in `pi-sandbox/.pi/lib/policies.ts`'s
+`POLICIES` registry today. `delegate()` and the YAML runner walk
+`POLICIES` and prepend each entry's parentSide to every spawn's
+component list automatically. **You never list `cwd-guard` in a
+phase's `components:` array — the runner rejects it with an
+"auto-injected; do not list" error.**
 
-**Always. On every sub-pi spawn, no exceptions.** Recon, drafter,
-confined-drafter — every fs-capable role loads cwd-guard with its
-verb subset. *No-fs* roles (an RPC delegator whose only tools are
-`run_deferred_writer,review`, for example) ALSO load cwd-guard,
-with an empty verb list — cwd-guard registers zero sandbox tools
-in that case but its `-e` is on the argv anyway. The benefit is
-defense-in-depth and a uniform mental model: every child has the
-guard, so adding fs to a previously no-fs role only requires
-updating `tools` + `PI_SANDBOX_VERBS`, never "remember to also
-add `-e cwd-guard.ts`."
+The defense-in-depth rule "every spawn loads cwd-guard, no
+exceptions" is now enforced by code, not by convention. Even
+no-fs roles (RPC delegators with only `run_deferred_writer,review`)
+get the auditor handler attached, so a bad path arg passed to any
+stub tool is rejected at runtime.
 
-## Selective registration
+## When to compose
 
-cwd-guard reads `PI_SANDBOX_VERBS` (comma-separated) and registers
-**only** the verbs listed. A recon child sees only read verbs; a
-drafter-with-approval child sees only `sandbox_ls` (writes go via
-`stage_write`); a confined-drafter sees the read verbs plus
-`sandbox_write`/`sandbox_edit`. Verbs the role didn't ask for don't
-exist in the child process at all — they can't be registered, can't
-appear in `tool_execution_start` events, can't be smuggled past the
-allowlist.
-
-## Load mechanism
-
-```ts
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const CWD_GUARD = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "components",
-  "cwd-guard.ts",
-);
-```
-
-Pass as `-e <CWD_GUARD>` in the child's spawn args. Compute the
-path from the parent extension's own file location so the layout
-ships with the project and doesn't depend on `$HOME` or the user's
-cwd.
+- **Don't list it.** Auto-injected. Listing it in a phase's
+  `components:` is a validation error.
+- **Don't reference it from a YAML spec at all.** `tools` controls
+  whether sandbox-fs is auto-injected (any `sandbox_*` token activates
+  it); `components` lists role-specific stubs (`stage-write`,
+  `emit-summary`, etc).
 
 ## Required `--tools` allowlist contribution
 
-Pick the subset the role needs:
-
-| Role | Verbs |
-| --- | --- |
-| Recon | `sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob` |
-| Drafter-with-approval | `sandbox_ls` (or `sandbox_ls,sandbox_read`) |
-| Confined-drafter | `sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep` |
-| RPC delegator (no-fs) | (empty — `verbs: []`) |
-
-Plus the role-specific stub (`stage_write`, `emit_summary`,
-`run_deferred_writer`, `review`, etc). Do NOT include any built-in
-fs verb or `bash` — those are forbidden.
+None. cwd-guard registers no LLM-visible tools.
 
 ## Required env contribution
 
-- `PI_SANDBOX_ROOT` — absolute path; cwd-guard validates every
-  operation against it. Always required.
-- `PI_SANDBOX_VERBS` — comma-separated subset of the six sandbox
-  verbs. cwd-guard registers only these. May be empty (or unset)
-  for no-fs roles — cwd-guard then loads and registers nothing.
-  The factory `makeCwdGuard({verbs: [...]})` always sets both env
-  vars; in the no-fs case it sets `PI_SANDBOX_VERBS=""`.
+- `PI_SANDBOX_ROOT` — set automatically by cwd-guard's parentSide
+  (`env: ({cwd}) => ({ PI_SANDBOX_ROOT: cwd })`). The auto-injector
+  merges this into every child env. You don't set it manually for
+  delegate-driven spawns.
 
-## Parent-side wiring (factory)
+## Parent-side wiring
+
+The auto-injector handles it. For hand-rolled spawns that bypass
+`delegate()` (e.g. `delegated-writer.ts:DelegatorSession`,
+`safe-drafter.ts`, the orchestrator's drafter), import the
+singleton:
 
 ```ts
-import { makeCwdGuard } from "../components/cwd-guard.ts";
-import { delegate } from "../lib/delegate.ts";
+import { cwdGuardSide } from "../components/cwd-guard.ts";
 
-// Drafter-with-approval: read-only, stage_write is the write channel.
-const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_read", "sandbox_ls"] });
-await delegate(ctx, { components: [CWD_GUARD, STAGE_WRITE], prompt });
-
-// Confined-drafter: real writes, sandboxed.
-const CWD_GUARD_FULL = makeCwdGuard({
-  verbs: ["sandbox_read", "sandbox_ls", "sandbox_grep",
-          "sandbox_write", "sandbox_edit"],
-});
-await delegate(ctx, { components: [CWD_GUARD_FULL], prompt });
-
-// Recon: read-only.
-const CWD_GUARD_RECON = makeCwdGuard({
-  verbs: ["sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob"],
-});
-await delegate(ctx, { components: [CWD_GUARD_RECON, EMIT_SUMMARY], prompt });
-
-// No-fs role (RPC delegator): cwd-guard loads but registers nothing.
-const CWD_GUARD_NONE = makeCwdGuard({ verbs: [] });
-// (delegator typically goes through a hand-rolled spawn rather than
-// delegate(); see `delegated-writer.ts:DelegatorSession` for the shape.)
+const spawnArgs = [...cwdGuardSide.spawnArgs, /* others */];
+const env = { ...process.env, ...cwdGuardSide.env({ cwd: sandboxRoot }) };
 ```
 
-`makeCwdGuard()` returns a `ParentSide` whose `tools` array matches
-the requested verbs exactly, whose `spawnArgs` carry the `-e` flag,
-and whose `env(ctx)` sets both `PI_SANDBOX_ROOT` and
-`PI_SANDBOX_VERBS`. cwd-guard is a **negative wiring case** for
-harvest — the child's sandbox tools execute directly inside the
-child process (sandbox_write/edit write to disk, sandbox_read/ls/grep/glob
-return data inline), so `parentSide.harvest` is a no-op and
-`parentSide.finalize` returns `{}`.
+For composer-emitted YAML specs, do nothing — the runner injects.
 
-See `_parent-side.ts` for the exact `ParentSide` shape.
+## Validate() helper
+
+Privileged components that need `node:fs` (sandbox-fs.ts,
+stage-write.ts, emit-agent-spec.ts) import `validate` from
+cwd-guard and call it on every absolute path before the `fs.*`
+call:
+
+```ts
+import { validate } from "./cwd-guard.ts";
+// ...
+const dest = path.resolve(sandboxRoot, relPath);
+validate(dest, sandboxRoot);  // throws on escape
+fs.writeFileSync(dest, content, "utf8");
+```
+
+See `parts/sandbox-fs.md` for the canonical six-tool example;
+`AGENTS.md` "Authoring a new component" describes the pattern in
+detail.
+
+## Auditor blocking semantics
+
+The `pi.on("tool_call")` handler returns `{ block: true, reason }`
+to abort a tool call. The two block conditions:
+
+1. **Tool name doesn't match the allowed-prefix set.** Allowed:
+   `sandbox_*`, `stage_*`, `emit_*`, `run_*`, `review`. Anything
+   else (e.g. a hypothetical `exec_shell`) is blocked at the
+   tool_call event before the body runs.
+2. **An absolute-path arg escapes `PI_SANDBOX_ROOT`.** Walks args
+   recursively; for each string starting with `/`, calls
+   `validate()`. The first violation aborts the call.
+
+This is defense-in-depth. The primary enforcement for sandbox tool
+calls is sandbox-fs's per-body `validate()`. The auditor backstops
+that and covers role-component tools whose authors might forget to
+validate themselves.

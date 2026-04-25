@@ -1,15 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { makeCwdGuard } from "../components/cwd-guard.ts";
+import { cwdGuardSide } from "../components/cwd-guard.ts";
 import { parentSide as REVIEW } from "../components/review.ts";
 import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
 
 // Drafter children inspect the existing tree via sandbox_read/sandbox_ls
-// and write through the stage_write stub; the cwd-guard *write* verbs
-// are deliberately excluded so stage_write is the only path-to-disk.
-const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_read", "sandbox_ls"] });
+// (auto-injected sandbox-fs registers them) and write through the
+// stage_write stub; the sandbox-fs *write* verbs are deliberately
+// excluded so stage_write is the only path-to-disk. cwd-guard is
+// auto-injected by delegate() so we don't list it here either.
 import type {
   DispatchRequestsState,
   ReviewCall,
@@ -222,7 +223,8 @@ Rules:
     : STAGE_WRITE;
 
   const result = await delegate(ctx, {
-    components: [CWD_GUARD, stageHook],
+    components: [stageHook],
+    extraTools: ["sandbox_read", "sandbox_ls"],
     prompt,
     autoPromote: false,
   });
@@ -249,19 +251,18 @@ class DelegatorSession {
   constructor(leadModel: string, sandboxRoot: string) {
     // -e flags and --tools CSV come from parentSide contributions so the
     // RPC delegator shares its "how to load these stubs" knowledge with
-    // the rest of the composer library (rails.md §1, §8). cwd-guard is
-    // loaded with an empty verb set: the delegator does no fs work, but
-    // every sub-pi spawn loads cwd-guard as defense-in-depth — if a
-    // future change adds fs to the delegator role, only the verb list
-    // needs to change.
-    const NO_FS_GUARD = makeCwdGuard({ verbs: [] });
+    // the rest of the composer library (rails.md §1, §8). The delegator
+    // does no fs work — only run_deferred_writer + review stubs — so it
+    // loads cwd-guard alone (no sandbox-fs). cwd-guard's auditor
+    // (`pi.on("tool_call")`) still runs, blocking any out-of-cwd path
+    // arg the delegator LLM might pass to a stub.
     const spawnArgs = [
-      ...NO_FS_GUARD.spawnArgs,
+      ...cwdGuardSide.spawnArgs,
       ...RUN_DEFERRED_WRITER.spawnArgs,
       ...REVIEW.spawnArgs,
     ];
     const tools = [...RUN_DEFERRED_WRITER.tools, ...REVIEW.tools].join(",");
-    const guardEnv = NO_FS_GUARD.env({ cwd: sandboxRoot });
+    const guardEnv = cwdGuardSide.env({ cwd: sandboxRoot });
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",

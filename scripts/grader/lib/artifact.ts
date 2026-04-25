@@ -415,24 +415,28 @@ export function findDelegateUsage(src: string): DelegateUsage {
     identToComponent.set(im[1], im[2]);
   }
 
-  // cwd-guard is loaded via the makeCwdGuard factory rather than a
-  // direct parentSide import. Detect either the import alone (counts as
-  // "importedComponents") and any `const X = makeCwdGuard(...)` binding
-  // (counts as a usable identifier in the components: [...] array).
-  const factoryImportRe =
-    /import\s*\{\s*makeCwdGuard[^}]*\}\s*from\s*["'][^"']*components\/cwd-guard\.ts["']/;
-  if (factoryImportRe.test(src)) {
+  // Hand-rolled spawns may import cwd-guard's parentSide singleton
+  // directly (`import { cwdGuardSide } from "../components/cwd-guard.ts"`)
+  // to reuse its spawnArgs/env without going through delegate(). Count
+  // the import alone — the singleton is never put into a delegate()
+  // `components` array (cwd-guard is auto-injected), so no
+  // identToComponent binding is needed.
+  const cwdGuardImportRe =
+    /import\s*\{[^}]*\bcwdGuardSide\b[^}]*\}\s*from\s*["'][^"']*components\/cwd-guard\.ts["']/;
+  if (cwdGuardImportRe.test(src)) {
     importedComponents.add("cwd-guard");
-    const factoryBindRe =
-      /\bconst\s+([A-Z_][A-Z0-9_]*)\s*=\s*makeCwdGuard\s*\(/g;
-    let fm: RegExpExecArray | null;
-    while ((fm = factoryBindRe.exec(src))) {
-      identToComponent.set(fm[1], "cwd-guard");
-    }
   }
 
   const delegateHandles = new Set<string>();
   if (usesDelegate) {
+    // cwd-guard and sandbox-fs are auto-injected by delegate() from the
+    // POLICIES / TOOL_PROVIDERS registries — extensions never list them
+    // in `components: [...]`. Mark them as delegate-handled up front so
+    // the per-component wiringChecks short-circuit cleanly for thin
+    // agents.
+    delegateHandles.add("cwd-guard");
+    delegateHandles.add("sandbox-fs");
+
     const delegateCallRe = /\bdelegate\s*\(/g;
     let dm: RegExpExecArray | null;
     while ((dm = delegateCallRe.exec(src))) {

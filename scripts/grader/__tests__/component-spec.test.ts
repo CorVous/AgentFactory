@@ -255,16 +255,20 @@ describe("wiringChecks: review", () => {
 
 /* -------- findDelegateUsage (Phase 2.5) ----------------------------- */
 
+// Thin-agent fixtures after the auto-injection split: cwd-guard and
+// sandbox-fs are NOT imported or referenced — the runner injects them.
+// Each user-listed component (stage-write, etc.) appears via the
+// `parentSide as X` import alias and shows up in the delegate()
+// call's `components` array.
 const THIN_AGENT_BLOB = `
   import path from "node:path";
-  import { makeCwdGuard } from "../components/cwd-guard.ts";
   import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
   import { delegate } from "../lib/delegate.ts";
-  const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_ls"] });
   pi.registerCommand("x", {
     handler: async (args, ctx) => {
       await delegate(ctx, {
-        components: [CWD_GUARD, STAGE_WRITE],
+        components: [STAGE_WRITE],
+        extraTools: ["sandbox_ls"],
         prompt: "p",
       });
     },
@@ -276,25 +280,31 @@ const INLINE_AGENT_BLOB = `
 `;
 
 const ORCHESTRATOR_BLOB = `
-  import { makeCwdGuard } from "../components/cwd-guard.ts";
+  import { cwdGuardSide } from "../components/cwd-guard.ts";
   import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
   import { parentSide as REVIEW } from "../components/review.ts";
   import { parentSide as RUN_DEFERRED_WRITER } from "../components/run-deferred-writer.ts";
   import { delegate } from "../lib/delegate.ts";
-  const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_ls"] });
   const stageHook = { ...STAGE_WRITE, harvest() {} };
-  const result = await delegate(ctx, { components: [CWD_GUARD, stageHook], prompt: p });
+  const result = await delegate(ctx, { components: [stageHook], extraTools: ["sandbox_ls"], prompt: p });
   REVIEW.harvest(ev, reviewState);
   RUN_DEFERRED_WRITER.harvest(ev, dispatchState);
-  spawn("pi", ["--mode", "rpc", "--tools", "run_deferred_writer,review"]);
+  spawn("pi", ["--mode", "rpc", ...cwdGuardSide.spawnArgs, "--tools", "run_deferred_writer,review"]);
 `;
 
 describe("findDelegateUsage", () => {
   it("detects a thin-agent pattern", () => {
     const u = findDelegateUsage(THIN_AGENT_BLOB);
     assert.equal(u.usesDelegate, true);
-    assert.deepEqual([...u.importedComponents].sort(), ["cwd-guard", "stage-write"]);
-    assert.deepEqual([...u.delegateHandles].sort(), ["cwd-guard", "stage-write"]);
+    // Extension imports only stage-write directly; cwd-guard and
+    // sandbox-fs are auto-injected and never appear as imports.
+    assert.deepEqual([...u.importedComponents].sort(), ["stage-write"]);
+    // delegateHandles always includes the auto-injected pair when
+    // delegate() is used, plus any explicitly-listed components.
+    assert.deepEqual(
+      [...u.delegateHandles].sort(),
+      ["cwd-guard", "sandbox-fs", "stage-write"],
+    );
   });
 
   it("reports usesDelegate=false for an inline-spawn agent", () => {
@@ -309,7 +319,14 @@ describe("findDelegateUsage", () => {
     assert.equal(u.usesDelegate, true);
     // stageHook wraps STAGE_WRITE — should be picked up via the wrapper scan.
     assert.ok(u.delegateHandles.has("stage-write"), [...u.delegateHandles].join(","));
+    // cwd-guard and sandbox-fs are auto-injected, so they're always in
+    // delegateHandles when usesDelegate.
     assert.ok(u.delegateHandles.has("cwd-guard"));
+    assert.ok(u.delegateHandles.has("sandbox-fs"));
+    // The orchestrator imports cwd-guard's parentSide directly to drive
+    // the RPC delegator spawn; that counts as importedComponents but not
+    // delegateHandles per se (auto-injection covers that).
+    assert.ok(u.importedComponents.has("cwd-guard"));
     // review and run-deferred-writer are imported (for their harvesters)
     // but drive the RPC spawn inline — not in delegateHandles.
     assert.ok(u.importedComponents.has("review"));

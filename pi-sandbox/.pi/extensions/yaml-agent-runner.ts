@@ -21,44 +21,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { parse as yamlParse } from "yaml";
-import { makeCwdGuard, type SandboxVerb } from "../components/cwd-guard.ts";
 import { parentSide as EMIT_AGENT_SPEC } from "../components/emit-agent-spec.ts";
 import { parentSide as EMIT_SUMMARY } from "../components/emit-summary.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
 import type { EmitSummaryResult, ParentSide } from "../components/_parent-side.ts";
 import { delegate } from "../lib/delegate.ts";
+import { reservedComponentNames } from "../lib/auto-inject.ts";
 
 const AGENTS_DIR = path.resolve(process.cwd(), ".pi", "agents");
 export const MAX_BRIEF_BYTES = 16_000;
 
-// Sandbox verbs cwd-guard can register. The yaml runner derives the
-// per-phase verb set as the intersection of the phase's explicit `tools`
-// list and this set.
-const SANDBOX_VERBS: ReadonlySet<string> = new Set<SandboxVerb>([
-  "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
-  "sandbox_write", "sandbox_edit",
-]);
-
-// name → builder. Most components have a fixed parentSide; cwd-guard is
-// a factory whose verb set depends on the phase's declared tools, so its
-// builder reads the phase's explicit tools list to decide what to lift.
-// Adding `review` / `run-deferred-writer` here would not make them work
-// — `delegate()` doesn't manage the RPC loop they require — so they are
-// rejected at validation time instead (see `validateSpec`).
-type ComponentBuilder = (
-  phaseTools: ReadonlyArray<string>,
-) => ParentSide<any, unknown>;
-
-const COMPONENTS: Record<string, ComponentBuilder> = {
-  "cwd-guard": (phaseTools) => {
-    const verbs = phaseTools.filter((t) => SANDBOX_VERBS.has(t)) as SandboxVerb[];
-    if (verbs.length === 0) {
-      throw new Error(
-        "cwd-guard requires at least one sandbox_* verb in the phase's tools list",
-      );
-    }
-    return makeCwdGuard({ verbs });
-  },
+// User-listable components. cwd-guard and sandbox-fs are NOT here —
+// they're auto-injected by delegate() via the POLICIES /
+// TOOL_PROVIDERS registries. Listing them in a phase's `components`
+// is rejected by validateSpec.
+//
+// Adding `review` / `run-deferred-writer` here would not make them
+// work — `delegate()` doesn't manage the RPC loop they require — so
+// they are rejected at validation time instead (see `validateSpec`).
+const COMPONENTS: Record<string, () => ParentSide<any, unknown>> = {
   "stage-write": () => STAGE_WRITE,
   "emit-summary": () => EMIT_SUMMARY,
   "emit-agent-spec": () => EMIT_AGENT_SPEC,
@@ -125,7 +106,7 @@ export default function (pi: ExtensionAPI) {
         if (spec.composition === "single-spawn") {
           const phase = spec.phases[0];
           await delegate(ctx, {
-            components: phase.components.map((n) => COMPONENTS[n](phase.tools ?? [])),
+            components: phase.components.map((n) => COMPONENTS[n]()),
             prompt: substitute(phase.prompt, baseSubs),
             skill: spec.skill,
             toolsOverride: phase.tools,
@@ -137,7 +118,7 @@ export default function (pi: ExtensionAPI) {
         const scoutPhase = spec.phases[0];
         const draftPhase = spec.phases[1];
         const scoutResult = await delegate(ctx, {
-          components: scoutPhase.components.map((n) => COMPONENTS[n](scoutPhase.tools ?? [])),
+          components: scoutPhase.components.map((n) => COMPONENTS[n]()),
           prompt: substitute(scoutPhase.prompt, baseSubs),
           skill: spec.skill,
           toolsOverride: scoutPhase.tools,
@@ -162,7 +143,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         await delegate(ctx, {
-          components: draftPhase.components.map((n) => COMPONENTS[n](draftPhase.tools ?? [])),
+          components: draftPhase.components.map((n) => COMPONENTS[n]()),
           prompt: substitute(draftPhase.prompt, { ...baseSubs, brief }),
           skill: spec.skill,
           toolsOverride: draftPhase.tools,
@@ -226,6 +207,7 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
     if (!Array.isArray(components) || components.length === 0) {
       throw new Error(`${file}: phases[${i}].components must be non-empty`);
     }
+    const reserved = reservedComponentNames();
     for (const c of components) {
       if (typeof c !== "string") {
         throw new Error(`${file}: phases[${i}].components has non-string entry`);
@@ -235,6 +217,12 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
           `${file}: phases[${i}] declares "${c}", which requires the ` +
             `RPC-delegator topology. Not runnable via delegate(). ` +
             `Use pi-agent-builder.`,
+        );
+      }
+      if (reserved.has(c)) {
+        throw new Error(
+          `${file}: phases[${i}].components must not list "${c}" — ` +
+            `auto-injected by the runner.`,
         );
       }
       if (!COMPONENTS[c]) {
@@ -253,9 +241,10 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
     // Optional explicit tools allowlist. When set, must be a non-empty
     // string array AND must cover every tool each declared component
     // contributes — otherwise a typo silently strips a component's
-    // ability to do its job. cwd-guard is a factory: its required tools
-    // are the intersection of the spec's `tools` and SANDBOX_VERBS, so
-    // the check becomes "at least one sandbox_* verb is present."
+    // ability to do its job. The auto-injected sandbox-fs surface is
+    // activated by `tools` containing at least one sandbox_* verb;
+    // delegate() handles that automatically, so the runner doesn't
+    // need its own intersection check.
     let tools: string[] | undefined;
     if (pr.tools !== undefined) {
       if (
@@ -268,20 +257,9 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
         );
       }
       tools = pr.tools as string[];
-      const componentNames = components as string[];
-      if (componentNames.includes("cwd-guard")) {
-        const sandboxVerbsInTools = tools.filter((t) => SANDBOX_VERBS.has(t));
-        if (sandboxVerbsInTools.length === 0) {
-          throw new Error(
-            `${file}: phases[${i}] declares cwd-guard but tools contains no ` +
-              `sandbox_* verb. Add at least one of: ${[...SANDBOX_VERBS].join(", ")}.`,
-          );
-        }
-      }
       const declared = new Set<string>();
-      for (const c of componentNames) {
-        if (c === "cwd-guard") continue; // handled above
-        const fixed = COMPONENTS[c]([]);
+      for (const c of components as string[]) {
+        const fixed = COMPONENTS[c]();
         for (const t of fixed.tools) declared.add(t);
       }
       const missing = [...declared].filter((t) => !tools!.includes(t));
@@ -290,15 +268,6 @@ export function validateSpec(raw: unknown, file: string): AgentSpec {
           `${file}: phases[${i}].tools is missing tools required by ` +
             `declared components: ${missing.join(", ")}. Either add them ` +
             `to the explicit list or drop the offending components.`,
-        );
-      }
-    } else {
-      // No explicit tools list — cwd-guard cannot infer a verb set, so
-      // require an explicit declaration whenever cwd-guard is used.
-      if ((components as string[]).includes("cwd-guard")) {
-        throw new Error(
-          `${file}: phases[${i}] declares cwd-guard but provides no \`tools\` ` +
-            `list. cwd-guard requires an explicit subset of sandbox_* verbs.`,
         );
       }
     }

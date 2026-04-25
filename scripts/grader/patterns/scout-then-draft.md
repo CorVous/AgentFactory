@@ -37,20 +37,22 @@ Two phases; each phase uses the parts from its underlying pattern.
 
 **Recon phase (child 1):**
 
-1. `cwd-guard.ts` — supplies the path-validated read verbs
+1. `cwd-guard.ts` — universal cwd policy (auditor + `validate()`).
+2. `sandbox-fs.ts` — supplies the path-validated read verbs
    (`sandbox_read`, `sandbox_ls`, `sandbox_grep`, `sandbox_glob`).
-   `PI_SANDBOX_VERBS` lists only the read verbs, so cwd-guard
+   `PI_SANDBOX_VERBS` lists only the read verbs, so sandbox-fs
    registers no write tool.
-2. `emit-summary.ts` — the child emits one or more structured
+3. `emit-summary.ts` — the child emits one or more structured
    summaries; the parent harvests `{title, body}` from NDJSON.
 
 **Drafter phase (child 2):**
 
-1. `cwd-guard.ts` — supplies `sandbox_read` / `sandbox_ls` for the
+1. `cwd-guard.ts` — universal cwd policy.
+2. `sandbox-fs.ts` — supplies `sandbox_read` / `sandbox_ls` for the
    drafter's read needs. `PI_SANDBOX_VERBS` excludes the write verbs,
-   so even though cwd-guard is loaded, no `sandbox_write`/`sandbox_edit`
-   is registered. `stage_write` is the only write channel.
-2. `stage-write.ts` — the stub write channel. Parent previews via
+   so no `sandbox_write`/`sandbox_edit` is registered. `stage_write`
+   is the only write channel.
+3. `stage-write.ts` — the stub write channel. Parent previews via
    `ctx.ui.confirm` and promotes on approval.
 
 ## `--tools` allowlist
@@ -130,6 +132,10 @@ const CWD_GUARD = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "cwd-guard.ts",
 );
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "stage-write.ts",
@@ -154,7 +160,12 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("TASK_MODEL env var not set. Source models.env.", "error");
         return;
       }
-      if (!fs.existsSync(EMIT_SUMMARY) || !fs.existsSync(STAGE_WRITE_TOOL) || !fs.existsSync(CWD_GUARD)) {
+      if (
+        !fs.existsSync(EMIT_SUMMARY) ||
+        !fs.existsSync(STAGE_WRITE_TOOL) ||
+        !fs.existsSync(CWD_GUARD) ||
+        !fs.existsSync(SANDBOX_FS)
+      ) {
         ctx.ui.notify("components missing; check pi-sandbox/.pi/components/", "error");
         return;
       }
@@ -178,6 +189,7 @@ export default function (pi: ExtensionAPI) {
         "pi",
         [
           "-e", CWD_GUARD,
+          "-e", SANDBOX_FS,
           "-e", EMIT_SUMMARY,
           "--mode", "json",
           "--tools", `${RECON_VERBS},emit_summary`,
@@ -267,6 +279,7 @@ export default function (pi: ExtensionAPI) {
         "pi",
         [
           "-e", CWD_GUARD,
+          "-e", SANDBOX_FS,
           "-e", STAGE_WRITE_TOOL,
           "--mode", "json",
           "--tools", `stage_write,${DRAFTER_VERBS}`,
@@ -397,6 +410,7 @@ anchor.
 **Recon child (first spawn):**
 
 - `-e <abs path ending in components/cwd-guard.ts>` AND
+  `-e <abs path ending in components/sandbox-fs.ts>` AND
   `-e <abs path ending in components/emit-summary.ts>`.
 - `"--tools", "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob,emit_summary"`.
 - Child env: `PI_SANDBOX_ROOT: sandboxRoot` AND `PI_SANDBOX_VERBS`
@@ -411,6 +425,7 @@ anchor.
 **Drafter child (second spawn):**
 
 - `-e <abs path ending in components/cwd-guard.ts>` AND
+  `-e <abs path ending in components/sandbox-fs.ts>` AND
   `-e <abs path ending in components/stage-write.ts>`.
 - `PI_SANDBOX_ROOT: sandboxRoot` AND `PI_SANDBOX_VERBS: "sandbox_ls"`
   (or `"sandbox_ls,sandbox_read"` if justified) in the child env.

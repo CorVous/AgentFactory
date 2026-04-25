@@ -9,7 +9,11 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 describe("pattern-spec", () => {
   it("parses drafter-with-approval", () => {
     const p = loadPatternSpec(REPO_ROOT, "drafter-with-approval");
-    assert.deepEqual(p.components, ["cwd-guard.ts", "stage-write.ts"]);
+    assert.deepEqual(p.components, [
+      "cwd-guard.ts",
+      "sandbox-fs.ts",
+      "stage-write.ts",
+    ]);
     assert.ok(p.tools.includes("stage_write"));
     assert.ok(p.tools.includes("sandbox_ls"));
     assert.ok(!p.tools.includes("write"));
@@ -31,7 +35,7 @@ describe("pattern-spec", () => {
 
   it("parses confined-drafter", () => {
     const p = loadPatternSpec(REPO_ROOT, "confined-drafter");
-    assert.deepEqual(p.components, ["cwd-guard.ts"]);
+    assert.deepEqual(p.components, ["cwd-guard.ts", "sandbox-fs.ts"]);
     assert.ok(p.tools.includes("sandbox_write"));
     assert.ok(p.tools.includes("sandbox_edit"));
     assert.ok(p.tools.includes("sandbox_read"));
@@ -44,6 +48,7 @@ describe("pattern-spec", () => {
     // Flatten the two phases' component lists.
     assert.ok(p.components.includes("emit-summary.ts"));
     assert.ok(p.components.includes("cwd-guard.ts"));
+    assert.ok(p.components.includes("sandbox-fs.ts"));
     assert.ok(p.components.includes("stage-write.ts"));
     assert.ok(p.tools.includes("stage_write"));
     assert.ok(p.tools.includes("emit_summary"));

@@ -25,9 +25,12 @@ for that case.
 
 In load order on the **delegator** child:
 
-1. `cwd-guard.ts` — even though the delegator has no write verbs,
-   load cwd-guard so any future edits to the pattern inherit the
-   safety rail by default.
+1. `cwd-guard.ts` — universal cwd policy. Required on every
+   sub-pi spawn even though the delegator does no fs work —
+   the auditor still backstops path-arg validation on stub calls.
+   sandbox-fs is NOT loaded here (no sandbox_* verbs in --tools),
+   so the delegator's tool surface stays exactly
+   `run_deferred_writer,review`.
 2. `run-deferred-writer.ts` — **not** a reusable library part. It
    lives at `pi-sandbox/.pi/components/run-deferred-writer.ts` as a
    committed artifact, but it is *specific* to this pattern. It
@@ -39,8 +42,10 @@ In load order on the **delegator** child:
 
 On each **drafter** child the pattern dispatches:
 
-1. `cwd-guard.ts`
-2. `stage-write.ts` — drafts stage into parent memory the same way
+1. `cwd-guard.ts` — universal policy.
+2. `sandbox-fs.ts` — registers the read verbs (`sandbox_ls` and
+   optionally `sandbox_read`) the drafter needs.
+3. `stage-write.ts` — drafts stage into parent memory the same way
    as `drafter-with-approval`, but the gate is the reviewer LLM,
    not `ctx.ui.confirm`.
 
@@ -48,8 +53,8 @@ On each **drafter** child the pattern dispatches:
 
 - **Delegator:** `run_deferred_writer,review` — nothing else. The
   delegator does no fs work; cwd-guard is still loaded on the spawn
-  as defense-in-depth (`PI_SANDBOX_VERBS=""` so it registers zero
-  sandbox tools).
+  as defense-in-depth, but sandbox-fs is NOT loaded (no sandbox_*
+  verbs in --tools means no fs surface).
 - **Drafter:** `stage_write,sandbox_ls` (or
   `stage_write,sandbox_ls,sandbox_read` if explicitly needed). NO
   built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`, no `bash`, and
@@ -107,6 +112,10 @@ const CWD_GUARD = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "cwd-guard.ts",
 );
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
 const STAGE_WRITE_TOOL = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "stage-write.ts",
@@ -137,9 +146,9 @@ export default function (pi: ExtensionAPI) {
       const sandboxRoot = path.resolve(process.cwd());
 
       // 1. Spawn delegator in RPC mode with run_deferred_writer + review.
-      //    cwd-guard is loaded with PI_SANDBOX_VERBS="" — defense in
-      //    depth, registers zero sandbox tools, but every sub-pi spawn
-      //    in the project carries the guard regardless of role.
+      //    cwd-guard is loaded as defense-in-depth — every sub-pi spawn
+      //    carries it. sandbox-fs is NOT loaded because there are no
+      //    sandbox_* verbs in --tools.
       const delegator = spawn(
         "pi",
         [
@@ -160,7 +169,6 @@ export default function (pi: ExtensionAPI) {
           env: {
             ...process.env,
             PI_SANDBOX_ROOT: sandboxRoot,
-            PI_SANDBOX_VERBS: "",
           },
         },
       );
@@ -203,17 +211,19 @@ export default function (pi: ExtensionAPI) {
 - `-e CWD_GUARD`, `-e RUN_DEFERRED_WRITER_TOOL`, `-e REVIEW_TOOL` on
   the delegator spawn. cwd-guard is loaded as defense-in-depth even
   though the delegator does no fs work — every sub-pi spawn in the
-  project carries the guard. `PI_SANDBOX_VERBS=""` in the delegator's
-  env makes cwd-guard register zero sandbox tools, so the delegator's
-  visible tool surface remains exactly `run_deferred_writer,review`.
+  project carries the guard. sandbox-fs is NOT loaded on the
+  delegator because there are no sandbox_* verbs in --tools, so
+  the delegator's visible tool surface stays exactly
+  `run_deferred_writer,review`.
 - `"--mode", "rpc"` on the delegator (NOT `json`).
 - `"--tools", "run_deferred_writer,review"` on the delegator — no
   read or write verbs.
 - `"--no-extensions"` and `"--no-session"` on every spawn.
-- `PI_SANDBOX_ROOT: sandboxRoot` AND `PI_SANDBOX_VERBS` (possibly
-  empty) in every child env.
+- `PI_SANDBOX_ROOT: sandboxRoot` in every child env. The delegator
+  needs no `PI_SANDBOX_VERBS` (sandbox-fs not loaded); each drafter
+  needs the verb subset its --tools allowlist uses.
 - Per-drafter spawn follows the `drafter-with-approval` skeleton
-  exactly: `-e CWD_GUARD` + `-e STAGE_WRITE_TOOL`,
+  exactly: `-e CWD_GUARD` + `-e SANDBOX_FS` + `-e STAGE_WRITE_TOOL`,
   `--tools "stage_write,sandbox_ls"`, env contains
   `PI_SANDBOX_ROOT` AND `PI_SANDBOX_VERBS: "sandbox_ls"`, same
   `stdio`, minus `ctx.ui.confirm`.

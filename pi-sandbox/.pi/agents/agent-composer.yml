@@ -7,7 +7,6 @@ phases:
   - name: compose
     components:
       - emit-agent-spec
-      - cwd-guard
     tools:
       - sandbox_read
       - sandbox_ls

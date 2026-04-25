@@ -26,6 +26,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import { stringify as yamlStringify } from "yaml";
+import { validate } from "./cwd-guard.ts";
 import type {
   EmitAgentSpecResult,
   EmitAgentSpecState,
@@ -143,6 +144,12 @@ export default function (pi: ExtensionAPI) {
           `path escapes agents dir: ${params.name} -> ${destReal}`,
         );
       }
+      // Defense-in-depth: route through cwd-guard's canonical
+      // validator (lex + realpath) before mkdir+write. The lex check
+      // above already restricts to AGENTS_DIR; validate() additionally
+      // rejects symlink escapes (e.g. an in-bounds destReal that
+      // resolves outside the sandbox via a symlinked subdir).
+      validate(destReal, ROOT);
       if (fs.existsSync(destReal)) {
         throw new Error(
           `${params.name}.yml already exists. Pick a different name; ` +

@@ -55,7 +55,11 @@ describe("enumerateCurations", () => {
     assert.ok(all.length > 0);
     for (const c of all) {
       assert.equal(c.kind, "assembly");
-      assert.deepEqual(c.components, ["cwd-guard.ts", "stage-write.ts"]);
+      assert.deepEqual(c.components, [
+        "cwd-guard.ts",
+        "sandbox-fs.ts",
+        "stage-write.ts",
+      ]);
       assert.ok(c.probe, "expected a probe");
     }
   });

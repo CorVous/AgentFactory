@@ -10,14 +10,19 @@ using the 30-row signal table in
 `pi-sandbox/skills/pi-agent-builder/references/reading-short-prompts.md`.
 Examples (non-exhaustive — the table is authoritative):
 
-| User says… | Implies component(s) |
-| --- | --- |
-| "summarize", "survey", "audit", "explore", "map out", "index" (no draft step follows) | `cwd-guard`, `emit-summary` |
-| "draft a file and show me", "stage, then approve", "preview before writing" | `cwd-guard`, `stage-write` |
-| "write X into `<dir>`", "no approval needed", batch / scripted run | `cwd-guard` |
-| "look at X, then write Y", "given what's there, produce the missing W" | `cwd-guard`, `emit-summary`, `stage-write` |
-| "dispatch several drafters then review", "orchestrator that reviews" | `cwd-guard`, `stage-write`, `review`, `run-deferred-writer` |
-| "have an LLM check each draft before saving" (single drafter, no fan-out) | `cwd-guard`, `stage-write`, `review` |
+cwd-guard and sandbox-fs are auto-injected — never list them.
+The "components" column below shows only the role-specific stubs
+you DO list in `components:`; sandbox verbs you put in `tools`
+activate sandbox-fs automatically.
+
+| User says… | User-listed component(s) | Sandbox verbs in `tools` |
+| --- | --- | --- |
+| "summarize", "survey", "audit", "explore", "map out", "index" (no draft step follows) | `emit-summary` | `sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob` |
+| "draft a file and show me", "stage, then approve", "preview before writing" | `stage-write` | `sandbox_ls` (or `sandbox_ls,sandbox_read`) |
+| "write X into `<dir>`", "no approval needed", batch / scripted run | (none beyond auto-inject) | `sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep` |
+| "look at X, then write Y", "given what's there, produce the missing W" | `emit-summary` (phase 1), `stage-write` (phase 2) | per-phase subset |
+| "dispatch several drafters then review", "orchestrator that reviews" | `stage-write`, `review`, `run-deferred-writer` (deferred — emit GAP) | per-spawn |
+| "have an LLM check each draft before saving" (single drafter, no fan-out) | `stage-write`, `review` (deferred — emit GAP) | per-spawn |
 
 **Stop early on network I/O.** Asks like "summarize an external API
 endpoint" echo the recon signals but require an I/O channel no
@@ -33,20 +38,21 @@ If NO signal maps to any component, go straight to step 5.
 
 ## 2. Pick parts
 
-Take the union of components implied by step 1's signals, then
-**always add `cwd-guard`** to every phase's component set. There
-is no exception: cwd-guard loads on every sub-pi spawn as
-defense-in-depth, even no-fs roles.
+Take the role-specific components implied by step 1's signals.
+**Do NOT list `cwd-guard` or `sandbox-fs`** — they are auto-injected
+by the runner and listing either name is a validation error.
 
-- The phase's `tools` list determines which sandbox verbs cwd-guard
-  registers. A recon phase lifts
+- The phase's `tools` list determines which sandbox verbs the
+  runner activates sandbox-fs with. A recon phase lifts
   `sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob`; a
   drafter-with-approval lifts `sandbox_ls` (writes go via
-  stage_write); a confined-drafter lifts the read verbs plus
+  `stage_write`); a confined-drafter lifts the read verbs plus
   `sandbox_write,sandbox_edit`; a no-fs delegator lifts nothing
-  (cwd-guard loads but registers zero sandbox tools).
+  (sandbox-fs not loaded).
+- cwd-guard loads on every spawn unconditionally — it sets
+  `PI_SANDBOX_ROOT` and runs the path-arg auditor.
 - The built-in `read`/`ls`/`grep`/`glob`/`write`/`edit` are
-  forbidden across the project — cwd-guard's `sandbox_*` family is
+  forbidden across the project — sandbox-fs's `sandbox_*` family is
   the only sanctioned fs surface.
 
 If a signal points at a component the library doesn't have (e.g.
@@ -90,8 +96,7 @@ user passes at runtime), `{sandboxRoot}` (absolute path of
 pi-sandbox), and — phase 2 of `sequential-phases-with-brief` only
 — `{brief}` (assembled from phase-1 `emit_summary` calls).
 
-### Example (single-spawn — covers `[emit-summary]`,
-### `[cwd-guard]`, `[cwd-guard, stage-write]`)
+### Example (single-spawn — covers `[emit-summary]` and `[stage-write]`)
 
 ```
 emit_agent_spec({
@@ -101,24 +106,23 @@ emit_agent_spec({
   composition: "single-spawn",
   phases: [
     {
-      components: ["cwd-guard", "stage-write"],   // ← declared set
+      components: ["stage-write"],   // ← role-specific stubs only
+      tools: ["sandbox_ls", "stage_write"],   // ← sandbox_ls activates sandbox-fs
       prompt: "You are a DRAFTER. Task: {args}. Stage files via stage_write under {sandboxRoot}. Reply DONE when finished."
     }
   ]
 })
 ```
 
-Always keep `cwd-guard` in every phase's component set — even
-read-only recon and no-fs delegators. The built-in
-`read`/`ls`/`grep`/`glob` verbs are forbidden, so cwd-guard's
-`sandbox_*` family is the only sanctioned fs surface; loading it
-unconditionally (with empty verbs when the role does no fs)
-keeps the architecture uniform. The runner's `delegate()` calls
-infer the model tier automatically — `$TASK_MODEL` here because
-neither `review` nor `run-deferred-writer` are present.
+`cwd-guard` and `sandbox-fs` are auto-injected — listing either
+name fails validation. The runner activates sandbox-fs because the
+`tools` list includes a `sandbox_*` verb; if you omit all sandbox
+verbs the role becomes no-fs (e.g. an emit-summary-only flow with
+no read access — uncommon but allowed). The runner's `delegate()`
+calls infer the model tier automatically — `$TASK_MODEL` here
+because neither `review` nor `run-deferred-writer` are present.
 
-### Example (sequential-phases-with-brief — covers
-### `[cwd-guard, emit-summary, stage-write]`)
+### Example (sequential-phases-with-brief — recon → draft)
 
 ```
 emit_agent_spec({
@@ -129,13 +133,14 @@ emit_agent_spec({
   phases: [
     {
       name: "scout",
-      components: ["cwd-guard", "emit-summary"],   // recon also needs cwd-guard for sandbox_read/ls/grep/glob
+      components: ["emit-summary"],
       tools: ["sandbox_ls", "sandbox_read", "sandbox_grep", "sandbox_glob", "emit_summary"],
       prompt: "Survey {args}. Use emit_summary for each finding."
     },
     {
       name: "draft",
-      components: ["cwd-guard", "stage-write"],
+      components: ["stage-write"],
+      tools: ["sandbox_ls", "stage_write"],
       prompt: "Task: {args}\n\n<brief>\n{brief}\n</brief>\n\nStage missing pieces under {sandboxRoot}. Reply DONE."
     }
   ]
@@ -164,7 +169,7 @@ message and stop:
 
 ```
 GAP: I don't have a component for "<user's ask, quoted>".
-Components I have: cwd-guard, stage-write, emit-summary, review, run-deferred-writer.
+Components I have: stage-write, emit-summary, review, run-deferred-writer.
 Closest match: <"none" OR nearest part/topology + 1-sentence why it doesn't quite fit>.
 To cover this you'd need: <one sentence describing the missing part, OR "the YAML composer doesn't cover orchestrator topology yet — load pi-agent-builder">.
 To continue anyway, load the pi-agent-builder skill.

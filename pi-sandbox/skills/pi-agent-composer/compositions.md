@@ -26,12 +26,13 @@ before each `delegate()` call:
   `emit_summary`), confined-drafter (writes via `sandbox_write`),
   drafter-with-approval (stages via `stage_write`, parent confirms,
   parent promotes).
-- **Component sets that infer to this** (cwd-guard is in all of
-  them — defense-in-depth applies to every spawn):
-  - `[cwd-guard, emit-summary]` — recon (read-only sandbox verbs +
-    `emit_summary`).
-  - `[cwd-guard]` — confined drafter; child writes directly.
-  - `[cwd-guard, stage-write]` — drafter with approval (human gate).
+- **User-listed component sets that infer to this** (cwd-guard and
+  sandbox-fs are auto-injected — never listed):
+  - `[emit-summary]` — recon (read-only). Add the read sandbox verbs
+    to `tools`; sandbox-fs activates with that subset.
+  - `[]` (empty) — confined drafter; child writes directly via
+    `sandbox_write`/`sandbox_edit` requested in `tools`.
+  - `[stage-write]` — drafter with approval (human gate).
 - **YAML to emit:**
   ```yaml
   name: my-drafter
@@ -39,8 +40,8 @@ before each `delegate()` call:
   description: Drafts files; user approves before disk
   composition: single-spawn
   phases:
-    - components: [cwd-guard, stage-write]
-      tools: [sandbox_ls, stage_write]   # cwd-guard registers only sandbox_ls
+    - components: [stage-write]
+      tools: [sandbox_ls, stage_write]   # sandbox_ls activates sandbox-fs with that one verb
       prompt: |
         You are a DRAFTER. Task: {args}.
         Stage files via stage_write under {sandboxRoot}.
@@ -69,12 +70,12 @@ before each `delegate()` call:
   composition: sequential-phases-with-brief
   phases:
     - name: scout
-      components: [cwd-guard, emit-summary]
+      components: [emit-summary]
       tools: [sandbox_ls, sandbox_read, sandbox_grep, sandbox_glob, emit_summary]
       prompt: |
         Survey {args}. Use emit_summary for each finding.
     - name: draft
-      components: [cwd-guard, stage-write]
+      components: [stage-write]
       tools: [sandbox_ls, stage_write]
       prompt: |
         Task: {args}

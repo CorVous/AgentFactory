@@ -109,6 +109,7 @@ export const FORBIDDEN_LITERALS: ReadonlyArray<string> = [
   "emit-summary",
   "emit_summary",
   "cwd-guard",
+  "sandbox-fs",
   "sandbox_read",
   "sandbox_ls",
   "sandbox_grep",

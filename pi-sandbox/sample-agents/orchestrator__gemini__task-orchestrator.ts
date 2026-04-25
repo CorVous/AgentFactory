@@ -37,6 +37,10 @@ const CWD_GUARD = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "cwd-guard.ts",
 );
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
 
 type StagedWrite = {
   relPath: string;
@@ -212,6 +216,7 @@ Rules:
     const child = spawn("pi", [
       "--mode", "json",
       "-e", CWD_GUARD,
+      "-e", SANDBOX_FS,
       "-e", STAGE_WRITE_TOOL,
       "-p", prompt,
       "--no-extensions", "--no-session", "--thinking", "off",
@@ -282,11 +287,11 @@ class DelegatorSession {
 
   constructor(leadModel: string, sandboxRoot: string) {
     // Delegator does no fs work — its only tools are the RPC stubs
-    // run_deferred_writer + review. cwd-guard is loaded with an empty
-    // verb list anyway as defense-in-depth: every sub-pi spawn in this
-    // project loads cwd-guard, period. Empty PI_SANDBOX_VERBS means
-    // cwd-guard registers zero sandbox tools, so the delegator's tool
-    // surface stays exactly run_deferred_writer + review.
+    // run_deferred_writer + review. cwd-guard is loaded as
+    // defense-in-depth: every sub-pi spawn in this project loads
+    // cwd-guard, period. sandbox-fs is NOT loaded because there are
+    // no sandbox_* verbs in --tools; the delegator's tool surface
+    // stays exactly run_deferred_writer + review.
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",
@@ -302,7 +307,6 @@ class DelegatorSession {
       env: {
         ...process.env,
         PI_SANDBOX_ROOT: sandboxRoot,
-        PI_SANDBOX_VERBS: "",
       },
     });
 

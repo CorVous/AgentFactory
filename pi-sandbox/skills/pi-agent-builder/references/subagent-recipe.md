@@ -170,38 +170,56 @@ Sub-agent outputs can be large. Strategies:
 - **Write the full output to disk** and return the path plus a summary. The LLM can `read` it if it needs detail.
 - **Stream progress** via `onUpdate` so the user sees activity.
 
-## Confining sub-agent writes (cwd-guard)
+## Confining sub-agent writes (cwd-guard + sandbox-fs)
 
 Two reusable shadow-tool patterns exist in this repo; they solve
 different problems and are not interchangeable:
 
 | Child tool                                    | When to use                                                                 |
 |-----------------------------------------------|------------------------------------------------------------------------------|
-| `pi-sandbox/.pi/components/stage-write.ts`   | The parent needs to **preview** every write before it touches disk. Tool stub stages in parent memory; no fs I/O happens until the parent promotes. Pair with `--tools stage_write,ls,read`. |
-| `pi-sandbox/.pi/components/cwd-guard.ts`     | The child should be allowed to write freely but only inside a **scoped directory**. Registers `sandbox_write` and `sandbox_edit` that reject any path outside `$PI_SANDBOX_ROOT`. Pair with `--tools read,sandbox_write,sandbox_edit,ls,grep`. |
+| `pi-sandbox/.pi/components/stage-write.ts`   | The parent needs to **preview** every write before it touches disk. Tool stub stages in parent memory; no fs I/O happens until the parent promotes. Pair with `--tools stage_write,sandbox_ls`. |
+| `pi-sandbox/.pi/components/sandbox-fs.ts`    | The child should be allowed to write freely but only inside a **scoped directory**. Registers `sandbox_write` and `sandbox_edit` that reject any path outside `$PI_SANDBOX_ROOT`. Pair with `--tools sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep`. |
 
-Both ship as committed child-tools; prefer loading them over
-reimplementing the pattern. Loading cwd-guard into a sub-pi:
+Both rails ship as committed child-only components. The parent-side
+runtime (`pi-sandbox/.pi/lib/delegate.ts`) **auto-injects them**
+based on a registry: cwd-guard always loads (universal policy),
+sandbox-fs loads iff a `sandbox_*` verb appears in `--tools`. For
+hand-rolled spawns that bypass `delegate()`, load both files
+explicitly:
 
 ```ts
+import { CWD_GUARD_PATH } from "../components/cwd-guard.ts";
+import { SANDBOX_FS_PATH } from "../components/sandbox-fs.ts";
+
 await spawn(ctx, {
   args: [
-    "-e", "/abs/path/to/pi-sandbox/.pi/components/cwd-guard.ts",
-    "--tools", "read,sandbox_write,sandbox_edit,ls,grep",
+    "-e", CWD_GUARD_PATH,
+    "-e", SANDBOX_FS_PATH,
+    "--tools", "sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep",
     "--no-extensions",
     "--mode", "json",
     "-p", promptForChild,
   ],
-  env: { PI_SANDBOX_ROOT: childCwd }, // absolute path the child is pinned to
+  env: {
+    PI_SANDBOX_ROOT: childCwd,            // cwd-guard requires this
+    PI_SANDBOX_VERBS: "sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep",
+  },
   cwd: childCwd,
 });
 ```
 
-The child cannot escape `childCwd` even if its prompt asks it to —
-`sandbox_write` rejects absolute paths and `..` that resolve outside
-the root, and the built-in `write`/`edit` are not in the allowlist.
-Use this instead of rolling your own path-validation inside the child
-extension.
+For no-fs roles (RPC delegators with only stubs like
+`run_deferred_writer,review`), load only cwd-guard — sandbox-fs
+isn't needed because there are no sandbox verbs in `--tools`.
+
+The child cannot escape `childCwd` even if its prompt asks it to:
+sandbox-fs's tool bodies call `validate()` from cwd-guard, which
+rejects absolute paths and `..` that resolve outside the root
+(both lex and realpath checks). cwd-guard's `pi.on("tool_call")`
+auditor also walks args for absolute-path strings on every tool
+call, backstopping any role component that takes a path arg without
+calling `validate()` itself. The built-in `write`/`edit` are not
+in the allowlist, so they're invisible to the LLM.
 
 ## Orchestrator-over-extension (stub-tool harvest, one level up)
 

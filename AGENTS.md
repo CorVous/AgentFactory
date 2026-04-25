@@ -138,9 +138,83 @@ than escaping inline `-p "..."`.
 | Location (from `pi-sandbox/` cwd) | Behavior |
 | --- | --- |
 | `.pi/extensions/<name>.ts` | Project-local, auto-discovered by pi |
-| `.pi/components/<name>.ts` | Curated reusable child-only parts; loaded via `pi -e <abs path>` from a parent extension. NOT auto-discovered by the parent pi session, so safe to register tools that shadow built-ins (e.g. a stub `stage_write` in place of the real `write`). |
+| `.pi/components/<name>.ts` | Curated reusable child-only parts; loaded via `pi -e <abs path>` from a parent extension. NOT auto-discovered by the parent pi session, so safe to register tools that shadow built-ins (e.g. a stub `stage_write` in place of the real `write`). See "Authoring a new component" below for the per-file pattern. |
 | `~/.pi/agent/extensions/<name>.ts` | Global, hot-reloadable via `/reload` |
 | `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
+
+### Authoring a new component
+
+Components under `pi-sandbox/.pi/components/` are curated, child-side
+TS files loaded via `pi -e <abs path>`. Three structural defenses
+gate them at spawn assembly:
+
+- **(A) Path allowlist.** Only files whose basename is in the
+  `ROLE_COMPONENTS` set (or owned by a `POLICIES` /
+  `TOOL_PROVIDERS` registry entry) in
+  `pi-sandbox/.pi/lib/component-policy.ts` may be loaded. Adding a
+  new component starts with a one-line entry there.
+- **(B) Static import scan.** Components must not import `node:fs`,
+  `node:child_process`, `node:net`, `node:dns`, `node:http(s)?`,
+  `node:worker_threads`, `node:vm`, `node:dgram`, `node:tls`,
+  `node:cluster`, or any of their non-`node:`-prefixed aliases.
+  The scan runs at spawn assembly and throws on violation.
+- **(E) Runtime tool_call auditor.** cwd-guard's child-side
+  `pi.on("tool_call")` handler walks every tool's args and
+  rejects any absolute-path string that escapes
+  `$PI_SANDBOX_ROOT`. Backstops every component, even ones that
+  forget to call `validate()` themselves.
+
+**Default pattern: pure stub, parent-side write.** New components
+should follow `stage-write.ts`'s shape — register a stub tool that
+takes the LLM's intent as args and returns ok; the parent (the
+spawning extension) harvests args from the NDJSON event stream and
+performs any actual fs / network / state-changing work itself. The
+child does not need `node:fs` for this pattern. Look at
+`emit-summary.ts`, `review.ts`, `run-deferred-writer.ts` for
+reference — all three are pure stubs.
+
+**For LLM-driven fs (read/list/grep/glob/write/edit):** don't
+author a custom tool. Request the corresponding `sandbox_*` verb in
+your spawn's `--tools` allowlist; `sandbox-fs.ts` is auto-injected
+by `delegate()` and the YAML runner whenever any sandbox verb
+appears in the spawn's tool tokens.
+
+**If your component genuinely needs `node:fs`** (uncommon — fits
+only when you need synchronous fs feedback in the child's
+`execute()`, like `emit-agent-spec.ts` writing a YAML spec or
+`stage-write.ts` peeking at `existsSync`), follow the privileged
+pattern:
+
+1. Add an entry to `PRIVILEGED_IMPORTS` in
+   `pi-sandbox/.pi/lib/component-policy.ts` listing exactly the
+   `node:*` modules you need. The scan rejects anything not on
+   that list.
+2. Import `validate` from `./cwd-guard.ts` and call it on every
+   absolute path immediately before the `fs.*` call, including
+   paths derived from LLM-supplied args via `path.resolve()` /
+   `path.join()`. `validate()` does lex+realpath containment
+   against `$PI_SANDBOX_ROOT` and throws on escape, so the worst
+   case (e.g. `name: "../../etc/x"` or `relPath: "/etc/passwd"`)
+   fails closed before any fs syscall.
+3. Cite the existing privileged components (`cwd-guard.ts`,
+   `sandbox-fs.ts`, `stage-write.ts`, `emit-agent-spec.ts`) in
+   your PR description so the reviewer knows what pattern you're
+   matching.
+
+**Parent-side helpers.** A component can also expose a parent-side
+`ParentSide<S, R>` for `delegate()` to consume. Parent-side code
+runs in the spawning Node process (not the child pi), so it's not
+subject to the import scan, but it should still call `validate()`
+(exported from `cwd-guard.ts`) before any fs op on an LLM-derived
+path. See `stage-write.ts`'s parent-side `finalize` for the
+canonical shape.
+
+**What never to do.** Don't import `child_process`, don't open
+sockets, don't shell out via `bash`, don't use `process.binding`
+or `require()`-from-string to evade the import scan. The scan
+doesn't catch all of these (kernel-level escapes are out of scope
+until OS sandboxing lands), but the convention is clear and PR
+review enforces it.
 
 ### Mandatory safety rails for sub-agents
 
@@ -152,21 +226,32 @@ When an extension delegates to a child `pi` process:
   `sandbox_read`); recon children get
   `sandbox_ls,sandbox_grep,sandbox_glob`. Built-in
   `read`/`ls`/`grep`/`glob`/`write`/`edit` are forbidden across the
-  project — cwd-guard's path-validated `sandbox_*` family is the
-  only sanctioned fs surface (load it via
-  `makeCwdGuard({verbs:[...]})` from
-  `pi-sandbox/.pi/components/cwd-guard.ts`). Omit every verb the
-  role doesn't need — `sandbox_read` on a writer leaks the "stub is
-  the only write channel" guarantee, and default tool sets invite
-  `bash` loops (`bash` is also forbidden).
-- **Load cwd-guard on every sub-pi spawn**, even no-fs RPC
-  delegators whose only tools are stubs like `run_deferred_writer,review`.
-  In that case, build the parentSide via `makeCwdGuard({verbs: []})`
-  and set `PI_SANDBOX_VERBS=""` in the child env: cwd-guard
-  registers zero sandbox tools but its `-e` is on the argv. This
-  defense-in-depth rule keeps the architecture uniform and means
-  adding fs to a previously no-fs role only requires updating
-  `--tools` + `PI_SANDBOX_VERBS`.
+  project — sandbox-fs's path-validated `sandbox_*` family is the
+  only sanctioned fs surface. Omit every verb the role doesn't
+  need — `sandbox_read` on a writer leaks the "stub is the only
+  write channel" guarantee, and default tool sets invite `bash`
+  loops (`bash` is also forbidden). See "Authoring a new component"
+  above for the per-file pattern.
+- **`delegate()` and the YAML runner auto-inject the rails.**
+  cwd-guard (universal) is loaded on every sub-pi spawn from the
+  `POLICIES` registry; sandbox-fs (conditional) is loaded with
+  exactly the requested verb subset whenever a `sandbox_*` token
+  appears in `--tools`, from the `TOOL_PROVIDERS` registry. You do
+  NOT list either name in `delegate({ components: [...] })` — the
+  injector throws on duplicates. Adding a new universal rail
+  (network-guard, syscall-audit) is a one-line registry entry that
+  delegate() picks up automatically.
+- **Hand-rolled spawns** (the three RPC delegators + drafter spawns
+  in `delegated-writer.ts:DelegatorSession`,
+  `orchestrator__gemini__task-orchestrator.ts`, and
+  `safe-drafter.ts`) are responsible for loading the rails
+  themselves. For no-fs roles: `-e cwd-guard.ts`, plus
+  `PI_SANDBOX_ROOT` in the child env (no `PI_SANDBOX_VERBS` —
+  sandbox-fs not loaded). For fs-using roles: `-e cwd-guard.ts` AND
+  `-e sandbox-fs.ts`, plus both env vars. Import the path constants
+  via `import { CWD_GUARD_PATH } from "../components/cwd-guard.ts"`
+  and `import { SANDBOX_FS_PATH } from "../components/sandbox-fs.ts"`
+  rather than recomputing.
 - Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
 - Match the tier to the child's role: `$TASK_MODEL` for workers,
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
@@ -336,13 +421,16 @@ generation), a separate class of issues surfaces:
   `/home/user/.pi/agent/extensions/` (global), or
   `pi-sandbox/<stray>.md` (sandbox root) — none of which is the
   canonical `pi-sandbox/.pi/extensions/`. The defense available today
-  is `pi-sandbox/.pi/components/cwd-guard.ts` (loaded via `-e`),
-  which registers `sandbox_write` / `sandbox_edit` tools with path
-  validation against `$PI_SANDBOX_ROOT`, paired with a `--tools`
-  allowlist that excludes the built-in `write` / `edit`. The composer
-  path uses these rails by default; `npm run pi` (direct skill
-  invocation) still has the wide tool surface — use it only for
-  interactive exploration.
+  is the policy/surface split under `pi-sandbox/.pi/components/`:
+  `cwd-guard.ts` is the universal cwd policy (auto-injected by
+  delegate(); attaches a `pi.on("tool_call")` auditor that blocks
+  out-of-cwd path args), and `sandbox-fs.ts` registers the
+  path-validated `sandbox_write` / `sandbox_edit` tools when their
+  verbs appear in `--tools`. Paired with a `--tools` allowlist that
+  excludes the built-in `write` / `edit`, this is the only fs path
+  for the LLM. The composer path uses these rails by default;
+  `npm run pi` (direct skill invocation) still has the wide tool
+  surface — use it only for interactive exploration.
 - **Claude Code's `Monitor` tool can't be cancelled programmatically
   in this environment** — the Monitor description mentions `TaskStop`
   but it isn't surfaced as an available tool, so monitors run until
@@ -399,14 +487,23 @@ generation), a separate class of issues surfaces:
   - `pi-sandbox/.pi/extensions/` — project-local pi extensions
     (auto-discovered when cwd = `pi-sandbox/`, tracked in git).
   - `pi-sandbox/.pi/components/` — curated reusable child-only parts
-    (cwd-guard, stage-write, review, run-deferred-writer) loaded into
-    child pi processes via `pi -e <abs path>`, not auto-discovered by
-    the parent. See `stage-write.ts` for the pattern. Distinct from
-    pi's per-cwd `.pi/child-tools/` convention (which a generated
-    extension writes to under its own cwd); this directory is the
-    repo's *curated* library. `emit-agent-spec.ts` is the one
-    parent-side outlier — loaded via `-e` into the composer pi
-    session, where its `execute()` writes YAML specs.
+    loaded into child pi processes via `pi -e <abs path>`, not
+    auto-discovered by the parent. Two universal rails (cwd-guard
+    + sandbox-fs) plus role stubs (stage-write, emit-summary,
+    review, run-deferred-writer, emit-agent-spec). See
+    `stage-write.ts` for the pure-stub pattern and the
+    "Authoring a new component" section above for the full
+    privileged-vs-stub guide. Distinct from pi's per-cwd
+    `.pi/child-tools/` convention (which a generated extension
+    writes to under its own cwd); this directory is the repo's
+    *curated* library, structurally enforced by
+    `pi-sandbox/.pi/lib/component-policy.ts`.
+  - `pi-sandbox/.pi/lib/` — runtime support for the components.
+    `delegate.ts` (the parent-side runner shared by extensions),
+    `policies.ts` + `tool-providers.ts` (registries of universal
+    + conditional rails), `auto-inject.ts` (the augmentation
+    logic the runner calls), `component-policy.ts` (path
+    allowlist + import scan).
   - `pi-sandbox/.pi/agents/` — composer-emitted YAML specs
     (`.yml` per agent). Picked up by
     `pi-sandbox/.pi/extensions/yaml-agent-runner.ts` on pi startup,

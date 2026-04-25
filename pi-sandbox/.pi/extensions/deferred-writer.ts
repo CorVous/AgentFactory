@@ -8,13 +8,14 @@
 
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { makeCwdGuard } from "../components/cwd-guard.ts";
 import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
 import { delegate } from "../lib/delegate.ts";
 
-// Drafter needs read access to inspect the existing project; writes go
-// through stage_write, so no sandbox_write/sandbox_edit verbs.
-const CWD_GUARD = makeCwdGuard({ verbs: ["sandbox_read", "sandbox_ls"] });
+// cwd-guard and sandbox-fs are auto-injected by delegate() — cwd-guard
+// is universal (POLICIES), sandbox-fs activates because extraTools
+// below puts sandbox_read/sandbox_ls into the --tools allowlist.
+// Drafter needs read access to inspect the existing project; writes
+// go through stage_write, so no sandbox_write/sandbox_edit verbs.
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("deferred-writer", {
@@ -37,7 +38,8 @@ Rules:
 - Stop after you've staged everything the task needs. Reply DONE and stop.`;
 
       await delegate(ctx, {
-        components: [CWD_GUARD, STAGE_WRITE],
+        components: [STAGE_WRITE],
+        extraTools: ["sandbox_read", "sandbox_ls"],
         prompt,
       });
     },

@@ -16,6 +16,7 @@ import type { ArtifactSet, SpawnInvocation } from "./artifact.ts";
 
 export const COMPONENT_NAMES = [
   "cwd-guard",
+  "sandbox-fs",
   "stage-write",
   "emit-summary",
   "review",
@@ -70,7 +71,7 @@ export interface ComponentSpec {
 }
 
 // Mirrors the runtime forbidden set in pi-sandbox/.pi/lib/delegate.ts.
-// cwd-guard's `sandbox_*` family is the only fs channel allowed; the
+// sandbox-fs's `sandbox_*` family is the only fs channel allowed; the
 // built-ins read/ls/grep/glob/write/edit and `bash` are never permitted
 // in a child's --tools allowlist.
 const FORBIDDEN_TOOLS = new Set([
@@ -78,9 +79,10 @@ const FORBIDDEN_TOOLS = new Set([
   "read", "ls", "grep", "glob",
 ]);
 
-// The full menu of sandbox verbs cwd-guard can register. Any spawn whose
-// --tools CSV includes one of these must load cwd-guard.ts (-e flag) and
-// pass PI_SANDBOX_ROOT + PI_SANDBOX_VERBS in the child env.
+// The full menu of sandbox verbs sandbox-fs can register. Any spawn whose
+// --tools CSV includes one of these must load sandbox-fs.ts (-e flag) and
+// pass PI_SANDBOX_VERBS in the child env. cwd-guard.ts is also required
+// on every spawn (regardless of fs need) per the universal-policy rule.
 const SANDBOX_VERBS: ReadonlySet<string> = new Set([
   "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
   "sandbox_write", "sandbox_edit",
@@ -90,18 +92,15 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
   "cwd-guard": {
     name: "cwd-guard",
     filename: "cwd-guard.ts",
-    toolsContribution: [
-      "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
-      "sandbox_write", "sandbox_edit",
-    ],
+    // cwd-guard registers ZERO tools after the policy/surface split.
+    // The sandbox_* verbs are owned by sandbox-fs.
+    toolsContribution: [],
     wiringChecks({ art, spawns, delegateHandles }) {
       const out: Mark[] = [];
       if (delegateHandles.has("cwd-guard")) {
-        // delegate() internally concatenates cwd-guard.parentSide.spawnArgs
-        // (i.e. `-e <cwd-guard.ts>`) and merges PI_SANDBOX_ROOT +
-        // PI_SANDBOX_VERBS into env. The extension body won't contain
-        // those string literals, so the inline anchors below would
-        // false-negative; short-circuit instead.
+        // delegate() auto-injects cwd-guard via the POLICIES registry,
+        // so the extension body won't contain `-e cwd-guard.ts` or
+        // `PI_SANDBOX_ROOT` literals; short-circuit.
         out.push({
           severity: "P0",
           name: "cwd-guard: handled by delegate() runtime",
@@ -115,17 +114,11 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
         name: "cwd-guard: PI_SANDBOX_ROOT in child env",
         status: sandboxRootEnv ? "pass" : "fail",
       });
-      const sandboxVerbsEnv = /PI_SANDBOX_VERBS/.test(art.extBlob);
-      out.push({
-        severity: "P0",
-        name: "cwd-guard: PI_SANDBOX_VERBS in child env",
-        status: sandboxVerbsEnv ? "pass" : "fail",
-      });
       // Defense-in-depth rule: cwd-guard is required on EVERY sub-pi
       // spawn, even no-fs roles (e.g. RPC delegators with only
-      // run_deferred_writer,review). Empty PI_SANDBOX_VERBS makes
-      // cwd-guard register zero tools but keeps the guard on the argv
-      // — see pi-sandbox/.pi/components/cwd-guard.ts header.
+      // run_deferred_writer,review). The component now registers no
+      // tools but its `pi.on("tool_call")` auditor still backstops
+      // path-arg validation on every spawn.
       const missing = spawns
         .map((s, i) => ({ s, i }))
         .filter(({ s }) => !s.eFlagComponents.includes("cwd-guard.ts"));
@@ -137,6 +130,61 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
           missing.length === 0
             ? undefined
             : `${missing.length} spawn(s) missing -e cwd-guard.ts (defense-in-depth requires it on every sub-pi)`,
+      });
+      return out;
+    },
+  },
+  "sandbox-fs": {
+    name: "sandbox-fs",
+    filename: "sandbox-fs.ts",
+    toolsContribution: [
+      "sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob",
+      "sandbox_write", "sandbox_edit",
+    ],
+    wiringChecks({ art, spawns, delegateHandles }) {
+      const out: Mark[] = [];
+      if (delegateHandles.has("sandbox-fs")) {
+        // delegate() auto-injects sandbox-fs via the TOOL_PROVIDERS
+        // registry whenever a sandbox_* verb appears in --tools.
+        out.push({
+          severity: "P0",
+          name: "sandbox-fs: handled by delegate() runtime",
+          status: "pass",
+        });
+        return out;
+      }
+      // Hand-rolled spawns: any spawn whose --tools includes a
+      // sandbox_* verb must load -e sandbox-fs.ts AND supply
+      // PI_SANDBOX_VERBS. Spawns without sandbox verbs need neither.
+      const fsSpawns = spawns.filter((s) =>
+        s.tools.some((t) => SANDBOX_VERBS.has(t)),
+      );
+      if (fsSpawns.length === 0) {
+        out.push({
+          severity: "P0",
+          name: "sandbox-fs: no sandbox_* verbs in any spawn",
+          status: "pass",
+          note: "component declared but no fs verbs requested",
+        });
+        return out;
+      }
+      const missingE = fsSpawns.filter(
+        (s) => !s.eFlagComponents.includes("sandbox-fs.ts"),
+      );
+      out.push({
+        severity: "P0",
+        name: "sandbox-fs: -e sandbox-fs.ts on every fs-using spawn",
+        status: missingE.length === 0 ? "pass" : "fail",
+        note:
+          missingE.length === 0
+            ? undefined
+            : `${missingE.length} spawn(s) request sandbox_* verbs without loading sandbox-fs.ts`,
+      });
+      const hasVerbsEnv = /PI_SANDBOX_VERBS/.test(art.extBlob);
+      out.push({
+        severity: "P0",
+        name: "sandbox-fs: PI_SANDBOX_VERBS in child env",
+        status: hasVerbsEnv ? "pass" : "fail",
       });
       return out;
     },

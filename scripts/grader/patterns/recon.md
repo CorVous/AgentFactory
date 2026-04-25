@@ -19,15 +19,22 @@ The child remains read-only.
 
 In load order on the child:
 
-1. `cwd-guard.ts` — supplies the path-validated read verbs
-   (`sandbox_read`, `sandbox_ls`, `sandbox_grep`, `sandbox_glob`).
+1. `cwd-guard.ts` — universal cwd policy. Sets `PI_SANDBOX_ROOT`
+   from the spawn cwd, exports `validate()`, and attaches a
+   `pi.on("tool_call")` auditor that walks args for absolute-path
+   strings and rejects any that escape the sandbox. Required on
+   every sub-pi spawn, including recon, even though it registers
+   zero LLM-visible tools.
+2. `sandbox-fs.ts` — the path-validated fs tool surface. Registers
+   the read verbs (`sandbox_read`, `sandbox_ls`, `sandbox_grep`,
+   `sandbox_glob`) when their tokens appear in `PI_SANDBOX_VERBS`.
    The pi built-ins `read`/`ls`/`grep`/`glob` are forbidden across
-   the project, so cwd-guard is mandatory whenever the child needs
-   to read the filesystem — including recon. The parent passes
-   `PI_SANDBOX_VERBS` listing only the read verbs (no
-   `sandbox_write`/`sandbox_edit`), so cwd-guard registers no write
-   channel and the recon child remains read-only by construction.
-2. `emit-summary.ts` — the stub the child calls with `{title, body}`
+   the project, so sandbox-fs is mandatory whenever the child needs
+   to read the filesystem. The parent passes `PI_SANDBOX_VERBS`
+   listing only the read verbs (no `sandbox_write`/`sandbox_edit`),
+   so sandbox-fs registers no write channel and the recon child
+   remains read-only by construction.
+3. `emit-summary.ts` — the stub the child calls with `{title, body}`
    to hand a structured summary back to the parent. The child MUST
    NOT produce summaries as free-form assistant text — the parent
    harvests `emit_summary` calls from the NDJSON event stream and
@@ -86,6 +93,10 @@ const CWD_GUARD = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..", "components", "cwd-guard.ts",
 );
+const SANDBOX_FS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..", "components", "sandbox-fs.ts",
+);
 const RECON_VERBS = "sandbox_ls,sandbox_read,sandbox_grep,sandbox_glob";
 
 export default function (pi: ExtensionAPI) {
@@ -102,7 +113,11 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("TASK_MODEL env var not set. Source models.env.", "error");
         return;
       }
-      if (!fs.existsSync(EMIT_SUMMARY) || !fs.existsSync(CWD_GUARD)) {
+      if (
+        !fs.existsSync(EMIT_SUMMARY) ||
+        !fs.existsSync(CWD_GUARD) ||
+        !fs.existsSync(SANDBOX_FS)
+      ) {
         ctx.ui.notify(`recon components missing; check pi-sandbox/.pi/components/`, "error");
         return;
       }
@@ -129,6 +144,7 @@ export default function (pi: ExtensionAPI) {
         "pi",
         [
           "-e", CWD_GUARD,
+          "-e", SANDBOX_FS,
           "-e", EMIT_SUMMARY,
           "--mode", "json",
           "--tools", `${RECON_VERBS},emit_summary`,
@@ -230,7 +246,8 @@ contains each of these anchors:
 
 - `registerCommand("TODO:CMD_NAME"` — replaced with the chosen
   slash command name.
-- BOTH `-e <abs path ending in components/cwd-guard.ts>` AND
+- `-e <abs path ending in components/cwd-guard.ts>` AND
+  `-e <abs path ending in components/sandbox-fs.ts>` AND
   `-e <abs path ending in components/emit-summary.ts>` on the spawn
   args. Resolve paths relative to the parent extension's own
   `import.meta.url`, NOT from `$HOME` or cwd.

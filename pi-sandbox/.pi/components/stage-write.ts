@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validate } from "./cwd-guard.ts";
 import type {
   NDJSONEvent,
   ParentSide,
@@ -95,6 +96,17 @@ export const parentSide: ParentSide<StageWriteState, StageWriteResult> = {
       const destAbs = path.resolve(sandboxRoot, relPath);
       if (destAbs !== sandboxRoot && !destAbs.startsWith(sandboxRoot + path.sep)) {
         skips.push(`${relPath}: escapes sandbox`);
+        continue;
+      }
+      // Defense-in-depth: route through cwd-guard's canonical
+      // validator (lex + realpath). The lex check above catches the
+      // common case; validate() additionally rejects symlink escapes
+      // (e.g. an in-bounds destAbs that resolves outside the root via
+      // a symlinked subdir).
+      try {
+        validate(destAbs, sandboxRoot);
+      } catch (e) {
+        skips.push(`${relPath}: ${(e as Error).message}`);
         continue;
       }
       if (fs.existsSync(destAbs)) {
