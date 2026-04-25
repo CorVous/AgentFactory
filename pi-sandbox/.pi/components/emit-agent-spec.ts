@@ -1,26 +1,37 @@
 // emit-agent-spec.ts — output channel for the pi-agent-composer skill.
 //
-// Loaded into the PARENT pi session (the composer LLM) via `pi -e <path>`.
-// Unlike the other components in this directory — which ship a child-side
-// stub plus a parentSide harvester for `delegate()` to consume — this file
-// registers a real parent-side tool whose `execute()` writes a YAML spec
-// to `<PI_SANDBOX_ROOT>/.pi/agents/<spec.name>.yml`. The composer's tool
-// allowlist exposes ONLY `emit_agent_spec` plus read verbs, so the LLM
-// has no other write channel; the tool's TypeBox schema IS the YAML spec
-// shape, eliminating manual YAML formatting by the model.
+// Loaded into a pi session via `pi -e <path>`. The default-exported
+// factory registers `emit_agent_spec`, whose `execute()` writes a YAML
+// spec to `<PI_SANDBOX_ROOT>/.pi/agents/<spec.name>.yml`. The composer's
+// tool allowlist exposes ONLY `emit_agent_spec` plus read verbs, so the
+// LLM has no other write channel; the tool's TypeBox schema IS the YAML
+// spec shape, eliminating manual YAML formatting by the model.
 //
 // At runtime the file is read back by `.pi/extensions/yaml-agent-runner.ts`
 // (auto-discovered when pi runs in `pi-sandbox/`), which globs
 // `.pi/agents/*.yml` and registers one slash command per spec.
 //
-// No `parentSide` export — this is not a delegate()-driven component.
+// Also exports a `parentSide` so `delegate()` can drive a child that
+// needs `emit_agent_spec`. This is what lets the composer self-host as
+// `.pi/agents/agent-composer.yml` — the runner imports this parentSide,
+// `delegate()` spawns a child pi with `-e <this file>`, and the child
+// LLM calls the tool whose `execute()` writes the YAML on disk. The
+// parent harvests `tool_execution_start` for logging only; the actual
+// success signal is the file existing on disk after the child exits.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import { stringify as yamlStringify } from "yaml";
+import type {
+  EmitAgentSpecResult,
+  EmitAgentSpecState,
+  NDJSONEvent,
+  ParentSide,
+} from "./_parent-side.ts";
 
 const COMPONENT_NAMES = [
   "cwd-guard",
@@ -28,6 +39,7 @@ const COMPONENT_NAMES = [
   "emit-summary",
   "review",
   "run-deferred-writer",
+  "emit-agent-spec",
 ] as const;
 
 const COMPOSITIONS = [
@@ -215,3 +227,33 @@ function validatePhases(
   }
   throw new Error(`unknown composition: ${composition}`);
 }
+
+// Parent-side surface. `delegate()` uses this to drive a child that needs
+// `emit_agent_spec` — used by the self-hosted agent-composer YAML. The
+// child is spawned with `-e <this file>` so the same default factory
+// above runs in the child and registers the tool there; the child LLM's
+// call writes the YAML directly. Parent only records the call site for
+// logs; finalize verifies the on-disk file exists as the success signal.
+const SELF_PATH = fileURLToPath(import.meta.url);
+
+export const parentSide: ParentSide<EmitAgentSpecState, EmitAgentSpecResult> = {
+  name: "emit-agent-spec",
+  tools: ["emit_agent_spec"],
+  spawnArgs: ["-e", SELF_PATH],
+  env: ({ cwd }) => ({ PI_SANDBOX_ROOT: cwd }),
+  initialState: () => ({ wrote: false, name: undefined }),
+  harvest: (event: NDJSONEvent, state: EmitAgentSpecState) => {
+    if (event.type !== "tool_execution_start") return;
+    if (event.toolName !== "emit_agent_spec") return;
+    const args = event.args as { name?: unknown } | undefined;
+    state.wrote = true;
+    if (args && typeof args.name === "string") state.name = args.name;
+  },
+  finalize: (state, fctx) => {
+    if (!state.wrote || !state.name) {
+      return { wrote: false, name: state.name };
+    }
+    const dest = path.join(fctx.sandboxRoot, ".pi", "agents", `${state.name}.yml`);
+    return { wrote: fs.existsSync(dest), name: state.name };
+  },
+};

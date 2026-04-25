@@ -74,11 +74,15 @@ vs. author-TS":
   reads `.pi/agents/*.yml` and registers a slash command per spec,
   dispatching each phase via `delegate()`. Covers `single-spawn`
   and `sequential-phases-with-brief`; emits GAP for the
-  orchestrator topology. Driven by `npm run agent-composer` /
-  `:i`, which runs pi with the composer skill loaded and a tool
-  allowlist that exposes ONLY `read,ls,grep,emit_agent_spec` — no
-  write verbs, so the model cannot author code, only declare a
-  spec.
+  orchestrator topology. The composer is itself self-hosted as
+  `pi-sandbox/.pi/agents/agent-composer.yml`, so any `npm run pi`
+  session has `/agent-composer <task>` available alongside the
+  script form `npm run agent-composer -- -p "<task>"`. Both load
+  the composer skill with a tool allowlist that exposes ONLY
+  `read,ls,grep,emit_agent_spec` — no write verbs, so the model
+  cannot author code, only declare a spec. The script form stays
+  in place as the bootstrap-recovery path (you can't compose with
+  a broken composer).
 - **`pi-agent-assembler`** — composes already-tested parts from
   `pi-sandbox/.pi/components/` (cwd-guard, stage-write, review)
   into agents matching one of four patterns: `recon`,
@@ -111,11 +115,20 @@ cwd. The shared `pi-sandbox/.pi/{extensions,components}/` is never
 touched, so concurrent invocations don't race.
 
 ```sh
-# Composer (YAML output, write-restricted spawn):
+# Generic launcher — dispatch any YAML-defined agent by its filename
+# stem; forwards to `pi -p "/<slash> <args>"` from the sandbox cwd.
+# Works for agent-composer and any agent the composer emits. Run with
+# no args to list available agents.
+npm run agent
+npm run agent -- agent-composer "Drafter that stages writes for approval"
+
+# Composer-specific scripts (kept as bootstrap-recovery path — work
+# even if the YAML or runner is broken):
 npm run agent-composer -- -p "Drafter that stages writes for approval"
 npm run agent-composer:i                                 # interactive
 
-# Assembler / Builder (TS output via agent-maker):
+# Assembler / Builder (TS output via agent-maker, separate path
+# because of per-run isolated cwd):
 # One-shot (task-driven, auto-graded):
 npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 --grade
 

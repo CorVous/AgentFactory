@@ -20,9 +20,12 @@ import { describe, it, before, after } from "node:test";
 
 import { parentSide as STAGE_WRITE } from "../stage-write.ts";
 import { parentSide as EMIT_SUMMARY } from "../emit-summary.ts";
+import { parentSide as EMIT_AGENT_SPEC } from "../emit-agent-spec.ts";
 import { parentSide as REVIEW } from "../review.ts";
 import { parentSide as RUN_DEFERRED_WRITER } from "../run-deferred-writer.ts";
 import type {
+  EmitAgentSpecResult,
+  EmitAgentSpecState,
   EmitSummaryResult,
   EmitSummaryState,
   NDJSONEvent,
@@ -199,6 +202,78 @@ describe("run-deferred-writer parentSide", () => {
     RUN_DEFERRED_WRITER.harvest(toolStart("run_deferred_writer", {}), state);
     RUN_DEFERRED_WRITER.harvest(toolStart("run_deferred_writer", { task: 42 }), state);
     assert.equal(state.tasks.length, 0);
+  });
+});
+
+/* -------- emit-agent-spec ------------------------------------------ */
+
+describe("emit-agent-spec parentSide", () => {
+  it("records the spec name on a successful emit_agent_spec call and verifies the file exists at finalize", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-test-"));
+    try {
+      const agentsDir = path.join(root, ".pi", "agents");
+      fs.mkdirSync(agentsDir, { recursive: true });
+      fs.writeFileSync(path.join(agentsDir, "demo.yml"), "name: demo\n");
+
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      EMIT_AGENT_SPEC.harvest(
+        toolStart("emit_agent_spec", { name: "demo", slash: "demo" }),
+        state,
+      );
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fctx(root),
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.wrote, true);
+      assert.equal(result.name, "demo");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports wrote=false when the on-disk file is missing after the call", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-test-"));
+    try {
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      EMIT_AGENT_SPEC.harvest(
+        toolStart("emit_agent_spec", { name: "ghost", slash: "ghost" }),
+        state,
+      );
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fctx(root),
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.wrote, false);
+      assert.equal(result.name, "ghost");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores unrelated events and emit_agent_spec calls without a string name", async () => {
+    const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+    EMIT_AGENT_SPEC.harvest({ type: "message_end" }, state);
+    EMIT_AGENT_SPEC.harvest(
+      toolStart("emit_summary", { title: "t", body: "b" }),
+      state,
+    );
+    EMIT_AGENT_SPEC.harvest(
+      toolStart("emit_agent_spec", { name: 42 }),
+      state,
+    );
+    // Last call recorded wrote=true (we saw the tool fire) but name remains
+    // undefined because the args.name was not a string.
+    assert.equal(state.wrote, true);
+    assert.equal(state.name, undefined);
+
+    const result = (await EMIT_AGENT_SPEC.finalize(
+      state,
+      fctx(SANDBOX),
+    )) as EmitAgentSpecResult;
+    assert.equal(result.wrote, false);
+    assert.equal(result.name, undefined);
   });
 });
 
