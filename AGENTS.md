@@ -159,6 +159,14 @@ When an extension delegates to a child `pi` process:
   role doesn't need — `sandbox_read` on a writer leaks the "stub is
   the only write channel" guarantee, and default tool sets invite
   `bash` loops (`bash` is also forbidden).
+- **Load cwd-guard on every sub-pi spawn**, even no-fs RPC
+  delegators whose only tools are stubs like `run_deferred_writer,review`.
+  In that case, build the parentSide via `makeCwdGuard({verbs: []})`
+  and set `PI_SANDBOX_VERBS=""` in the child env: cwd-guard
+  registers zero sandbox tools but its `-e` is on the argv. This
+  defense-in-depth rule keeps the architecture uniform and means
+  adding fs to a previously no-fs role only requires updating
+  `--tools` + `PI_SANDBOX_VERBS`.
 - Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
 - Match the tier to the child's role: `$TASK_MODEL` for workers,
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.

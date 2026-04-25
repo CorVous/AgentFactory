@@ -282,13 +282,16 @@ class DelegatorSession {
 
   constructor(leadModel: string, sandboxRoot: string) {
     // Delegator does no fs work — its only tools are the RPC stubs
-    // run_deferred_writer + review. cwd-guard is intentionally NOT
-    // loaded: under the new strict contract, loading it without a
-    // PI_SANDBOX_VERBS env value would throw at child startup.
+    // run_deferred_writer + review. cwd-guard is loaded with an empty
+    // verb list anyway as defense-in-depth: every sub-pi spawn in this
+    // project loads cwd-guard, period. Empty PI_SANDBOX_VERBS means
+    // cwd-guard registers zero sandbox tools, so the delegator's tool
+    // surface stays exactly run_deferred_writer + review.
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",
       "--thinking", "off",
+      "-e", CWD_GUARD,
       "-e", RUN_DEFERRED_WRITER_TOOL,
       "-e", REVIEW_TOOL,
       "--tools", "run_deferred_writer,review",
@@ -296,7 +299,11 @@ class DelegatorSession {
     ], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: sandboxRoot,
-      env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot }
+      env: {
+        ...process.env,
+        PI_SANDBOX_ROOT: sandboxRoot,
+        PI_SANDBOX_VERBS: "",
+      },
     });
 
     this.child.stdout!.on("data", (d) => this.onStdout(d));

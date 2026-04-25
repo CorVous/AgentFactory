@@ -47,8 +47,9 @@ On each **drafter** child the pattern dispatches:
 ## `--tools` allowlist
 
 - **Delegator:** `run_deferred_writer,review` — nothing else. The
-  delegator does no fs work, so cwd-guard is NOT loaded on this
-  spawn.
+  delegator does no fs work; cwd-guard is still loaded on the spawn
+  as defense-in-depth (`PI_SANDBOX_VERBS=""` so it registers zero
+  sandbox tools).
 - **Drafter:** `stage_write,sandbox_ls` (or
   `stage_write,sandbox_ls,sandbox_read` if explicitly needed). NO
   built-in `read`/`ls`/`grep`/`glob`/`write`/`edit`, no `bash`, and
@@ -136,12 +137,13 @@ export default function (pi: ExtensionAPI) {
       const sandboxRoot = path.resolve(process.cwd());
 
       // 1. Spawn delegator in RPC mode with run_deferred_writer + review.
-      //    cwd-guard is NOT loaded here: the delegator does no fs work
-      //    and cwd-guard now requires PI_SANDBOX_VERBS (which would be
-      //    empty for a no-fs role).
+      //    cwd-guard is loaded with PI_SANDBOX_VERBS="" — defense in
+      //    depth, registers zero sandbox tools, but every sub-pi spawn
+      //    in the project carries the guard regardless of role.
       const delegator = spawn(
         "pi",
         [
+          "-e", CWD_GUARD,
           "-e", RUN_DEFERRED_WRITER_TOOL,
           "-e", REVIEW_TOOL,
           "--mode", "rpc",
@@ -155,7 +157,11 @@ export default function (pi: ExtensionAPI) {
         {
           stdio: ["pipe", "pipe", "pipe"],
           cwd: sandboxRoot,
-          env: { ...process.env, PI_SANDBOX_ROOT: sandboxRoot },
+          env: {
+            ...process.env,
+            PI_SANDBOX_ROOT: sandboxRoot,
+            PI_SANDBOX_VERBS: "",
+          },
         },
       );
       const delegatorTimer = setTimeout(() => delegator.kill("SIGKILL"), DELEGATOR_TIMEOUT_MS);
@@ -194,15 +200,18 @@ export default function (pi: ExtensionAPI) {
 
 ## Validation checklist
 
-- `-e RUN_DEFERRED_WRITER_TOOL`, `-e REVIEW_TOOL` on the delegator
-  spawn. cwd-guard is NOT loaded on the delegator (it has no fs
-  role and the new strict cwd-guard contract requires
-  `PI_SANDBOX_VERBS`, which would be empty here).
+- `-e CWD_GUARD`, `-e RUN_DEFERRED_WRITER_TOOL`, `-e REVIEW_TOOL` on
+  the delegator spawn. cwd-guard is loaded as defense-in-depth even
+  though the delegator does no fs work — every sub-pi spawn in the
+  project carries the guard. `PI_SANDBOX_VERBS=""` in the delegator's
+  env makes cwd-guard register zero sandbox tools, so the delegator's
+  visible tool surface remains exactly `run_deferred_writer,review`.
 - `"--mode", "rpc"` on the delegator (NOT `json`).
 - `"--tools", "run_deferred_writer,review"` on the delegator — no
   read or write verbs.
 - `"--no-extensions"` and `"--no-session"` on every spawn.
-- `PI_SANDBOX_ROOT: sandboxRoot` in each child env.
+- `PI_SANDBOX_ROOT: sandboxRoot` AND `PI_SANDBOX_VERBS` (possibly
+  empty) in every child env.
 - Per-drafter spawn follows the `drafter-with-approval` skeleton
   exactly: `-e CWD_GUARD` + `-e STAGE_WRITE_TOOL`,
   `--tools "stage_write,sandbox_ls"`, env contains

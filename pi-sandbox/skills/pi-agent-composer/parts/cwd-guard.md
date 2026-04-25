@@ -27,12 +27,16 @@ sanctioned fs surface.
 
 ## When to use
 
-**Always, on any child that touches the filesystem.** Recon, drafter,
+**Always. On every sub-pi spawn, no exceptions.** Recon, drafter,
 confined-drafter — every fs-capable role loads cwd-guard with its
-verb subset. The only spawns that don't load cwd-guard are pure
-RPC orchestrator delegators with no fs role at all (e.g. the
-delegator in `delegated-writer.ts` whose only tools are
-`run_deferred_writer,review`).
+verb subset. *No-fs* roles (an RPC delegator whose only tools are
+`run_deferred_writer,review`, for example) ALSO load cwd-guard,
+with an empty verb list — cwd-guard registers zero sandbox tools
+in that case but its `-e` is on the argv anyway. The benefit is
+defense-in-depth and a uniform mental model: every child has the
+guard, so adding fs to a previously no-fs role only requires
+updating `tools` + `PI_SANDBOX_VERBS`, never "remember to also
+add `-e cwd-guard.ts`."
 
 ## Selective registration
 
@@ -73,20 +77,21 @@ Pick the subset the role needs:
 | Recon | `sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob` |
 | Drafter-with-approval | `sandbox_ls` (or `sandbox_ls,sandbox_read`) |
 | Confined-drafter | `sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep` |
+| RPC delegator (no-fs) | (empty — `verbs: []`) |
 
-Plus the role-specific stub (`stage_write`, `emit_summary`, etc).
-Do NOT include any built-in fs verb or `bash` — those are forbidden.
+Plus the role-specific stub (`stage_write`, `emit_summary`,
+`run_deferred_writer`, `review`, etc). Do NOT include any built-in
+fs verb or `bash` — those are forbidden.
 
 ## Required env contribution
 
-Both env vars are mandatory:
-
 - `PI_SANDBOX_ROOT` — absolute path; cwd-guard validates every
-  operation against it.
+  operation against it. Always required.
 - `PI_SANDBOX_VERBS` — comma-separated subset of the six sandbox
-  verbs. cwd-guard registers only these. Missing or empty throws
-  at load time, by design — there's no implicit "register all"
-  default that would surface tools the role didn't ask for.
+  verbs. cwd-guard registers only these. May be empty (or unset)
+  for no-fs roles — cwd-guard then loads and registers nothing.
+  The factory `makeCwdGuard({verbs: [...]})` always sets both env
+  vars; in the no-fs case it sets `PI_SANDBOX_VERBS=""`.
 
 ## Parent-side wiring (factory)
 
@@ -110,6 +115,11 @@ const CWD_GUARD_RECON = makeCwdGuard({
   verbs: ["sandbox_read", "sandbox_ls", "sandbox_grep", "sandbox_glob"],
 });
 await delegate(ctx, { components: [CWD_GUARD_RECON, EMIT_SUMMARY], prompt });
+
+// No-fs role (RPC delegator): cwd-guard loads but registers nothing.
+const CWD_GUARD_NONE = makeCwdGuard({ verbs: [] });
+// (delegator typically goes through a hand-rolled spawn rather than
+// delegate(); see `delegated-writer.ts:DelegatorSession` for the shape.)
 ```
 
 `makeCwdGuard()` returns a `ParentSide` whose `tools` array matches

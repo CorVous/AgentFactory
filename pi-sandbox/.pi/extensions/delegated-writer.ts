@@ -249,9 +249,19 @@ class DelegatorSession {
   constructor(leadModel: string, sandboxRoot: string) {
     // -e flags and --tools CSV come from parentSide contributions so the
     // RPC delegator shares its "how to load these stubs" knowledge with
-    // the rest of the composer library (rails.md §1, §8).
-    const spawnArgs = [...RUN_DEFERRED_WRITER.spawnArgs, ...REVIEW.spawnArgs];
+    // the rest of the composer library (rails.md §1, §8). cwd-guard is
+    // loaded with an empty verb set: the delegator does no fs work, but
+    // every sub-pi spawn loads cwd-guard as defense-in-depth — if a
+    // future change adds fs to the delegator role, only the verb list
+    // needs to change.
+    const NO_FS_GUARD = makeCwdGuard({ verbs: [] });
+    const spawnArgs = [
+      ...NO_FS_GUARD.spawnArgs,
+      ...RUN_DEFERRED_WRITER.spawnArgs,
+      ...REVIEW.spawnArgs,
+    ];
     const tools = [...RUN_DEFERRED_WRITER.tools, ...REVIEW.tools].join(",");
+    const guardEnv = NO_FS_GUARD.env({ cwd: sandboxRoot });
     this.child = spawn("pi", [
       "--mode", "rpc",
       "--no-extensions", "--no-session", "--no-context-files",
@@ -259,7 +269,11 @@ class DelegatorSession {
       ...spawnArgs,
       "--tools", tools,
       "--provider", "openrouter", "--model", leadModel,
-    ], { stdio: ["pipe", "pipe", "pipe"], cwd: sandboxRoot });
+    ], {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: sandboxRoot,
+      env: { ...process.env, ...guardEnv },
+    });
 
     this.child.stdout!.on("data", (d) => this.onStdout(d));
     this.child.stderr!.on("data", (d) => { this.stderr += d.toString(); });

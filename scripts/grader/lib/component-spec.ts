@@ -121,20 +121,22 @@ export const COMPONENTS: Record<ComponentName, ComponentSpec> = {
         name: "cwd-guard: PI_SANDBOX_VERBS in child env",
         status: sandboxVerbsEnv ? "pass" : "fail",
       });
-      const fsCapableSpawn = spawns.some((s) =>
-        s.tools.some((t) => SANDBOX_VERBS.has(t)),
-      );
-      const cwdGuardLoaded = spawns.some((s) =>
-        s.eFlagComponents.includes("cwd-guard.ts"),
-      );
+      // Defense-in-depth rule: cwd-guard is required on EVERY sub-pi
+      // spawn, even no-fs roles (e.g. RPC delegators with only
+      // run_deferred_writer,review). Empty PI_SANDBOX_VERBS makes
+      // cwd-guard register zero tools but keeps the guard on the argv
+      // — see pi-sandbox/.pi/components/cwd-guard.ts header.
+      const missing = spawns
+        .map((s, i) => ({ s, i }))
+        .filter(({ s }) => !s.eFlagComponents.includes("cwd-guard.ts"));
       out.push({
         severity: "P0",
-        name: "cwd-guard: -e cwd-guard.ts on every fs-capable spawn",
-        status: fsCapableSpawn && !cwdGuardLoaded ? "fail" : "pass",
+        name: "cwd-guard: -e cwd-guard.ts on every spawn",
+        status: missing.length === 0 ? "pass" : "fail",
         note:
-          fsCapableSpawn && !cwdGuardLoaded
-            ? "spawn lists a sandbox_* verb but did not load cwd-guard.ts"
-            : undefined,
+          missing.length === 0
+            ? undefined
+            : `${missing.length} spawn(s) missing -e cwd-guard.ts (defense-in-depth requires it on every sub-pi)`,
       });
       return out;
     },

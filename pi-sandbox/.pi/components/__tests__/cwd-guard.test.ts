@@ -73,26 +73,20 @@ describe("cwd-guard: env-gated registration", () => {
     );
   });
 
-  it("throws when PI_SANDBOX_VERBS is missing or empty", () => {
+  it("registers zero tools when PI_SANDBOX_VERBS is missing or empty (no-fs role)", () => {
     const root = makeTempRoot();
-    const { pi } = makeStubPi();
-    assert.throws(
-      () =>
-        withEnv(
-          { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: undefined },
-          () => cwdGuardLoader(pi),
-        ),
-      /PI_SANDBOX_VERBS must be set/,
+    const { pi, tools } = makeStubPi();
+    withEnv(
+      { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: undefined },
+      () => cwdGuardLoader(pi),
     );
-    const { pi: pi2 } = makeStubPi();
-    assert.throws(
-      () =>
-        withEnv(
-          { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "" },
-          () => cwdGuardLoader(pi2),
-        ),
-      /PI_SANDBOX_VERBS must be set/,
+    assert.equal(tools.length, 0);
+    const { pi: pi2, tools: tools2 } = makeStubPi();
+    withEnv(
+      { PI_SANDBOX_ROOT: root, PI_SANDBOX_VERBS: "" },
+      () => cwdGuardLoader(pi2),
     );
+    assert.equal(tools2.length, 0);
   });
 
   it("rejects unknown verbs in PI_SANDBOX_VERBS", () => {
@@ -235,11 +229,12 @@ describe("cwd-guard: path validation", () => {
 /* ---------- makeCwdGuard factory ------------------------------------- */
 
 describe("makeCwdGuard factory", () => {
-  it("throws on empty verb list", () => {
-    assert.throws(
-      () => makeCwdGuard({ verbs: [] as ReadonlyArray<SandboxVerb> }),
-      /non-empty subset/,
-    );
+  it("allows empty verb list (no-fs role; cwd-guard loaded as defense-in-depth)", () => {
+    const ps = makeCwdGuard({ verbs: [] as ReadonlyArray<SandboxVerb> });
+    assert.deepEqual([...ps.tools], []);
+    const env = ps.env({ cwd: "/some/cwd" });
+    assert.equal(env.PI_SANDBOX_ROOT, "/some/cwd");
+    assert.equal(env.PI_SANDBOX_VERBS, "");
   });
 
   it("throws on unknown verb", () => {

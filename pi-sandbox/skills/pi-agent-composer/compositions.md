@@ -26,7 +26,8 @@ before each `delegate()` call:
   `emit_summary`), confined-drafter (writes via `sandbox_write`),
   drafter-with-approval (stages via `stage_write`, parent confirms,
   parent promotes).
-- **Component sets that infer to this:**
+- **Component sets that infer to this** (cwd-guard is in all of
+  them — defense-in-depth applies to every spawn):
   - `[cwd-guard, emit-summary]` — recon (read-only sandbox verbs +
     `emit_summary`).
   - `[cwd-guard]` — confined drafter; child writes directly.

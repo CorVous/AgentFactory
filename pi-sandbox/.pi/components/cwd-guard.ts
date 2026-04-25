@@ -7,12 +7,22 @@
 // excludes the built-in read/ls/grep/glob/write/edit/bash, the child has
 // no fs channel except through these sandbox verbs.
 //
+// **Defense-in-depth: cwd-guard is loaded on EVERY sub-pi spawn, even
+// roles that do no fs work (e.g. RPC delegators with only
+// `run_deferred_writer,review`).** For those no-fs roles, the verb list
+// is empty: cwd-guard registers zero tools but its `-e` is on the argv
+// anyway. This means a future change that adds an fs verb to such a
+// role only has to update PI_SANDBOX_VERBS + --tools — the guard is
+// already there. It also flattens the mental model: every spawn loads
+// cwd-guard, period.
+//
 // Selective registration: only the verbs listed in $PI_SANDBOX_VERBS
 // (comma-separated) are registered. The makeCwdGuard() factory below
 // builds a ParentSide whose `tools` array matches the requested verbs
 // exactly, and sets the env var to gate the child's registration. This
 // keeps each role's tool surface minimal — a recon child sees only read
-// verbs, a confined-drafter sees read+write, etc.
+// verbs, a confined-drafter sees read+write, a no-fs delegator sees
+// nothing.
 //
 // sandbox_bash is intentionally absent. Bash stays in FORBIDDEN_TOOLS
 // (delegate.ts) because correctly sandboxing arbitrary shell is a
@@ -60,20 +70,18 @@ export default function (pi: ExtensionAPI) {
   if (!ROOT) {
     throw new Error("cwd-guard.ts: PI_SANDBOX_ROOT must be set");
   }
-  const VERBS_RAW = process.env.PI_SANDBOX_VERBS;
-  if (!VERBS_RAW || !VERBS_RAW.trim()) {
-    throw new Error(
-      "cwd-guard.ts: PI_SANDBOX_VERBS must be set (comma-separated subset of " +
-        [...ALL_VERBS].join(",") + ")",
-    );
-  }
+  // PI_SANDBOX_VERBS may be missing or empty: that's the no-fs role
+  // path (delegate over RPC stubs, no fs surface). cwd-guard still
+  // loads as defense-in-depth, but registers zero sandbox tools.
+  const VERBS_RAW = process.env.PI_SANDBOX_VERBS ?? "";
   const requested = new Set(
     VERBS_RAW.split(",").map((s) => s.trim()).filter(Boolean),
   );
   for (const v of requested) {
     if (!ALL_VERBS.has(v as SandboxVerb)) {
       throw new Error(
-        `cwd-guard.ts: unknown verb in PI_SANDBOX_VERBS: ${v}`,
+        `cwd-guard.ts: unknown verb in PI_SANDBOX_VERBS: ${v}. ` +
+          `Allowed: ${[...ALL_VERBS].join(",")}.`,
       );
     }
   }
@@ -415,9 +423,9 @@ export interface MakeCwdGuardOpts {
 export function makeCwdGuard(
   opts: MakeCwdGuardOpts,
 ): ParentSide<CwdGuardState, CwdGuardResult> {
-  if (opts.verbs.length === 0) {
-    throw new Error("makeCwdGuard: verbs must be a non-empty subset");
-  }
+  // Empty verbs is the intentional no-fs path: cwd-guard loads as
+  // defense-in-depth (so future fs additions don't have to remember
+  // -e CWD_GUARD), but registers no sandbox tools.
   for (const v of opts.verbs) {
     if (!ALL_VERBS.has(v)) {
       throw new Error(`makeCwdGuard: unknown verb: ${v}`);
