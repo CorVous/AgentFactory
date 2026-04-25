@@ -5,11 +5,6 @@
 # pi-sandbox/.pi/agents/<spec.name>.yml and is picked up by the
 # auto-discovered yaml-agent-runner extension on the next pi run.
 #
-# Standalone — does NOT wrap scripts/task-runner/agent-maker.sh.
-# agent-maker is the legacy author-the-TS path used by pi-agent-builder
-# and pi-agent-assembler; agent-composer is the forward-looking emit-the-
-# YAML path. They share patterns but no code.
-#
 # Usage:
 #   agent-composer.sh -p "<prompt>"  [-m <model>]
 #   agent-composer.sh -i             [-m <model>]
@@ -27,7 +22,7 @@ INTERACTIVE=0
 PROMPT=""
 MODEL_OVERRIDE=""
 
-usage() { sed -n '2,23p' "$0"; }
+usage() { sed -n '2,17p' "$0"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -98,8 +93,7 @@ if [[ $INTERACTIVE -eq 1 ]]; then
   exit 0
 fi
 
-# One-shot mode. Wrap the prompt to point the LLM at the skill explicitly,
-# matching agent-maker's "Use the <skill> skill to: <prompt>." framing.
+# One-shot mode. Wrap the prompt to point the LLM at the skill explicitly.
 WRAPPED="Use the pi-agent-composer skill to: ${PROMPT}."
 (
   cd "$SANDBOX"

@@ -153,7 +153,7 @@ function runPi(
   return extractFinalMessage(result.stdout ?? "");
 }
 
-function extractFinalMessage(stdout: string): string {
+export function extractFinalMessage(stdout: string): string {
   const lines = stdout.split("\n").filter((l) => l.trim().length > 0);
   // Walk in reverse; first message_end with text content wins.
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -177,7 +177,7 @@ function extractFinalMessage(stdout: string): string {
   );
 }
 
-function flattenContent(content: unknown): string {
+export function flattenContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
@@ -216,7 +216,7 @@ export function pickLeastLeakyVariant(variants: string[], curation: Curation): n
   return best;
 }
 
-function forbiddenTokens(curation: Curation): string[] {
+export function forbiddenTokens(curation: Curation): string[] {
   const base = [
     "stage",
     "emit-summary",

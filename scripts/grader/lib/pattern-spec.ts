@@ -33,7 +33,7 @@ export function isKnownPattern(name: string): name is PatternName {
 }
 
 export function patternsDir(repoRoot: string): string {
-  return path.join(repoRoot, "pi-sandbox", "skills", "pi-agent-assembler", "patterns");
+  return path.join(repoRoot, "scripts", "grader", "patterns");
 }
 
 export function loadPatternSpec(repoRoot: string, name: string): PatternSpec {

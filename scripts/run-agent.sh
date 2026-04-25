@@ -28,10 +28,6 @@
 # `<name>` is the YAML filename stem (e.g. `agent-composer` for
 # `pi-sandbox/.pi/agents/agent-composer.yml`). The script reads the
 # YAML's `slash:` field as the authoritative slash name.
-#
-# `agent-maker` is listed for discoverability but kept as a separate
-# script (scripts/task-runner/agent-maker.sh) because it needs a
-# per-run isolated cwd that the YAML runtime does not currently model.
 
 set -euo pipefail
 
@@ -40,7 +36,7 @@ REPO="$(cd "$HERE/.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
 AGENTS_DIR="$SANDBOX/.pi/agents"
 
-usage() { sed -n '2,32p' "$0"; }
+usage() { sed -n '2,30p' "$0"; }
 
 INTERACTIVE=0
 
@@ -65,10 +61,6 @@ list_agents() {
   else
     echo "  (no agents directory at $AGENTS_DIR)"
   fi
-  echo
-  echo "Other agent-builder paths (own scripts):"
-  echo "  agent-maker              scripts/task-runner/agent-maker.sh — per-run isolated cwd"
-  echo "                           Use: npm run agent-maker -- <task> [-m <model>] [--grade]"
 }
 
 NAME=""

@@ -1,9 +1,9 @@
 // cwd-guard.ts — pi extension loaded via `pi -e <path>` that provides
 // sandbox_write and sandbox_edit tools. Both validate that the target
-// path stays inside $PI_SANDBOX_ROOT (set by the agent-maker harness
-// to the per-run cwd). Paired with a --tools allowlist that includes
-// these names and excludes the built-in write/edit, so the outer
-// agent-maker model has no escape path out of the run cwd.
+// path stays inside $PI_SANDBOX_ROOT (set by the parent that spawned
+// this child). Paired with a --tools allowlist that includes these
+// names and excludes the built-in write/edit, so the child model has
+// no escape path out of the per-run cwd.
 //
 // Pattern mirrors pi-sandbox/.pi/components/stage-write.ts.
 

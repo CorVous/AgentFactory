@@ -2,28 +2,29 @@
 /**
  * grader/index.ts — score one model's artifacts against a task's test.yaml.
  *
- * Usage:   grade.ts <task-name> <log-dir> <model-id>
- *   task-name   name of dir under tasks/ (e.g. "deferred-writer")
+ * Usage:   grade.ts <task-dir> <log-dir> <model-id>
+ *   task-dir    absolute or repo-relative path to a directory containing test.yaml
+ *               (e.g. scripts/grader/fixtures/composer-recon)
  *   log-dir     per-model log dir containing artifacts/{extensions,child-tools,stray}
  *   model-id    model string for the grade.json header
  *
  * Outputs: stdout = human markdown; <log-dir>/grade.json = machine row
  *
- * Dispatch: reads tasks/<task>/test.yaml, parses + validates it via
- * lib/test-spec.ts, then routes to the assembler grader for both
- * assembly-kind and gap-kind expectations.
+ * Only `pi-agent-composer` specs are graded by this entry point. Specs
+ * targeting other skills are rejected — the assembler/builder paths
+ * have been removed; if you need to grade other skill outputs, write
+ * a dedicated grader.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { gradeAssemblerTask } from "./graders/assembler.ts";
 import { gradeComposerTask } from "./graders/composer.ts";
-import { FRAMEWORK_ROOT, REPO_ROOT } from "./lib/paths.ts";
+import { REPO_ROOT } from "./lib/paths.ts";
 import { loadTestSpec } from "./lib/test-spec.ts";
 
 function usage(): never {
   console.error(
-    "Usage: grade.ts <task-name> <log-dir> <model-id>\n" +
+    "Usage: grade.ts <task-dir> <log-dir> <model-id>\n" +
       "  --help    print this message\n",
   );
   process.exit(2);
@@ -34,8 +35,10 @@ function main(): void {
   if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) usage();
   if (argv.length < 3) usage();
 
-  const [task, logDirArg, model] = argv;
-  const taskDir = path.join(FRAMEWORK_ROOT, "task-runner", "tasks", task);
+  const [taskArg, logDirArg, model] = argv;
+  const taskDir = path.isAbsolute(taskArg)
+    ? taskArg
+    : path.resolve(REPO_ROOT, taskArg);
   if (!fs.existsSync(path.join(taskDir, "test.yaml"))) {
     console.error(`No test.yaml at ${taskDir}/test.yaml`);
     process.exit(2);
@@ -47,42 +50,31 @@ function main(): void {
   }
 
   const spec = loadTestSpec(taskDir);
-
-  let rubricResult;
-  if (spec.skill === "pi-agent-composer") {
-    const { rubric, kind, composition, components } = gradeComposerTask({
-      repoRoot: REPO_ROOT,
-      logDir,
-      model,
-      task,
-      spec,
-    });
-    rubricResult = {
-      rubric,
-      kind: kind as "composition" | "gap",
-      pattern: composition,
-      components,
-    };
-  } else {
-    const { rubric, kind, pattern } = gradeAssemblerTask({
-      repoRoot: REPO_ROOT,
-      logDir,
-      model,
-      task,
-      spec,
-    });
-    rubricResult = { rubric, kind: kind as "assembly" | "gap", pattern };
+  if (spec.skill !== "pi-agent-composer") {
+    console.error(
+      `Unsupported skill "${spec.skill}". Only pi-agent-composer specs are graded by this tool.`,
+    );
+    process.exit(2);
   }
 
-  const md = rubricResult.rubric.emitMarkdown();
+  const task = path.basename(taskDir);
+  const { rubric, kind, composition } = gradeComposerTask({
+    repoRoot: REPO_ROOT,
+    logDir,
+    model,
+    task,
+    spec,
+  });
+
+  const md = rubric.emitMarkdown();
   process.stdout.write(md);
 
-  rubricResult.rubric.writeJson(path.join(logDir, "grade.json"), {
+  rubric.writeJson(path.join(logDir, "grade.json"), {
     model,
     task,
     skill: spec.skill,
-    kind: rubricResult.kind,
-    pattern: rubricResult.pattern,
+    kind,
+    pattern: composition,
   });
 }
 

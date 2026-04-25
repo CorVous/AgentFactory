@@ -29,7 +29,7 @@ import type { EmitSummaryResult, ParentSide } from "../components/_parent-side.t
 import { delegate } from "../lib/delegate.ts";
 
 const AGENTS_DIR = path.resolve(process.cwd(), ".pi", "agents");
-const MAX_BRIEF_BYTES = 16_000;
+export const MAX_BRIEF_BYTES = 16_000;
 
 // Static name → parentSide map. Kept to the components a single-spawn or
 // sequential-phases-with-brief runner can actually drive: cwd-guard,
@@ -44,7 +44,7 @@ const COMPONENTS: Record<string, ParentSide<any, unknown>> = {
   "emit-agent-spec": EMIT_AGENT_SPEC,
 };
 
-interface PhaseSpec {
+export interface PhaseSpec {
   name?: string;
   components: string[];
   /** Optional explicit child --tools allowlist for this phase. When set,
@@ -56,7 +56,7 @@ interface PhaseSpec {
   prompt: string;
 }
 
-interface AgentSpec {
+export interface AgentSpec {
   name: string;
   slash: string;
   description: string;
@@ -133,9 +133,7 @@ export default function (pi: ExtensionAPI) {
           );
           return;
         }
-        const brief = summaries
-          .map((s) => `## ${s.title}\n${s.body}`)
-          .join("\n\n");
+        const brief = buildBrief(summaries);
         if (Buffer.byteLength(brief, "utf8") > MAX_BRIEF_BYTES) {
           ctx.ui.notify(
             `brief is ${Buffer.byteLength(brief, "utf8")} bytes > ${MAX_BRIEF_BYTES} budget; aborting`,
@@ -154,7 +152,7 @@ export default function (pi: ExtensionAPI) {
   }
 }
 
-function substitute(
+export function substitute(
   template: string,
   vars: Record<string, string>,
 ): string {
@@ -164,7 +162,19 @@ function substitute(
   });
 }
 
-function validateSpec(raw: unknown, file: string): AgentSpec {
+/**
+ * Concatenate scout-phase summaries into a `## title\nbody` block. The
+ * caller is responsible for byte-budget enforcement via MAX_BRIEF_BYTES;
+ * this helper is purely formatting so it can be unit tested without the
+ * surrounding handler.
+ */
+export function buildBrief(
+  summaries: ReadonlyArray<{ title: string; body: string }>,
+): string {
+  return summaries.map((s) => `## ${s.title}\n${s.body}`).join("\n\n");
+}
+
+export function validateSpec(raw: unknown, file: string): AgentSpec {
   if (!raw || typeof raw !== "object") {
     throw new Error(`${file}: not an object`);
   }

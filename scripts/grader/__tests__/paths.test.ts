@@ -15,8 +15,8 @@ describe("paths", () => {
 
   it("FRAMEWORK_ROOT points at scripts/", () => {
     assert.ok(
-      fs.existsSync(path.join(FRAMEWORK_ROOT, "task-runner", "tasks")),
-      `FRAMEWORK_ROOT (${FRAMEWORK_ROOT}) is missing task-runner/tasks — constant does not resolve to scripts/`,
+      fs.existsSync(path.join(FRAMEWORK_ROOT, "reverse-pipeline")),
+      `FRAMEWORK_ROOT (${FRAMEWORK_ROOT}) is missing reverse-pipeline/ — constant does not resolve to scripts/`,
     );
   });
 });

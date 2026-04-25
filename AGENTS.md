@@ -38,19 +38,13 @@ wiring a new agent, match the tier to the job:
 
 In addition to the three tiers, `models.env` exposes
 `AGENT_BUILDER_TARGETS` — a comma-separated list of models the
-agent-making skills (`pi-agent-builder`, `pi-agent-assembler`) are
-expected to work well on (each skill should produce a correct, safe
-pi extension from a short natural-language prompt on every one of
-them, not just one). Current targets: **Haiku 4.5**
-(`anthropic/claude-haiku-4.5`), **Gemini 3 Flash Preview**
-(`google/gemini-3-flash-preview`), and **GLM 5.1** (`z-ai/glm-5.1`).
-When refining a skill, test against all three; when invoking pi,
-pick any and pass it via `--model`. GLM 5.1 was dropped on
-2026-04-23 for the builder skill (too slow, too many turns) and
-added back the same day after the smaller assembler skill landed:
-on smoke tests across drafter-with-approval / recon / gap tasks,
-GLM converged in 3–6 turns at $0.013–$0.048/task with full-pass
-grades. The "compose, don't author" shape fits it well.
+composer skill is expected to work well on (each model should
+produce a correct, safe agent spec from a short natural-language
+prompt). Current targets: **Haiku 4.5** (`anthropic/claude-haiku-4.5`),
+**Gemini 3 Flash Preview** (`google/gemini-3-flash-preview`), and
+**GLM 5.1** (`z-ai/glm-5.1`). The variable name predates the
+removal of the agent-maker harness; the list is now consumed only
+as documentation, since no script reads it after that removal.
 
 Source the file before launching pi so the tier vars are in scope:
 
@@ -83,36 +77,22 @@ vs. author-TS":
   cannot author code, only declare a spec. The script form stays
   in place as the bootstrap-recovery path (you can't compose with
   a broken composer).
-- **`pi-agent-assembler`** — composes already-tested parts from
-  `pi-sandbox/.pi/components/` (cwd-guard, stage-write, review)
-  into agents matching one of four patterns: `recon`,
-  `drafter-with-approval`, `confined-drafter`, `orchestrator`. If
-  the user's request maps to a pattern, this is the faster,
-  safer path. If no pattern fits, the skill emits a GAP message
-  and stops — that's the signal to fall back to the builder.
 - **`pi-agent-builder`** — from-scratch authorship. Use when the
-  assembler/composer flagged a gap, or for shapes neither covers
-  (custom UI widgets, compaction strategies, event-only
+  composer flagged a gap, or for shapes the composer cannot
+  express (custom UI widgets, compaction strategies, event-only
   extensions, context injection, session persistence, pi
-  packages, RPC orchestrator).
+  packages, RPC orchestrator). The skill itself lives at
+  `pi-sandbox/skills/pi-agent-builder/` and is loaded ad-hoc via
+  `pi --skill skills/pi-agent-builder`; there is no longer a
+  dedicated npm wrapper or batch harness for it.
 
-Pick per-run via `-s <skill-name>` on `agent-maker.sh` (assembler /
-builder), or via the dedicated `npm run agent-composer` script
-(composer). Default for `agent-maker.sh` is `pi-agent-builder`.
-The composer is the eventual replacement for `agent-maker.sh` once
-the assembler/builder skills also migrate to YAML output;
-`agent-maker.sh` stays in place until then.
+The composer is the only agent-creation path with a dedicated npm
+script. The agent-maker / run-task / grade-task harness that
+previously drove `pi-agent-builder` and `pi-agent-assembler` was
+removed; the assembler skill went with it. The builder skill
+remains as a reference for ad-hoc TS-authoring sessions.
 
 ### Invoking the skill
-
-Preferred: `npm run agent-maker` / `npm run agent-maker:i`. Both wrap
-`scripts/task-runner/agent-maker.sh`, which runs pi in a
-**per-run isolated cwd** under `pi-sandbox/.pi/scratch/runs/<label>/`
-with the pi-agent-builder skill loaded at an absolute path, a narrow
-`--tools read,sandbox_write,sandbox_edit,ls,grep` allowlist, and the
-`cwd-guard.ts` extension that rejects any write/edit outside the run
-cwd. The shared `pi-sandbox/.pi/{extensions,components}/` is never
-touched, so concurrent invocations don't race.
 
 ```sh
 # Generic launcher — dispatch any YAML-defined agent by its filename
@@ -128,33 +108,16 @@ npm run agent:i -- agent-composer                # REPL + slash hint
 # even if the YAML or runner is broken):
 npm run agent-composer -- -p "Drafter that stages writes for approval"
 npm run agent-composer:i                                 # interactive
-
-# Assembler / Builder (TS output via agent-maker, separate path
-# because of per-run isolated cwd):
-# One-shot (task-driven, auto-graded):
-npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 --grade
-
-# Same, via the assembler skill (preferred when the task matches
-# a documented pattern — recon, drafter-with-approval, etc.):
-npm run agent-maker -- recon-agent -m anthropic/claude-haiku-4.5 \
-  -s pi-agent-assembler --grade
-
-# Interactive (hands-on skill REPL):
-npm run agent-maker:i              # uses $TASK_MODEL
-npm run agent-maker:i -- -m google/gemini-3-flash-preview
-
-# Batch across $AGENT_BUILDER_TARGETS (one run per model, sequential):
-scripts/task-runner/run-task.sh recon-agent -r my-label
 ```
 
-All three npm scripts source `models.env` first, so `$TASK_MODEL` etc.
+Both npm scripts source `models.env` first, so `$TASK_MODEL` etc.
 are already in scope.
 
 Composer output lands at `pi-sandbox/.pi/agents/<name>.yml`. The
 runner picks it up on the next pi startup; restart any active
 `npm run pi` session to register newly emitted slash commands.
 
-Legacy ad-hoc path (no isolation, no tool scoping — avoid for batch work):
+Builder ad-hoc path (no isolation, no tool scoping — exploratory only):
 
 ```sh
 set -a; source models.env; set +a
@@ -164,9 +127,7 @@ npm run pi -- --provider openrouter --model "$LEAD_MODEL" \
 ```
 
 This runs from `pi-sandbox/` cwd so `skills/pi-agent-builder`,
-`.pi/extensions/…`, and `@prompt.md` paths resolve. Useful for
-exploratory sessions where you want to edit the shared sandbox
-directly.
+`.pi/extensions/…`, and `@prompt.md` paths resolve.
 
 For prompts with lots of nested quotes, put the prompt in a file under
 `pi-sandbox/.pi/scratch/` and pass `@.pi/scratch/prompt.md` — cleaner
@@ -354,22 +315,19 @@ generation), a separate class of issues surfaces:
   re-runs `set -a; source models.env; set +a`. To iterate on a subset
   of `AGENT_BUILDER_TARGETS`, either edit `models.env` directly or
   set the override *after* the source step inside your wrapper.
-- **Models write files anywhere they think "the project" lives** (historical). A
-  single-model run that produced a "correct" extension could still
-  land it in `/home/user/AgentFactory/.pi/extensions/` (repo root),
+- **Models write files anywhere they think "the project" lives** (historical).
+  A skill run that produced a "correct" extension could still land it in
+  `/home/user/AgentFactory/.pi/extensions/` (repo root),
   `/home/user/.pi/agent/extensions/` (global), or
   `pi-sandbox/<stray>.md` (sandbox root) — none of which is the
-  canonical `pi-sandbox/.pi/extensions/`. Resolved for the
-  agent-maker path by `pi-sandbox/.pi/components/cwd-guard.ts`,
-  a pi extension loaded via `-e` that registers `sandbox_write` /
-  `sandbox_edit` tools with path validation against
-  `$PI_SANDBOX_ROOT`, paired with a `--tools` allowlist that excludes
-  the built-in `write` / `edit`. Each run gets its own cwd under
-  `pi-sandbox/.pi/scratch/runs/<label>/` so escape attempts surface
-  as tool errors, not silent writes to shared state. The legacy
-  `npm run pi` path (direct skill invocation without agent-maker)
-  still has the wide tool surface — use it only for interactive
-  exploration, not batch runs.
+  canonical `pi-sandbox/.pi/extensions/`. The defense available today
+  is `pi-sandbox/.pi/components/cwd-guard.ts` (loaded via `-e`),
+  which registers `sandbox_write` / `sandbox_edit` tools with path
+  validation against `$PI_SANDBOX_ROOT`, paired with a `--tools`
+  allowlist that excludes the built-in `write` / `edit`. The composer
+  path uses these rails by default; `npm run pi` (direct skill
+  invocation) still has the wide tool surface — use it only for
+  interactive exploration.
 - **Claude Code's `Monitor` tool can't be cancelled programmatically
   in this environment** — the Monitor description mentions `TaskStop`
   but it isn't surfaced as an available tool, so monitors run until
@@ -399,27 +357,20 @@ generation), a separate class of issues surfaces:
   in a different but equally bad way. Treat "re-emit a >~300-line
   transformed copy via a single `Write`" as the anti-pattern and
   always decompose it into `cp` + targeted `Edit`s.
-- **Recon behavioral probe runs `behavioral=partial` on `$TASK_MODEL`
-  (deepseek-v3.2).** The grader looks for a `.md`/`.txt` file under
-  `.pi/scratch/` containing the `evidence_anchor` string (e.g.
-  `SKILL.md`). Generated recon extensions write that file only when
-  their child pi (also on `$TASK_MODEL`) calls the `emit_summary` stub
-  tool — and deepseek-v3.2 regularly skips the stub call on recon
-  prompts, so the parent's handler returns via the silent
-  `summaries.length === 0` branch (`ctx.ui.notify` is a no-op in
-  print mode, so the failure doesn't surface in NDJSON). This affects
-  the hand-authored `recon-agent` task equally — confirmed with an
-  A/B re-run on haiku — so it is a model-capability ceiling, not a
-  harness regression. Narrowing the agent-maker skill symlink
-  (`agent-maker.sh` only mounts `skills/$SKILL_NAME`, not the whole
-  tree) and the `seedReconFixture` helper in
-  `scripts/grader/lib/probes.ts` both stay in
-  place as correct test-isolation; neither flips the partial. If you
-  need to close it later, options are: (a) use `$LEAD_MODEL` for the
-  recon probe's child specifically, (b) log the child's stdout to a
-  scratch file so the silent early-exit branches become visible, or
-  (c) relax the evidence check. For now, treat recon `behavioral=
-  partial` as an expected "mostly passing" ceiling.
+- **Recon behavioral probe historically ran `behavioral=partial` on
+  `$TASK_MODEL` (deepseek-v3.2).** The grader looks for a `.md`/`.txt`
+  file under `.pi/scratch/` containing the `evidence_anchor` string
+  (e.g. `SKILL.md`). Generated recon extensions write that file only
+  when their child pi calls the `emit_summary` stub — and deepseek-v3.2
+  regularly skipped the stub call on recon prompts, so the parent's
+  handler returned via the silent `summaries.length === 0` branch
+  (`ctx.ui.notify` is a no-op in print mode, so the failure didn't
+  surface in NDJSON). The `seedReconFixture` helper in
+  `scripts/grader/lib/probes.ts` is the test-isolation seam; if you
+  need to tighten coverage later, options are: (a) use `$LEAD_MODEL`
+  for the recon probe's child specifically, (b) log the child's
+  stdout to a scratch file so the silent early-exit branches become
+  visible, or (c) relax the evidence check.
 
 ## Repo layout
 
@@ -449,7 +400,21 @@ generation), a separate class of issues surfaces:
   - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
     anything you don't want to check in. Gitignored.
   - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how
-    to build agents.
+    to author TS extensions from scratch. Reference / ad-hoc only;
+    no dedicated runner.
+  - `pi-sandbox/skills/pi-agent-composer/` — pi skill that teaches pi
+    to emit YAML agent specs via `emit_agent_spec`. Driven by
+    `npm run agent-composer`.
+- `scripts/grader/` — TypeScript grader for composer-emitted artifacts.
+  - `scripts/grader/patterns/` — pattern markdown files (recon,
+    drafter-with-approval, …) consumed by `lib/pattern-spec.ts` and
+    by the reverse-pipeline's curation enumerator.
+  - `scripts/grader/fixtures/` — composer regression task specs.
+- `scripts/reverse-pipeline/` — generator that turns curations into
+  prompt+test.yaml fixtures. Output lands in
+  `scripts/reverse-pipeline/generated/<tag>/test.yaml` (gitignored).
+- `scripts/agent-composer.sh`, `scripts/run-agent.sh` — composer
+  driver and generic YAML-agent launcher.
 
 Additional agent definitions, extensions, skills, or prompt templates can be
 added under `pi-sandbox/` and loaded via `-e <path>` / `--skill <path>`.

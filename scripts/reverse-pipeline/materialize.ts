@@ -102,8 +102,7 @@ export function materialize(
   const taskDir = path.join(
     repoRoot,
     "scripts",
-    "task-runner",
-    "tasks",
+    "reverse-pipeline",
     relTaskName,
   );
   const yamlPath = path.join(taskDir, "test.yaml");
