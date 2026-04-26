@@ -5,8 +5,11 @@ The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
 `pi-sandbox/agents/<name>.yaml`, resolves the model tier, and execs `pi`
 from the directory you invoked it from (or `--sandbox <dir>`). Every
 agent gets the `sandbox` baseline extension, which blocks `bash` outright
-and rejects any path-bearing tool call (`read`, `write`, `edit`, `ls`,
-`grep`, `find`) whose `path` resolves outside the sandbox root.
+and rejects any path-bearing tool call whose `path` resolves outside the
+sandbox root. The set of path-bearing tools is discovered at session
+start from `pi.getAllTools()` (any tool whose schema declares
+`path: string`), with a static fallback of `{read, write, edit, ls,
+grep, find}` for the installed pi 0.69 built-ins.
 
 ```sh
 set -a; source models.env; set +a
@@ -26,6 +29,8 @@ tools: [read, ls, grep, deferred_write]
 extensions: [deferred-write]      # merged with the [sandbox] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
+noEditAdd: [my_writer]            # optional; force-include in no-edit rail
+noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 ```
 
 The runner always passes `--no-extensions --no-skills --no-context-files`
@@ -52,9 +57,14 @@ runner) to know where to clamp paths.
   buffered in extension memory; on `agent_end` the extension previews the
   queued drafts via `ctx.ui.confirm` and writes approved ones to disk
   (sha256-verified after write, ≤ 50 files / ≤ 2 MB each).
-- `no-edit` — blocks `edit` outright and rejects `write` /
-  `deferred_write` whose target already exists. Drop this from the recipe
-  if you want an agent that can overwrite or edit existing files.
+- `no-edit` — blocks `edit` outright and rejects any create-only tool
+  whose target already exists. The create-only set is discovered at
+  session start from `pi.getAllTools()`: any tool whose schema declares
+  `path: string` plus a content-shaped string field
+  (`content` | `text` | `body`). The static fallback covers `write` and
+  `deferred_write`. Override per recipe with `noEditAdd` (force-include)
+  or `noEditSkip` (force-exclude). Drop the extension entirely if you
+  want an agent that can overwrite or edit existing files.
 
 Non-interactive runs refuse to write because there's no UI to confirm.
 
@@ -62,6 +72,17 @@ Non-interactive runs refuse to write because there's no UI to confirm.
 overwrite-on-approval keeps `deferred-write` and omits `no-edit`; an
 agent using plain `write` but still wanting create-only semantics keeps
 `no-edit` and omits `deferred-write`.
+
+### Debugging the rails
+
+Set `AGENT_DEBUG=1` in the environment when launching an agent and the
+`sandbox` and `no-edit` extensions will dump their resolved tool sets
+via `ctx.ui.notify` on `session_start`. Useful when you've added a new
+write tool and want to confirm it was picked up by introspection.
+
+```sh
+AGENT_DEBUG=1 npm run agent -- deferred-writer -p "ping"
+```
 
 ## Mandatory safety rails for sub-agents
 

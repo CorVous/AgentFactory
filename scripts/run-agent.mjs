@@ -130,10 +130,22 @@ piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 
+const childEnv = {
+  ...process.env,
+  AGENT_SANDBOX_ROOT: sandboxRoot,
+  AGENT_NAME: args.name,
+};
+if (Array.isArray(recipe.noEditAdd) && recipe.noEditAdd.length > 0) {
+  childEnv.AGENT_NO_EDIT_ADD = recipe.noEditAdd.join(",");
+}
+if (Array.isArray(recipe.noEditSkip) && recipe.noEditSkip.length > 0) {
+  childEnv.AGENT_NO_EDIT_SKIP = recipe.noEditSkip.join(",");
+}
+
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
-  env: { ...process.env, AGENT_SANDBOX_ROOT: sandboxRoot, AGENT_NAME: args.name },
+  env: childEnv,
 });
 
 child.on("exit", (code, signal) => {
