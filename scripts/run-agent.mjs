@@ -18,6 +18,7 @@ const BASELINE_EXTENSIONS = [
   "agent-header",
   "agent-footer",
   "hide-extensions-list",
+  "deferred-confirm",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 

@@ -4,7 +4,7 @@ Day-to-day, the way to launch a focused agent is `npm run agent -- <name>`.
 The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
 `pi-sandbox/agents/<name>.yaml`, resolves the model tier, and execs `pi`
 from the directory you invoked it from (or `--sandbox <dir>`). Every
-agent gets five baseline extensions:
+agent gets six baseline extensions:
 
 - `sandbox` — blocks `bash` outright and rejects any path-bearing tool
   call whose `path` resolves outside the sandbox root. The set of
@@ -40,6 +40,19 @@ agent gets five baseline extensions:
   agent-footer already shows the active tools and the path listing is
   noise. Reaches into private TUI state via `setWidget`+`setTimeout(0)`
   because pi has no public API to suppress per-section.
+- `deferred-confirm` — end-of-turn coordinator for any `deferred-*`
+  extension. Exposes `registerDeferredHandler({ label, extension,
+  priority, prepare })` (named export) plus a single `agent_end` listener
+  that calls every registered handler's `prepare(ctx)`, aggregates the
+  results into one `ctx.ui.confirm` dialog (sections grouped by handler
+  label, summary line in the title), and on approval invokes each
+  handler's `apply()` in priority order (10 writes → 20 edits → 25
+  moves → 30 deletes). Any handler returning `status: "error"` aborts
+  the entire batch before the dialog renders. The handler array is
+  stashed on `globalThis` so it survives jiti's per-extension module
+  isolation (`loader.js` uses `moduleCache: false`). No-op for agents
+  that don't load any deferred-* extension — when no handlers register,
+  `agent_end` returns silently.
 
 ```sh
 set -a; source models.env; set +a
@@ -57,7 +70,7 @@ description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # replaces pi's default system prompt
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list] baseline
+extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail
@@ -89,9 +102,9 @@ non-empty). All six appear under "Extension CLI Flags" in `pi --help`.
 
 - `sandbox` (baseline) — disables `bash`, clamps fs activity to the root.
 - `deferred-write` — registers the `deferred_write` tool. Drafts are
-  buffered in extension memory; on `agent_end` the extension previews the
-  queued drafts via `ctx.ui.confirm` and writes approved ones to disk
-  (sha256-verified after write, ≤ 50 files / ≤ 2 MB each).
+  buffered in extension memory; the extension registers a handler with
+  the `deferred-confirm` baseline that previews queued drafts and writes
+  approved ones (sha256-verified after write, ≤ 50 files / ≤ 2 MB each).
 - `no-edit` — blocks `edit` outright and rejects any create-only tool
   whose target already exists. The create-only set is discovered at
   session start from `pi.getAllTools()`: any tool whose schema declares
@@ -108,6 +121,44 @@ overwrite-on-approval keeps `deferred-write` and omits `no-edit`; an
 agent using plain `write` but still wanting create-only semantics keeps
 `no-edit` and omits `deferred-write`.
 
+## Worked example: deferred-author (composing all four kinds)
+
+`pi-sandbox/agents/deferred-author.yaml` composes the full set of
+deferred-* tool extensions and relies on `deferred-confirm` (baseline)
+to show one approval dialog at end-of-turn:
+
+- `deferred-write` — `deferred_write({path, content})`. Creates new
+  files. Same shape and limits as the worked example above.
+- `deferred-edit` — `deferred_edit({path, old_string, new_string})`.
+  Modifies existing files. Validates `old_string` is unique against the
+  buffered file state at queue time, so multi-edit ordering works. Re-
+  validates against disk at apply time; any drift aborts the batch.
+- `deferred-move` — `deferred_move({src, dst})`. Verbatim relocation:
+  bit-identical content at the new path. Refuses to overwrite (`dst`
+  must not exist). Parent directories of `dst` are auto-created at
+  apply time. Cross-device EXDEV falls back to copy + unlink.
+- `deferred-delete` — `deferred_delete({path})`. Removes existing files
+  (rejects directories and missing paths at queue time so the model
+  gets immediate feedback).
+
+End-of-turn approval is **all-or-nothing across all four kinds**: the
+`deferred-confirm` coordinator collects every handler's `prepare`
+result, aborts the whole batch if any returns `status: "error"`,
+otherwise renders one `ctx.ui.confirm` with sections per handler. On
+approve, the apply phase runs in fixed priority order (writes → edits
+→ moves → deletes) so compositions like "edit `foo.ts`, then move it
+to `lib/foo.ts`" land deterministically — the edit hits the original
+path, then the rename moves the now-edited file. The reverse ("move
+then edit at the new path") fails at the edit's re-validation because
+`dst` doesn't exist when the edit's `prepare` reads from disk.
+
+Authoring agents should compose the four deferred-* extensions and let
+`deferred-confirm` drive the dialog rather than each running its own.
+`no-edit` is redundant under this composition: the recipe's `tools:`
+allowlist already omits the built-in `edit`/`write`, and each
+deferred-* tool enforces its own existence/non-existence preconditions
+at queue time.
+
 ### Debugging the rails
 
 Set `AGENT_DEBUG=1` in the environment when launching an agent and the
@@ -115,7 +166,7 @@ Set `AGENT_DEBUG=1` in the environment when launching an agent and the
 via `ctx.ui.notify` on `session_start`. Useful when you've added a new
 write tool and want to confirm it was picked up by introspection.
 
-The rails — `agent-header`, `agent-footer`, and `deferred-write`'s
+The rails — `agent-header`, `agent-footer`, and `deferred-confirm`'s
 end-of-turn `ctx.ui.confirm` dialog — only render under a real PTY,
 so `pi -p` print mode can't exercise them. For integration testing,
 drive a full TUI session under tmux:
