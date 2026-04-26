@@ -9,11 +9,11 @@
 //                  registered by extensions. Truncated with an ellipsis
 //                  on narrow terminals; dropped entirely if there is no
 //                  room for a 2-column gap after the sandbox label.
-//   line 2, left:  `$cost / <bar>` — accumulated assistant cost from
-//                  session history plus a 5-cell eighths-block bar for
-//                  the context-usage percent (warning tint > 70%,
-//                  error tint > 90%). pi's default token-flow stats
-//                  (↑input, ↓output, cache R/W, /<window-size>) are
+//   line 2, left:  `<bar>| $cost` — 5-cell eighths-block context-usage
+//                  bar (warning tint > 70%, error tint > 90%), followed
+//                  by the accumulated assistant cost from session
+//                  history. pi's default token-flow stats (↑input,
+//                  ↓output, cache R/W, /<window-size>) are
 //                  intentionally dropped.
 //   line 2, right: model id.
 //   line 3 (opt):  extension status texts set via ctx.ui.setStatus().
@@ -91,18 +91,17 @@ export default function (pi: ExtensionAPI) {
 
         const ctxPct = ctx.getContextUsage()?.percent;
 
-        const stats: string[] = [];
-        if (cost) stats.push(`$${cost.toFixed(3)}`);
-
         const ctxStr = typeof ctxPct === "number" ? renderBar(ctxPct, 5) : "?";
         let ctxColored = ctxStr;
         if (typeof ctxPct === "number") {
           if (ctxPct > 90) ctxColored = theme.fg("error", ctxStr);
           else if (ctxPct > 70) ctxColored = theme.fg("warning", ctxStr);
         }
-        stats.push(ctxColored);
 
-        const left = stats.join(" / ");
+        const stats: string[] = [ctxColored];
+        if (cost) stats.push(`$${cost.toFixed(3)}`);
+
+        const left = stats.join("| ");
         const right = ctx.model?.id || "no-model";
         const leftW = visibleWidth(left);
         const rightW = visibleWidth(right);
