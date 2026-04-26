@@ -73,7 +73,6 @@ export default function (pi: ExtensionAPI) {
 
     const root = path.resolve(process.env.AGENT_SANDBOX_ROOT || ctx.cwd);
     const displayRoot = homeReplace(root);
-    ctx.ui.notify(`sandbox active: fs limited to ${root}, bash disabled`, "info");
     if (process.env.AGENT_DEBUG === "1") {
       const dump = `sandbox pathTools = [${[...pathTools].sort().join(", ")}]`;
       ctx.ui.notify(dump, "info");
