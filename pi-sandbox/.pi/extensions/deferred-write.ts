@@ -1,21 +1,24 @@
 // Deferred-write extension. Drafts written via the `deferred_write` tool
-// are buffered in extension memory and surfaced to the user (via
-// ctx.ui.confirm) once the agent loop completes. Approved drafts are
-// written to disk under the sandbox root; rejected drafts are discarded.
+// are buffered in extension memory and surfaced to the user (via the
+// shared deferred-confirm dialog) once the agent loop completes. Approved
+// drafts are written to disk under the sandbox root; rejected drafts are
+// discarded.
 //
 // This extension does not enforce no-overwrite. If a recipe wants to
 // forbid modifying existing files, pair it with the `no-edit` extension,
 // which blocks `edit` outright and rejects `write`/`deferred_write`
 // targeting paths that already exist.
 //
-// Designed to compose with sandbox.ts: paths are validated against the
-// same root (the `--sandbox-root` flag, falling back to ctx.cwd).
+// End-of-turn approval is handled centrally by deferred-confirm.ts; this
+// extension registers a handler with the shared bus rather than driving
+// its own ctx.ui.confirm dialog.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
 
 const MAX_FILES_PER_TURN = 50;
 const MAX_BYTES_PER_FILE = 2_000_000;
@@ -62,96 +65,87 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
-    if (drafts.length === 0) return;
-    const queued = drafts.splice(0, drafts.length);
-    const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || ctx.cwd);
+  registerDeferredHandler({
+    label: "Writes",
+    extension: "deferred-write",
+    priority: 10,
+    async prepare(ctx): Promise<PrepareResult> {
+      if (drafts.length === 0) return { status: "empty" };
+      const queued = drafts.splice(0, drafts.length);
+      const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || ctx.cwd);
 
-    type Plan = { relPath: string; destAbs: string; content: string; sha: string; bytes: number };
-    const plans: Plan[] = [];
-    const skips: string[] = [];
+      type Plan = { relPath: string; destAbs: string; content: string; sha: string; bytes: number };
+      const plans: Plan[] = [];
+      const errors: string[] = [];
 
-    for (const d of queued) {
-      if (typeof d.relPath !== "string" || d.relPath.length === 0) {
-        skips.push(`<empty path>`);
-        continue;
-      }
-      if (path.isAbsolute(d.relPath) || d.relPath.split(/[/\\]/).includes("..")) {
-        skips.push(`${d.relPath}: absolute or contains '..'`);
-        continue;
-      }
-      const destAbs = path.resolve(root, d.relPath);
-      if (destAbs !== root && !destAbs.startsWith(root + path.sep)) {
-        skips.push(`${d.relPath}: escapes sandbox`);
-        continue;
-      }
-      const bytes = Buffer.byteLength(d.content, "utf8");
-      if (bytes > MAX_BYTES_PER_FILE) {
-        skips.push(`${d.relPath}: ${bytes} bytes > ${MAX_BYTES_PER_FILE}`);
-        continue;
-      }
-      plans.push({ relPath: d.relPath, destAbs, content: d.content, sha: sha256(d.content), bytes });
-    }
-
-    for (const s of skips) {
-      if (ctx.hasUI) ctx.ui.notify(`deferred_write skip: ${s}`, "warning");
-    }
-    if (plans.length === 0) {
-      if (ctx.hasUI) ctx.ui.notify("deferred_write: no promotable drafts", "warning");
-      return;
-    }
-    if (plans.length > MAX_FILES_PER_TURN) {
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          `deferred_write: ${plans.length} drafts exceeds limit of ${MAX_FILES_PER_TURN}; aborting`,
-          "error",
-        );
-      }
-      return;
-    }
-
-    if (!ctx.hasUI) {
-      // Non-interactive: refuse to write without confirmation.
-      return;
-    }
-
-    const preview = plans
-      .map((p) => {
-        const overwrite = fs.existsSync(p.destAbs) ? " [OVERWRITE]" : "";
-        const header = `${p.destAbs} (${p.bytes} bytes, sha ${p.sha.slice(0, 10)}…)${overwrite}`;
-        const lines = p.content.split("\n");
-        const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n");
-        const tail =
-          lines.length > PREVIEW_LINES_PER_FILE
-            ? `\n… (+${lines.length - PREVIEW_LINES_PER_FILE} more lines)`
-            : "";
-        return `${header}\n\n${shown}${tail}`;
-      })
-      .join("\n\n---\n\n");
-
-    const ok = await ctx.ui.confirm(`Promote ${plans.length} file(s)?`, preview);
-    if (!ok) {
-      ctx.ui.notify("deferred_write: cancelled, nothing written", "info");
-      return;
-    }
-
-    const wrote: string[] = [];
-    const failed: string[] = [];
-    for (const p of plans) {
-      try {
-        fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
-        fs.writeFileSync(p.destAbs, p.content, "utf8");
-        const back = sha256(fs.readFileSync(p.destAbs, "utf8"));
-        if (back !== p.sha) {
-          failed.push(`${p.relPath}: sha mismatch after write`);
+      for (const d of queued) {
+        if (typeof d.relPath !== "string" || d.relPath.length === 0) {
+          errors.push("<empty path>");
           continue;
         }
-        wrote.push(p.destAbs);
-      } catch (e) {
-        failed.push(`${p.relPath}: ${(e as Error).message}`);
+        if (path.isAbsolute(d.relPath) || d.relPath.split(/[/\\]/).includes("..")) {
+          errors.push(`${d.relPath}: absolute or contains '..'`);
+          continue;
+        }
+        const destAbs = path.resolve(root, d.relPath);
+        if (destAbs !== root && !destAbs.startsWith(root + path.sep)) {
+          errors.push(`${d.relPath}: escapes sandbox`);
+          continue;
+        }
+        const bytes = Buffer.byteLength(d.content, "utf8");
+        if (bytes > MAX_BYTES_PER_FILE) {
+          errors.push(`${d.relPath}: ${bytes} bytes > ${MAX_BYTES_PER_FILE}`);
+          continue;
+        }
+        plans.push({ relPath: d.relPath, destAbs, content: d.content, sha: sha256(d.content), bytes });
       }
-    }
-    if (failed.length > 0) ctx.ui.notify(`deferred_write failures:\n${failed.join("\n")}`, "error");
-    if (wrote.length > 0) ctx.ui.notify(`deferred_write wrote:\n${wrote.join("\n")}`, "info");
+
+      if (plans.length > MAX_FILES_PER_TURN) {
+        errors.push(`${plans.length} drafts exceeds limit of ${MAX_FILES_PER_TURN}`);
+      }
+      if (errors.length > 0) return { status: "error", messages: errors };
+      if (plans.length === 0) return { status: "empty" };
+
+      const preview = plans
+        .map((p) => {
+          const overwrite = fs.existsSync(p.destAbs) ? " [OVERWRITE]" : "";
+          const header = `${p.destAbs} (${p.bytes} bytes, sha ${p.sha.slice(0, 10)}…)${overwrite}`;
+          const lines = p.content.split("\n");
+          const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n");
+          const tail =
+            lines.length > PREVIEW_LINES_PER_FILE
+              ? `\n… (+${lines.length - PREVIEW_LINES_PER_FILE} more lines)`
+              : "";
+          return `${header}\n\n${shown}${tail}`;
+        })
+        .join("\n\n---\n\n");
+
+      const apply = async (): Promise<{ wrote: string[]; failed: string[] }> => {
+        const wrote: string[] = [];
+        const failed: string[] = [];
+        for (const p of plans) {
+          try {
+            fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
+            fs.writeFileSync(p.destAbs, p.content, "utf8");
+            const back = sha256(fs.readFileSync(p.destAbs, "utf8"));
+            if (back !== p.sha) {
+              failed.push(`${p.relPath}: sha mismatch after write`);
+              continue;
+            }
+            wrote.push(p.destAbs);
+          } catch (e) {
+            failed.push(`${p.relPath}: ${(e as Error).message}`);
+          }
+        }
+        return { wrote, failed };
+      };
+
+      return {
+        status: "ok",
+        summary: `${plans.length} file(s)`,
+        preview,
+        apply,
+      };
+    },
   });
 }

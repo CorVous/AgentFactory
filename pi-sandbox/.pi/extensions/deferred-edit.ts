@@ -1,20 +1,21 @@
 // Deferred-edit extension. Edits queued via the `deferred_edit` tool are
-// buffered in extension memory and surfaced to the user (via ctx.ui.confirm)
-// once the agent loop completes. Approved batches are applied atomically:
-// either every queued edit lands or none does.
+// buffered in extension memory and surfaced to the user (via the shared
+// deferred-confirm dialog) once the agent loop completes. Approved
+// batches are applied atomically.
 //
 // Designed to compose with sandbox.ts: paths are validated against the same
 // root (the `--sandbox-root` flag, falling back to ctx.cwd / process.cwd).
 //
 // Orthogonal to deferred-write: `deferred_edit` only modifies existing files;
-// it never creates new ones. Recipes that want both create-on-approval and
-// edit-on-approval should compose the two extensions.
+// it never creates new ones. End-of-turn approval is handled centrally by
+// deferred-confirm.ts.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
 
 const PREVIEW_LINES_PER_BLOCK = 20;
 
@@ -110,89 +111,80 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
-    if (edits.length === 0) return;
-    const queued = edits.splice(0, edits.length);
-    const root = resolveSandboxRoot(pi, ctx.cwd);
+  registerDeferredHandler({
+    label: "Edits",
+    extension: "deferred-edit",
+    priority: 20,
+    async prepare(ctx): Promise<PrepareResult> {
+      if (edits.length === 0) return { status: "empty" };
+      const queued = edits.splice(0, edits.length);
+      const root = resolveSandboxRoot(pi, ctx.cwd);
 
-    type FilePlan = { relPath: string; destAbs: string; original: string; final: string; edits: Edit[] };
-    const fileMap = new Map<string, FilePlan>();
-    const errors: string[] = [];
+      type FilePlan = { relPath: string; destAbs: string; original: string; final: string; edits: Edit[] };
+      const fileMap = new Map<string, FilePlan>();
+      const errors: string[] = [];
 
-    for (const e of queued) {
-      const v = validatePath(e.relPath, root);
-      if (!v.ok) { errors.push(v.err); continue; }
-      let plan = fileMap.get(v.abs);
-      if (!plan) {
-        if (!fs.existsSync(v.abs)) {
-          errors.push(`${e.relPath}: file no longer exists`);
-          continue;
+      for (const e of queued) {
+        const v = validatePath(e.relPath, root);
+        if (!v.ok) { errors.push(v.err); continue; }
+        let plan = fileMap.get(v.abs);
+        if (!plan) {
+          if (!fs.existsSync(v.abs)) {
+            errors.push(`${e.relPath}: file no longer exists`);
+            continue;
+          }
+          const original = fs.readFileSync(v.abs, "utf8");
+          plan = { relPath: e.relPath, destAbs: v.abs, original, final: original, edits: [] };
+          fileMap.set(v.abs, plan);
         }
-        const original = fs.readFileSync(v.abs, "utf8");
-        plan = { relPath: e.relPath, destAbs: v.abs, original, final: original, edits: [] };
-        fileMap.set(v.abs, plan);
+        const r = applyUnique(plan.final, e.oldString, e.newString);
+        if (!r.ok) { errors.push(`${e.relPath}: ${r.err}`); continue; }
+        plan.final = r.out;
+        plan.edits.push(e);
       }
-      const r = applyUnique(plan.final, e.oldString, e.newString);
-      if (!r.ok) { errors.push(`${e.relPath}: ${r.err}`); continue; }
-      plan.final = r.out;
-      plan.edits.push(e);
-    }
 
-    if (errors.length > 0) {
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          `deferred_edit aborted (re-validation failed for ${errors.length} edit(s)):\n${errors.join("\n")}`,
-          "error",
-        );
-      }
-      return;
-    }
+      if (errors.length > 0) return { status: "error", messages: errors };
 
-    const plans = [...fileMap.values()].filter((p) => p.final !== p.original);
-    if (plans.length === 0) {
-      if (ctx.hasUI) ctx.ui.notify("deferred_edit: no net changes to apply", "warning");
-      return;
-    }
+      const plans = [...fileMap.values()].filter((p) => p.final !== p.original);
+      if (plans.length === 0) return { status: "empty" };
 
-    if (!ctx.hasUI) {
-      // Non-interactive: refuse to write without confirmation.
-      return;
-    }
+      const totalEdits = plans.reduce((n, p) => n + p.edits.length, 0);
+      const preview = plans
+        .map((p) => {
+          const header = `${p.destAbs} (${p.edits.length} edit${p.edits.length === 1 ? "" : "s"})`;
+          const blocks = p.edits.map((e, i) => {
+            return `Edit ${i + 1}:\n--- old\n${clipPreview(e.oldString)}\n+++ new\n${clipPreview(e.newString)}`;
+          });
+          return [header, ...blocks].join("\n\n");
+        })
+        .join("\n\n---\n\n");
 
-    const totalEdits = plans.reduce((n, p) => n + p.edits.length, 0);
-    const preview = plans
-      .map((p) => {
-        const header = `${p.destAbs} (${p.edits.length} edit${p.edits.length === 1 ? "" : "s"})`;
-        const blocks = p.edits.map((e, i) => {
-          return `Edit ${i + 1}:\n--- old\n${clipPreview(e.oldString)}\n+++ new\n${clipPreview(e.newString)}`;
-        });
-        return [header, ...blocks].join("\n\n");
-      })
-      .join("\n\n---\n\n");
-
-    const ok = await ctx.ui.confirm(`Apply ${totalEdits} edit(s) across ${plans.length} file(s)?`, preview);
-    if (!ok) {
-      ctx.ui.notify("deferred_edit: cancelled, nothing written", "info");
-      return;
-    }
-
-    const wrote: string[] = [];
-    const failed: string[] = [];
-    for (const p of plans) {
-      try {
-        const expected = sha256(p.final);
-        fs.writeFileSync(p.destAbs, p.final, "utf8");
-        const back = sha256(fs.readFileSync(p.destAbs, "utf8"));
-        if (back !== expected) {
-          failed.push(`${p.relPath}: sha mismatch after write`);
-          continue;
+      const apply = async (): Promise<{ wrote: string[]; failed: string[] }> => {
+        const wrote: string[] = [];
+        const failed: string[] = [];
+        for (const p of plans) {
+          try {
+            const expected = sha256(p.final);
+            fs.writeFileSync(p.destAbs, p.final, "utf8");
+            const back = sha256(fs.readFileSync(p.destAbs, "utf8"));
+            if (back !== expected) {
+              failed.push(`${p.relPath}: sha mismatch after write`);
+              continue;
+            }
+            wrote.push(p.destAbs);
+          } catch (e) {
+            failed.push(`${p.relPath}: ${(e as Error).message}`);
+          }
         }
-        wrote.push(p.destAbs);
-      } catch (e) {
-        failed.push(`${p.relPath}: ${(e as Error).message}`);
-      }
-    }
-    if (failed.length > 0) ctx.ui.notify(`deferred_edit failures:\n${failed.join("\n")}`, "error");
-    if (wrote.length > 0) ctx.ui.notify(`deferred_edit wrote:\n${wrote.join("\n")}`, "info");
+        return { wrote, failed };
+      };
+
+      return {
+        status: "ok",
+        summary: `${totalEdits} edit(s) across ${plans.length} file(s)`,
+        preview,
+        apply,
+      };
+    },
   });
 }
