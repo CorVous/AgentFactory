@@ -50,6 +50,7 @@ const ROLE_COMPONENTS: ReadonlySet<string> = new Set([
   "review.ts",
   "run-deferred-writer.ts",
   "emit-agent-spec.ts",
+  "dispatch-agent.ts",
 ]);
 
 /** Components allowed to import potentially-dangerous Node modules.
@@ -72,6 +73,13 @@ const PRIVILEGED_IMPORTS: ReadonlyMap<
   // fs.writeFileSync to land the YAML spec. It calls validate()
   // before the mkdir+write — see Step 2.6.
   ["emit-agent-spec.ts", new Set(["node:fs", "node:path", "node:url"])],
+  // dispatch-agent.ts uses node:fs in its parent-side finalize to
+  // resolve `<sandboxRoot>/.pi/agents/<name>.yml` (existsSync +
+  // readFileSync) and to enumerate available agents in the "no such
+  // agent" error path (existsSync + readdirSync). The LLM-supplied
+  // `name` is path-validated through cwd-guard's validate() before
+  // any fs op, matching the stage-write / emit-agent-spec pattern.
+  ["dispatch-agent.ts", new Set(["node:fs", "node:path", "node:url"])],
 ]);
 
 /** Modules a non-privileged component must not import. Aliases of

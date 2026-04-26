@@ -1,8 +1,9 @@
 # Compositions
 
-Two topologies the YAML composer can emit. Pick one with the cascade
-in `procedure.md` §3. The third — `rpc-delegator-over-concurrent-drafters`
-— is **deferred**; the composer emits GAP for it (see §"orchestrator"
+Three topologies the YAML composer can emit. Pick one with the
+cascade in `procedure.md` §3. The fourth —
+`rpc-delegator-over-concurrent-drafters` — is **deferred**; the
+composer emits GAP for it (see §"orchestrator-with-LLM-reviewer"
 below).
 
 The runner that consumes these YAML specs lives at
@@ -93,7 +94,61 @@ before each `delegate()` call:
 - **Confirm/promote gate:** auto-applied on phase 2 (`stage-write`
   present, `review` absent).
 
-## orchestrator (deferred — emit GAP)
+## single-spawn-with-dispatch
+
+- **When:** a dispatcher LLM that programmatically invokes other
+  emitted agents (or the composer itself) via `dispatch_agent({name,
+  args})`. Covers fan-out, sequential orchestration, and the
+  meta-composer pattern (dispatcher asks the composer to design
+  a sub-agent, then dispatches the freshly-emitted agent on the
+  next turn). No LLM reviewer involved — if the user wants
+  verdict-driven approve/revise, that's still GAP.
+- **Required component / tool combination (enforced by
+  `emit_agent_spec` and the runner):**
+  - `components: [dispatch-agent]` (only entry needed; sandbox-fs
+    auto-injects if you list any sandbox_* read verb in `tools`).
+  - `tools` MUST include `dispatch_agent`. Optionally add
+    `sandbox_read,sandbox_ls,sandbox_grep,sandbox_glob` if the
+    dispatcher should inspect the project before deciding what
+    to dispatch. NEVER add `stage_write`, `sandbox_write`, or
+    `sandbox_edit` — the dispatcher's only side-effect channel
+    is `dispatch_agent` itself.
+- **YAML to emit:**
+  ```yaml
+  name: my-orchestrator
+  slash: my-orchestrator
+  description: Dispatches drafters / composer on demand
+  composition: single-spawn-with-dispatch
+  phases:
+    - components: [dispatch-agent]
+      tools: [dispatch_agent]
+      prompt: |
+        You orchestrate sub-agents. Task: {args}.
+
+        Use dispatch_agent({name, args}) to invoke any agent in
+        .pi/agents/. Use the special name `composer` to ask the
+        pi-agent-composer skill to design a brand-new sub-agent
+        on demand.
+
+        Each call's gates render in the user's TUI; you'll see
+        the result in the next message before deciding the next
+        dispatch. Reply DONE when complete.
+  ```
+- **What the runner does:** one `delegate()` call. The
+  `dispatch-agent` parentSide harvests every `dispatch_agent`
+  call into a state list; `finalize` runs them sequentially
+  through `runSpec` (for YAML lookups) or a direct
+  `delegate()` call (for the `composer` virtual entry),
+  threading `ctx` through so nested gates render in the user's
+  TUI regardless of how deep the chain goes. Tier inference
+  picks `$LEAD_MODEL` because `dispatch-agent` is in the
+  component set (orchestrator role).
+- **Confirm/promote gate:** the dispatcher itself doesn't write
+  files (no `stage-write` in the component set), so
+  `delegate()`'s rails.md §10 gate doesn't fire. The gates
+  belong to the dispatched sub-agents.
+
+## orchestrator-with-LLM-reviewer (deferred — emit GAP)
 
 - **When:** persistent RPC delegator LLM dispatches multiple
   drafters via `run_deferred_writer` and reviews their drafts via
@@ -105,7 +160,11 @@ before each `delegate()` call:
   needs a persistent `--mode rpc` channel with phase-dependent
   prompts (see `pi-sandbox/.pi/extensions/delegated-writer.ts`).
   Both `emit_agent_spec` and the runner reject these component
-  sets.
+  sets. The `single-spawn-with-dispatch` topology covers
+  dispatch-without-review; if the ask requires LLM review of
+  every dispatch, this is the topology you need and the answer
+  is still GAP.
 - **What to do:** the composer skill emits GAP via procedure.md
   step 5 and instructs the user to load `pi-agent-builder` for the
-  orchestrator shape. Do NOT attempt to express it in YAML.
+  orchestrator-with-reviewer shape. Do NOT attempt to express it
+  in YAML.

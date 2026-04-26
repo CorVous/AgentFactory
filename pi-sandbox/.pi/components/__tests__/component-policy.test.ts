@@ -43,6 +43,7 @@ describe("component-policy: checkComponentPath (A)", () => {
       "review.ts",
       "run-deferred-writer.ts",
       "emit-agent-spec.ts",
+      "dispatch-agent.ts",
     ]) {
       assert.doesNotThrow(
         () => checkComponentPath(compPath(name)),
@@ -97,6 +98,12 @@ describe("component-policy: checkComponentImports (B)", () => {
   it("accepts emit-agent-spec.ts (privileged for node:fs)", () => {
     assert.doesNotThrow(() =>
       checkComponentImports(compPath("emit-agent-spec.ts")),
+    );
+  });
+
+  it("accepts dispatch-agent.ts (privileged for node:fs)", () => {
+    assert.doesNotThrow(() =>
+      checkComponentImports(compPath("dispatch-agent.ts")),
     );
   });
 

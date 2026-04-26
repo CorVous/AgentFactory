@@ -140,6 +140,22 @@ const VALID_SEQUENTIAL: Record<string, unknown> = {
   ],
 };
 
+const VALID_DISPATCHER: Record<string, unknown> = {
+  name: "drafter-fanout",
+  slash: "drafter-fanout",
+  description: "Dispatcher that fans out to several drafters.",
+  composition: "single-spawn-with-dispatch",
+  phases: [
+    {
+      name: "orchestrate",
+      components: ["dispatch-agent"],
+      tools: ["dispatch_agent"],
+      prompt:
+        "Task: {args}. Decompose into 1-3 drafters and dispatch_agent each.",
+    },
+  ],
+};
+
 describe("validateSpec — happy paths", () => {
   it("accepts a valid single-spawn spec", () => {
     const spec = validateSpec(VALID_SINGLE_SPAWN, "demo.yml");
@@ -154,6 +170,103 @@ describe("validateSpec — happy paths", () => {
     assert.equal(spec.phases.length, 2);
     assert.deepEqual(spec.phases[0].components, ["emit-summary"]);
     assert.deepEqual(spec.phases[1].components, ["stage-write"]);
+  });
+
+  it("accepts a valid single-spawn-with-dispatch spec", () => {
+    const spec: AgentSpec = validateSpec(
+      VALID_DISPATCHER,
+      "drafter-fanout.yml",
+    );
+    assert.equal(spec.composition, "single-spawn-with-dispatch");
+    assert.equal(spec.phases.length, 1);
+    assert.deepEqual(spec.phases[0].components, ["dispatch-agent"]);
+    assert.deepEqual(spec.phases[0].tools, ["dispatch_agent"]);
+  });
+});
+
+describe("validateSpec — single-spawn-with-dispatch rules", () => {
+  it("rejects when phase is missing dispatch-agent in components", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_DISPATCHER,
+            phases: [
+              {
+                components: ["stage-write"],
+                tools: ["dispatch_agent", "stage_write"],
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /must include "dispatch-agent" in components/,
+    );
+  });
+
+  it("rejects when phase is missing dispatch_agent in tools", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_DISPATCHER,
+            phases: [
+              {
+                components: ["dispatch-agent"],
+                tools: ["sandbox_ls"],
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /tools is missing tools required|must include "dispatch_agent" in tools/,
+    );
+  });
+
+  it("rejects when phase has no tools field at all", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_DISPATCHER,
+            phases: [
+              {
+                components: ["dispatch-agent"],
+                prompt: "p",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /must include "dispatch_agent" in tools/,
+    );
+  });
+
+  it("rejects more than one phase", () => {
+    assert.throws(
+      () =>
+        validateSpec(
+          {
+            ...VALID_DISPATCHER,
+            phases: [
+              {
+                components: ["dispatch-agent"],
+                tools: ["dispatch_agent"],
+                prompt: "a",
+              },
+              {
+                components: ["dispatch-agent"],
+                tools: ["dispatch_agent"],
+                prompt: "b",
+              },
+            ],
+          },
+          "x.yml",
+        ),
+      /single-spawn-with-dispatch requires exactly 1 phase/,
+    );
   });
 });
 

@@ -54,11 +54,13 @@ const COMPONENT_NAMES = [
   "review",
   "run-deferred-writer",
   "emit-agent-spec",
+  "dispatch-agent",
 ] as const;
 
 const COMPOSITIONS = [
   "single-spawn",
   "sequential-phases-with-brief",
+  "single-spawn-with-dispatch",
 ] as const;
 
 const NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
@@ -107,7 +109,12 @@ export default function (pi: ExtensionAPI) {
           "`sequential-phases-with-brief` for a 2-phase scout→draft flow " +
           "where the runner assembles a brief from phase-1 emit_summary " +
           "calls and substitutes it into phase-2's prompt as `{brief}`. " +
-          "Orchestrator (RPC delegator) is NOT supported here — emit GAP " +
+          "`single-spawn-with-dispatch` for a dispatcher LLM that " +
+          "programmatically invokes other emitted agents (or the " +
+          "composer itself) via the `dispatch_agent` tool — phase MUST " +
+          "include `dispatch-agent` in components and `dispatch_agent` " +
+          "in tools. Orchestrator (RPC delegator with `review` / " +
+          "`run-deferred-writer`) is NOT supported here — emit GAP " +
           "for those asks.",
       }),
       phases: Type.Array(
@@ -133,6 +140,19 @@ export default function (pi: ExtensionAPI) {
               minItems: 1,
               maxItems: 5,
             },
+          ),
+          tools: Type.Optional(
+            Type.Array(Type.String(), {
+              description:
+                "Optional explicit child --tools allowlist. When set, " +
+                "becomes the child's tool surface verbatim. Required " +
+                "for `single-spawn-with-dispatch` (must include " +
+                "`dispatch_agent`); recommended elsewhere as the " +
+                "concrete contract for which sandbox_* verbs the child " +
+                "is allowed to call. Built-in fs verbs " +
+                "(`read`/`ls`/`grep`/`glob`/`write`/`edit`/`bash`) are " +
+                "rejected by delegate().",
+            }),
           ),
           prompt: Type.String({
             description:
@@ -271,7 +291,7 @@ export const COMPOSITION_NAMES = COMPOSITIONS;
 
 export function validatePhases(
   composition: (typeof COMPOSITIONS)[number],
-  phases: ReadonlyArray<{ components: string[] }>,
+  phases: ReadonlyArray<{ components: string[]; tools?: string[] }>,
 ): void {
   for (const p of phases) {
     if (p.components.includes("review") || p.components.includes("run-deferred-writer")) {
@@ -286,6 +306,32 @@ export function validatePhases(
     if (phases.length !== 1) {
       throw new Error(
         `single-spawn requires exactly 1 phase, got ${phases.length}`,
+      );
+    }
+    if (phases[0].components.includes("dispatch-agent")) {
+      throw new Error(
+        "single-spawn: phase declares `dispatch-agent`, which requires " +
+          "composition `single-spawn-with-dispatch`.",
+      );
+    }
+    return;
+  }
+  if (composition === "single-spawn-with-dispatch") {
+    if (phases.length !== 1) {
+      throw new Error(
+        `single-spawn-with-dispatch requires exactly 1 phase, got ${phases.length}`,
+      );
+    }
+    if (!phases[0].components.includes("dispatch-agent")) {
+      throw new Error(
+        "single-spawn-with-dispatch: phase must include `dispatch-agent` " +
+          "in components.",
+      );
+    }
+    if (!phases[0].tools || !phases[0].tools.includes("dispatch_agent")) {
+      throw new Error(
+        "single-spawn-with-dispatch: phase must include `dispatch_agent` " +
+          "in tools.",
       );
     }
     return;
@@ -307,6 +353,14 @@ export function validatePhases(
         "sequential-phases-with-brief: phase 2 must include `stage-write` " +
           "(the brief is consumed by a drafter).",
       );
+    }
+    for (const p of phases) {
+      if (p.components.includes("dispatch-agent")) {
+        throw new Error(
+          "sequential-phases-with-brief: phase declares `dispatch-agent`, " +
+            "which requires composition `single-spawn-with-dispatch`.",
+        );
+      }
     }
     return;
   }
