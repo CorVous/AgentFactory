@@ -11,7 +11,7 @@ agent gets five baseline extensions:
   path-bearing tools is discovered at session start from
   `pi.getAllTools()` (any tool whose schema declares `path: string`),
   with a static fallback of `{read, write, edit, ls, grep, find}` for
-  the installed pi 0.69 built-ins. Owns the `--sandbox-root <path>`
+  the installed pi 0.70 built-ins. Owns the `--sandbox-root <path>`
   flag (read by `agent-footer`, `deferred-write`, and `no-edit` via
   `pi.getFlag`); falls back to `ctx.cwd` when the flag is unset.
 - `no-startup-help` — suppresses pi's default startup header (logo,

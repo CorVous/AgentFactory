@@ -9,7 +9,7 @@
     "agent": "bash -c 'set -a && source models.env && set +a && exec node scripts/run-agent.mjs \"$@\"' --"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.69.0",
+    "@mariozechner/pi-coding-agent": "^0.70.2",
     "yaml": "^2.8.3"
   }
 }
