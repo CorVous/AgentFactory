@@ -4,12 +4,42 @@ Day-to-day, the way to launch a focused agent is `npm run agent -- <name>`.
 The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
 `pi-sandbox/agents/<name>.yaml`, resolves the model tier, and execs `pi`
 from the directory you invoked it from (or `--sandbox <dir>`). Every
-agent gets the `sandbox` baseline extension, which blocks `bash` outright
-and rejects any path-bearing tool call whose `path` resolves outside the
-sandbox root. The set of path-bearing tools is discovered at session
-start from `pi.getAllTools()` (any tool whose schema declares
-`path: string`), with a static fallback of `{read, write, edit, ls,
-grep, find}` for the installed pi 0.69 built-ins.
+agent gets five baseline extensions:
+
+- `sandbox` — blocks `bash` outright and rejects any path-bearing tool
+  call whose `path` resolves outside the sandbox root. The set of
+  path-bearing tools is discovered at session start from
+  `pi.getAllTools()` (any tool whose schema declares `path: string`),
+  with a static fallback of `{read, write, edit, ls, grep, find}` for
+  the installed pi 0.69 built-ins. Owns the `--sandbox-root <path>`
+  flag (read by `agent-footer`, `deferred-write`, and `no-edit` via
+  `pi.getFlag`); falls back to `ctx.cwd` when the flag is unset.
+- `no-startup-help` — suppresses pi's default startup header (logo,
+  keybinding cheatsheet, onboarding tips) since most of those keybindings
+  reference features focused agents don't use.
+- `agent-header` — replaces the (now-empty) header with a banner that
+  shows the agent name (bold accent), optionally suffixed dim with the
+  model tier (e.g. `deferred-writer · Task Rabbit`), and the recipe's
+  `description:` field on the next line (dim). Reads the `--agent-name`,
+  `--agent-description`, and `--agent-tier` flags; the runner sets all
+  three from the recipe filename, `description:`, and `model:` (the
+  tier suffix is skipped when `model:` is a literal model ID rather
+  than a tier var). Each flag can be passed on the `npm run agent --`
+  line to override the recipe (passthrough flags come after
+  recipe-derived ones, so the CLI value wins).
+- `agent-footer` — replaces pi's default footer. Line 1 shows the
+  sandbox root on the left and the comma-separated active tools (from
+  `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
+  extension-registered tools) on the right. Line 2 shows `$cost` and
+  the context-usage percent on the left, model id on the right —
+  pi's default token-flow stats (↑input, ↓output, cache R/W, context
+  window size) are intentionally dropped. Line 3 is the
+  extension-status line.
+- `hide-extensions-list` — strips pi's `[Extensions]` section (added by
+  `showLoadedResources` to the chat history at startup) since the
+  agent-footer already shows the active tools and the path listing is
+  noise. Reaches into private TUI state via `setWidget`+`setTimeout(0)`
+  because pi has no public API to suppress per-section.
 
 ```sh
 set -a; source models.env; set +a
@@ -23,10 +53,11 @@ npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthro
 ```yaml
 # pi-sandbox/agents/<name>.yaml
 model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal model ID
+description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # replaces pi's default system prompt
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox] baseline
+extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail
@@ -36,8 +67,12 @@ noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 The runner always passes `--no-extensions --no-skills --no-context-files`
 to pi, so only what the recipe declares is loaded. Tool names go through
 pi's `--tools` allowlist (built-in + extension-registered tools both
-qualify). The sandbox extension reads `AGENT_SANDBOX_ROOT` (set by the
-runner) to know where to clamp paths.
+qualify). Recipe-derived values reach the extensions as registered CLI
+flags: `--sandbox-root <path>` (always set), `--agent-name <name>`
+(always set), `--agent-description <text>` (when `description:` is set),
+`--agent-tier <TIER_VAR>` (when `model:` is a tier var name), and
+`--no-edit-add` / `--no-edit-skip` (when the matching list is
+non-empty). All six appear under "Extension CLI Flags" in `pi --help`.
 
 ## Where agent code lives
 

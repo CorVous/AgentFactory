@@ -14,8 +14,10 @@
 //   `write` plus our `deferred_write`.
 //
 // Recipe overrides (forwarded by scripts/run-agent.mjs):
-//   noEditAdd:  [tool, ...]   →  AGENT_NO_EDIT_ADD   (force-include)
-//   noEditSkip: [tool, ...]   →  AGENT_NO_EDIT_SKIP  (force-exclude)
+//   noEditAdd:  [tool, ...]   →  --no-edit-add  <a,b,...>   (force-include)
+//   noEditSkip: [tool, ...]   →  --no-edit-skip <a,b,...>   (force-exclude)
+// The sandbox-root path used to compare resolved targets is read from
+// the `--sandbox-root` flag (registered by the sandbox extension).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -34,13 +36,21 @@ function declaresWriteShape(parameters: unknown): boolean {
   }
 }
 
-function parseEnvList(name: string): string[] {
-  const raw = process.env[name];
+function parseFlagList(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.registerFlag("no-edit-add", {
+    description: "Comma-separated extra tools to force-include in the no-edit (create-only) rail",
+    type: "string",
+  });
+  pi.registerFlag("no-edit-skip", {
+    description: "Comma-separated tools to exempt from the no-edit (create-only) rail",
+    type: "string",
+  });
+
   const createOnlyTools = new Set<string>(STATIC_CREATE_ONLY_TOOLS);
 
   pi.on("session_start", async (_event, ctx) => {
@@ -55,8 +65,8 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    for (const t of parseEnvList("AGENT_NO_EDIT_ADD")) createOnlyTools.add(t);
-    for (const t of parseEnvList("AGENT_NO_EDIT_SKIP")) createOnlyTools.delete(t);
+    for (const t of parseFlagList(pi.getFlag("no-edit-add") as string | undefined)) createOnlyTools.add(t);
+    for (const t of parseFlagList(pi.getFlag("no-edit-skip") as string | undefined)) createOnlyTools.delete(t);
 
     if (process.env.AGENT_DEBUG === "1") {
       const dump = `no-edit createOnlyTools = [${[...createOnlyTools].sort().join(", ")}]`;
@@ -75,7 +85,7 @@ export default function (pi: ExtensionAPI) {
     const raw = (event.input as Record<string, unknown>).path;
     if (typeof raw !== "string" || raw.length === 0) return undefined;
 
-    const root = path.resolve(process.env.AGENT_SANDBOX_ROOT || process.cwd());
+    const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || process.cwd());
     const abs = path.isAbsolute(raw) ? raw : path.resolve(root, raw);
 
     if (fs.existsSync(abs)) {

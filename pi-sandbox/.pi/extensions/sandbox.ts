@@ -8,10 +8,15 @@
 // installed pi 0.69 built-ins; introspection automatically picks up
 // custom tools (including deferred_write) and any future built-ins.
 //
-// Sandbox root is read from AGENT_SANDBOX_ROOT (set by scripts/run-agent.mjs)
-// and falls back to ctx.cwd. The runner spawns pi with cwd = sandbox root,
-// so a missing/empty `path` (which the built-in tools resolve to ".") is
-// always inside the root.
+// Sandbox root is read from the `--sandbox-root` flag (set by
+// scripts/run-agent.mjs) and falls back to ctx.cwd. The runner spawns pi
+// with cwd = sandbox root, so a missing/empty `path` (which the built-in
+// tools resolve to ".") is always inside the root. This extension owns
+// the `--sandbox-root` flag; the agent-footer, deferred-write, and
+// no-edit extensions read it via pi.getFlag.
+//
+// Footer rendering (sandbox dir, tools list, stats) lives in the
+// `agent-footer` extension.
 
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -28,6 +33,11 @@ function declaresPathString(parameters: unknown): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.registerFlag("sandbox-root", {
+    description: "Root directory for the sandbox; tool calls outside it are blocked",
+    type: "string",
+  });
+
   const pathTools = new Set<string>(STATIC_PATH_TOOLS);
 
   pi.on("session_start", async (_event, ctx) => {
@@ -42,8 +52,6 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    const root = process.env.AGENT_SANDBOX_ROOT || ctx.cwd;
-    ctx.ui.notify(`sandbox active: fs limited to ${root}, bash disabled`, "info");
     if (process.env.AGENT_DEBUG === "1") {
       const dump = `sandbox pathTools = [${[...pathTools].sort().join(", ")}]`;
       ctx.ui.notify(dump, "info");
@@ -58,7 +66,7 @@ export default function (pi: ExtensionAPI) {
 
     if (!pathTools.has(event.toolName)) return undefined;
 
-    const root = path.resolve(process.env.AGENT_SANDBOX_ROOT || ctx.cwd);
+    const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || ctx.cwd);
     const input = event.input as Record<string, unknown>;
     const raw = input.path;
     if (raw !== undefined && typeof raw !== "string") return undefined;
