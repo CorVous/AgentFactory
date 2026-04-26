@@ -9,8 +9,12 @@
 //                  registered by extensions. Truncated with an ellipsis
 //                  on narrow terminals; dropped entirely if there is no
 //                  room for a 2-column gap after the sandbox label.
-//   line 2:        token stats + context % + model id (mirrors pi's
-//                  default).
+//   line 2, left:  `$cost  CTX%` — accumulated assistant cost from
+//                  session history plus the context-usage percent.
+//                  pi's default token-flow stats (↑input, ↓output,
+//                  cache R/W, /<window-size>) are intentionally
+//                  dropped.
+//   line 2, right: model id.
 //   line 3 (opt):  extension status texts set via ctx.ui.setStatus().
 
 import os from "node:os";
@@ -18,14 +22,6 @@ import path from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-
-function formatTokens(count: number): string {
-  if (count < 1000) return String(count);
-  if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
-  if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
-  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  return `${Math.round(count / 1_000_000)}M`;
-}
 
 function homeReplace(p: string): string {
   const home = os.homedir();
@@ -70,37 +66,19 @@ export default function (pi: ExtensionAPI) {
         }
         const pwdLine = truncateToWidth(theme.fg("dim", pwdContent), width, theme.fg("dim", "..."));
 
-        let input = 0;
-        let output = 0;
-        let cacheRead = 0;
-        let cacheWrite = 0;
         let cost = 0;
         for (const entry of ctx.sessionManager.getEntries()) {
           if (entry.type === "message" && entry.message.role === "assistant") {
-            const u = (entry.message as AssistantMessage).usage;
-            input += u.input;
-            output += u.output;
-            cacheRead += u.cacheRead;
-            cacheWrite += u.cacheWrite;
-            cost += u.cost.total;
+            cost += (entry.message as AssistantMessage).usage.cost.total;
           }
         }
 
-        const usage = ctx.getContextUsage();
-        const ctxWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-        const ctxPct = usage?.percent;
+        const ctxPct = ctx.getContextUsage()?.percent;
 
         const stats: string[] = [];
-        if (input) stats.push(`↑${formatTokens(input)}`);
-        if (output) stats.push(`↓${formatTokens(output)}`);
-        if (cacheRead) stats.push(`R${formatTokens(cacheRead)}`);
-        if (cacheWrite) stats.push(`W${formatTokens(cacheWrite)}`);
         if (cost) stats.push(`$${cost.toFixed(3)}`);
 
-        const ctxStr =
-          typeof ctxPct === "number"
-            ? `${ctxPct.toFixed(1)}%/${formatTokens(ctxWindow)}`
-            : `?/${formatTokens(ctxWindow)}`;
+        const ctxStr = typeof ctxPct === "number" ? `${ctxPct.toFixed(1)}%` : "?";
         let ctxColored = ctxStr;
         if (typeof ctxPct === "number") {
           if (ctxPct > 90) ctxColored = theme.fg("error", ctxStr);

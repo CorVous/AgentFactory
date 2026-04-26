@@ -30,8 +30,11 @@ agent gets five baseline extensions:
 - `agent-footer` — replaces pi's default footer. Line 1 shows
   `sandbox: <root>` on the left and `tools: <name1, name2, ...>` (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
-  extension-registered tools) on the right. Line 2 mirrors pi's default
-  stats/model line. Line 3 is the extension-status line.
+  extension-registered tools) on the right. Line 2 shows `$cost` and
+  the context-usage percent on the left, model id on the right —
+  pi's default token-flow stats (↑input, ↓output, cache R/W, context
+  window size) are intentionally dropped. Line 3 is the
+  extension-status line.
 - `hide-extensions-list` — strips pi's `[Extensions]` section (added by
   `showLoadedResources` to the chat history at startup) since the
   agent-footer already shows the active tools and the path listing is
