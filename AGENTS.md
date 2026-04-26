@@ -68,15 +68,23 @@ vs. author-TS":
   reads `.pi/agents/*.yml` and registers a slash command per spec,
   dispatching each phase via `delegate()`. Covers `single-spawn`
   and `sequential-phases-with-brief`; emits GAP for the
-  orchestrator topology. The composer is itself self-hosted as
-  `pi-sandbox/.pi/agents/agent-composer.yml`, so any `npm run pi`
-  session has `/agent-composer <task>` available alongside the
-  script form `npm run agent-composer -- -p "<task>"`. Both load
-  the composer skill with a tool allowlist that exposes ONLY
-  `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec` — no write
-  verbs, so the model cannot author code, only declare a spec. The
-  script form stays in place as the bootstrap-recovery path (you
-  can't compose with a broken composer).
+  orchestrator topology. **Primary entry is
+  `npm run agent-composer:i`** — an interactive pi session that
+  loads the composer skill plus the always-on rails (cwd-guard
+  + sandbox-fs) and exposes ONLY
+  `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec` so the
+  model cannot author code, only declare a spec. Every
+  `emit_agent_spec` call routes through a `ctx.ui.confirm` dialog
+  that previews the YAML byte-for-byte before it lands; on
+  denial the LLM is instructed to ask the user (in chat) what
+  to revise, then re-emit. The print-mode form
+  (`npm run agent-composer -- -p "..."`) ALWAYS cancels — useful
+  only for cancel-path smoke testing, since `ctx.ui.confirm`
+  returns false unconditionally in print mode. The composer is
+  NOT self-hosted via a YAML slash command — one-shot
+  invocations from a stock pi session have no chat affordance
+  for revising a denied spec, so all composer use flows through
+  the chatty interactive entry.
 - **`pi-agent-builder`** — from-scratch authorship. Use when the
   composer flagged a gap, or for shapes the composer cannot
   express (custom UI widgets, compaction strategies, event-only
@@ -95,22 +103,31 @@ remains as a reference for ad-hoc TS-authoring sessions.
 ### Invoking the skill
 
 ```sh
-# Generic launcher — dispatch any YAML-defined agent by its filename
-# stem; forwards to `pi -p "/<slash> <args>"` from the sandbox cwd.
-# Works for agent-composer and any agent the composer emits. Run with
-# no args to list available agents.
-npm run agent
-npm run agent -- agent-composer "Drafter that stages writes for approval"
-npm run agent:i                                  # plain pi REPL in sandbox
-npm run agent:i -- agent-composer                # REPL + slash hint
+# Composer (primary entry — interactive chat session). The composer
+# loads its skill plus the always-on rails (cwd-guard + sandbox-fs)
+# and exposes `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`.
+# Each emit_agent_spec call confirms the YAML with the user before
+# writing; on denial the LLM asks (in chat) what to change and
+# re-emits. This is the only sanctioned composer entry — there is no
+# self-hosted YAML slash command, because one-shot invocations don't
+# have a chat affordance for revising a denied spec.
+npm run agent-composer:i
 
-# Composer-specific scripts (kept as bootstrap-recovery path — work
-# even if the YAML or runner is broken):
+# Print-mode form. ALWAYS cancels every emit (ctx.ui.confirm returns
+# false unconditionally in print mode). Use only for cancel-path
+# smoke testing — useless for the approve path.
 npm run agent-composer -- -p "Drafter that stages writes for approval"
-npm run agent-composer:i                                 # interactive
+
+# Generic launcher — dispatch any YAML-defined agent the composer
+# already emitted, by its filename stem. Forwards to
+# `pi -p "/<slash> <args>"` from the sandbox cwd. Run with no args
+# to list available agents.
+npm run agent
+npm run agent -- some-emitted-agent "args …"
+npm run agent:i                                  # plain pi REPL in sandbox
 ```
 
-Both npm scripts source `models.env` first, so `$TASK_MODEL` etc.
+The npm scripts source `models.env` first, so `$TASK_MODEL` etc.
 are already in scope.
 
 Composer output lands at `pi-sandbox/.pi/agents/<name>.yml`. The
@@ -255,6 +272,28 @@ When an extension delegates to a child `pi` process:
 - Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
 - Match the tier to the child's role: `$TASK_MODEL` for workers,
   `$LEAD_MODEL` for reviewers, `$PLAN_MODEL` for orchestration.
+- **Direct-launch entry-point scripts** (those that spawn pi
+  without going through `delegate()` or the YAML runner — today,
+  `scripts/agent-composer.sh`) are subject to the same rails
+  contract: built-in fs verbs forbidden in `--tools`, cwd-guard
+  always loaded via `-e`, sandbox-fs loaded whenever any
+  `sandbox_*` verb appears, `PI_SANDBOX_ROOT` and (when sandbox-fs
+  is loaded) `PI_SANDBOX_VERBS` set in the child env. The shared
+  helper `scripts/lib/pi-rails.ts` enforces this; entry scripts
+  invoke it via `tsx` to validate their `--tools` and to emit the
+  `-e` flags + env-var assignments. Tests at
+  `scripts/lib/__tests__/pi-rails.test.ts` keep the helper's
+  forbidden/sandbox verb sets in lockstep with `delegate.ts`'s
+  `FORBIDDEN_TOOLS` and `cwd-guard.ts`'s `ALL_VERBS`.
+
+**cwd-guard caveat — `!cmd` user-bash escapes are NOT policed.**
+The cwd-guard auditor hooks `pi.on("tool_call")`, which fires for
+LLM-initiated tool calls in any mode (interactive, print, RPC).
+User-typed shell commands (the `!cmd` / `!!cmd` interactive
+prefix) fire as a separate `user_bash` event and bypass the
+auditor. This is by design — the user is driving the shell
+directly, not the LLM acting on the user's behalf — but worth
+naming so you don't expect the rails to police it.
 
 See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
 
@@ -526,7 +565,16 @@ generation), a separate class of issues surfaces:
   prompt+test.yaml fixtures. Output lands in
   `scripts/reverse-pipeline/generated/<tag>/test.yaml` (gitignored).
 - `scripts/agent-composer.sh`, `scripts/run-agent.sh` — composer
-  driver and generic YAML-agent launcher.
+  driver and generic YAML-agent launcher. agent-composer.sh
+  enforces the rails contract via `scripts/lib/pi-rails.ts`
+  (built-in fs verbs forbidden in `--tools`, cwd-guard +
+  sandbox-fs auto-loaded with the right env vars).
+- `scripts/lib/pi-rails.ts` — shared rails-contract helper for
+  direct-launch entry-point scripts. Exports
+  `assertRailsCompatibleTools` + `piRailsExtensionArgs` +
+  `piRailsEnv`; CLI subcommands `check | argv | env`. Tests at
+  `scripts/lib/__tests__/pi-rails.test.ts`, run via
+  `npm run test:rails`.
 
 Additional agent definitions, extensions, skills, or prompt templates can be
 added under `pi-sandbox/` and loaded via `-e <path>` / `--skill <path>`.

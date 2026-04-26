@@ -14,7 +14,8 @@
     "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts",
     "test:grader": "node --test --import tsx/esm scripts/grader/__tests__/*.test.ts",
     "test:delegate": "node --test --import tsx/esm pi-sandbox/.pi/components/__tests__/*.test.ts",
-    "test:composer": "node --test --import tsx/esm pi-sandbox/.pi/extensions/__tests__/*.test.ts"
+    "test:composer": "node --test --import tsx/esm pi-sandbox/.pi/extensions/__tests__/*.test.ts",
+    "test:rails": "node --test --import tsx/esm scripts/lib/__tests__/*.test.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.69.0"

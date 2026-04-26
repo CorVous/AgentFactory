@@ -87,9 +87,19 @@ harvesting), go to step 5.
 Call `emit_agent_spec` exactly once with the structured fields.
 The tool's TypeBox schema IS the YAML spec shape — you cannot
 write YAML or TypeScript by hand. The tool writes
-`.pi/agents/<name>.yml`; the auto-discovered runner registers
-`/<slash>` on the next pi startup and dispatches each phase via
-`delegate()`.
+`.pi/agents/<name>.yml` **after a user-approval gate**: the
+confirm dialog shows the user the full YAML before anything
+lands.
+
+If the call returns `isError: true` with `details.cancelled: true`
+and `details.reason: "denied"`, the user denied the spec. **Ask
+them what they would like to change in natural-language chat,
+then re-emit with their reply baked in.** Do NOT silently retry
+with a different name or with synthesized "improvements" they
+didn't ask for; the user's reply IS the revision instruction.
+
+Once approved, the auto-discovered runner registers `/<slash>` on
+the next pi startup and dispatches each phase via `delegate()`.
 
 Phase prompts may use `{args}` (the slash-command argument the
 user passes at runtime), `{sandboxRoot}` (absolute path of

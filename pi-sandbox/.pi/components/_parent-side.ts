@@ -21,7 +21,15 @@ export type NDJSONEvent = Record<string, unknown>;
  *  ad-hoc `UiCtx` local type currently duplicated across canonical
  *  extensions (`deferred-writer.ts`, `delegated-writer.ts`).
  *  `confirm` / `setWidget` / `setStatus` are optional because print-mode
- *  pi (`-p`) stubs them out; every consumer must null-check. */
+ *  pi (`-p`) stubs them out; every consumer must null-check.
+ *
+ *  `hasUI` mirrors `ExtensionContext.hasUI` from pi's SDK. It is `true`
+ *  in interactive mode and `false` in print/RPC mode (where the runner
+ *  routes through `noOpUIContext`). Components branch on it to decide
+ *  whether to gate via `confirm` or to defer staging to a parent that
+ *  may itself have a TUI. Optional for backward-compat with hand-rolled
+ *  extension contexts that haven't widened to expose it; new gating
+ *  logic should treat `undefined` as "unknown — assume no UI". */
 export interface UiCtx {
   ui: {
     notify: (m: string, level: "info" | "warning" | "error") => void;
@@ -29,6 +37,7 @@ export interface UiCtx {
     setWidget?: (key: string, content: string[] | undefined) => void;
     setStatus?: (key: string, text: string | undefined) => void;
   };
+  hasUI?: boolean;
 }
 
 /** Runtime context passed into each component's `env(...)` factory at
@@ -169,14 +178,25 @@ export interface DispatchRequestsResult {
   tasks: string[];
 }
 
-// emit-agent-spec — child writes a YAML spec via the parent-loaded
-// `emit_agent_spec` tool; the parent harvests success metadata for logs
-// only (the file write is the side effect, not the harvested payload).
+// emit-agent-spec — dual-mode. In a direct-human (ctx.hasUI=true)
+// session, the child writes the YAML itself after an inline confirm,
+// and the parent harvest records the file path for logs. In a sub-
+// agent / print-mode (ctx.hasUI=false) session, the child returns
+// `staged: true` without writing; the parent harvests the staged
+// payload, runs its own confirm via fctx.ctx.ui.confirm, and writes
+// the YAML iff approved.
+export interface EmitAgentSpecStagedSpec {
+  name: string;
+  slash: string;
+  composition: string;
+  yaml: string;
+}
 export interface EmitAgentSpecState {
-  wrote: boolean;
-  name?: string;
+  staged: EmitAgentSpecStagedSpec[];
+  childWrote: Array<{ name: string; path: string }>;
 }
 export interface EmitAgentSpecResult {
-  wrote: boolean;
-  name?: string;
+  written: Array<{ name: string; path: string }>;
+  denied: Array<{ name: string; reason: string }>;
+  errors: Array<{ name: string; reason: string }>;
 }

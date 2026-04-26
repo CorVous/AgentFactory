@@ -29,22 +29,108 @@ import type {
 
 /* ---------- helpers --------------------------------------------------- */
 
-function toolStart(toolName: string, args: Record<string, unknown>): NDJSONEvent {
-  return { type: "tool_execution_start", toolName, args };
+interface ToolExecCtxStub {
+  hasUI: boolean;
+  ui: {
+    notify: (m: string, level: "info" | "warning" | "error") => void;
+    confirm: (title: string, body: string) => Promise<boolean>;
+  };
+  confirmCalls: Array<{ title: string; body: string }>;
 }
 
-function fctx(sandboxRoot: string): FinalizeContext {
+/**
+ * Build a stub `ExtensionContext` for `tool.execute()`'s 5th arg.
+ * `hasUI` defaults to true (interactive composer session); pass
+ * `hasUI: false` to drive the sub-agent / print-mode branch.
+ * `confirm` defaults to auto-approve; pass `confirmAnswer: false`
+ * to drive the deny path. Capture confirm-call args via
+ * `result.confirmCalls` for assertion.
+ */
+function makeExecCtx(opts: {
+  hasUI?: boolean;
+  confirmAnswer?: boolean;
+} = {}): ToolExecCtxStub {
+  const calls: Array<{ title: string; body: string }> = [];
   return {
-    ctx: { ui: { notify: () => {} } },
-    sandboxRoot,
+    hasUI: opts.hasUI ?? true,
+    ui: {
+      notify: () => {},
+      confirm: async (title, body) => {
+        calls.push({ title, body });
+        return opts.confirmAnswer ?? true;
+      },
+    },
+    confirmCalls: calls,
   };
+}
+
+function toolEnd(args: {
+  toolName: string;
+  result?: unknown;
+  isError?: boolean;
+}): NDJSONEvent {
+  return {
+    type: "tool_execution_end",
+    toolName: args.toolName,
+    result: args.result,
+    isError: args.isError ?? false,
+  };
+}
+
+interface FctxStub extends FinalizeContext {
+  ctx: {
+    hasUI: boolean;
+    ui: {
+      notify: (m: string, level: "info" | "warning" | "error") => void;
+      confirm?: (title: string, body: string) => Promise<boolean>;
+    };
+  };
+  notifyCalls: Array<{ message: string; level: string }>;
+  confirmCalls: Array<{ title: string; body: string }>;
+}
+
+function makeFctx(
+  sandboxRoot: string,
+  opts: {
+    hasUI?: boolean;
+    confirmAnswers?: boolean[];
+    omitConfirm?: boolean;
+  } = {},
+): FctxStub {
+  const notifyCalls: Array<{ message: string; level: string }> = [];
+  const confirmCalls: Array<{ title: string; body: string }> = [];
+  const answers = [...(opts.confirmAnswers ?? [])];
+  const ctx: FctxStub["ctx"] = {
+    hasUI: opts.hasUI ?? true,
+    ui: {
+      notify: (message, level) => {
+        notifyCalls.push({ message, level });
+      },
+      ...(opts.omitConfirm
+        ? {}
+        : {
+            confirm: async (title, body) => {
+              confirmCalls.push({ title, body });
+              return answers.length > 0 ? (answers.shift() as boolean) : true;
+            },
+          }),
+    },
+  };
+  return { ctx, sandboxRoot, notifyCalls, confirmCalls };
 }
 
 interface CapturedTool {
   name: string;
-  execute: (id: string, params: Record<string, unknown>) => Promise<{
+  execute: (
+    id: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: unknown,
+  ) => Promise<{
     content: Array<{ type: string; text: string }>;
     details: Record<string, unknown>;
+    isError?: boolean;
   }>;
 }
 
@@ -255,9 +341,10 @@ describe("COMPOSITION_NAMES", () => {
 
 /* ---------- tool execute() — happy path & guards --------------------- */
 
-describe("emit_agent_spec tool execute()", () => {
-  it("writes a YAML file under <root>/.pi/agents/<name>.yml that round-trips", async () => {
+describe("emit_agent_spec tool execute() — direct-mode (hasUI=true)", () => {
+  it("writes a YAML file under <root>/.pi/agents/<name>.yml that round-trips after approve", async () => {
     const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx();
     const params = {
       name: "demo-agent",
       slash: "demo",
@@ -271,39 +358,82 @@ describe("emit_agent_spec tool execute()", () => {
         },
       ],
     };
-    const result = await tool.execute("call-1", params);
+    const result = await tool.execute("call-1", params, undefined, undefined, ctx);
 
     const dest = path.join(SANDBOX, ".pi", "agents", "demo-agent.yml");
     assert.ok(fs.existsSync(dest), "expected YAML file on disk");
     assert.equal(result.details.name, "demo-agent");
     assert.equal(result.details.path, dest);
     assert.equal(result.details.composition, "single-spawn");
+    assert.equal(result.details.staged, false);
     assert.match(result.content[0].text, /Wrote spec/);
+
+    // Confirm dialog received the previewed YAML byte-for-byte.
+    assert.equal(ctx.confirmCalls.length, 1);
+    assert.match(ctx.confirmCalls[0].title, /Write composer spec/);
+    assert.equal(
+      ctx.confirmCalls[0].body,
+      fs.readFileSync(dest, "utf8"),
+    );
 
     const reloaded = yamlParse(fs.readFileSync(dest, "utf8"));
     assert.deepEqual(reloaded, params);
   });
 
+  it("returns isError + details.cancelled when user denies, no file written", async () => {
+    const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx({ confirmAnswer: false });
+    const params = {
+      name: "denied-agent",
+      slash: "denied",
+      description: "x",
+      composition: "single-spawn",
+      phases: [{ components: ["cwd-guard"], prompt: "p" }],
+    };
+    const result = await tool.execute("call-1", params, undefined, undefined, ctx);
+
+    assert.equal(result.isError, true);
+    assert.equal(result.details.cancelled, true);
+    assert.equal(result.details.reason, "denied");
+    assert.equal(result.details.name, "denied-agent");
+    assert.match(result.content[0].text, /Cancelled by user/);
+    assert.equal(
+      fs.existsSync(path.join(SANDBOX, ".pi", "agents", "denied-agent.yml")),
+      false,
+    );
+    assert.equal(ctx.confirmCalls.length, 1);
+  });
+
   it("path-escape guard rejects names that would resolve outside agents dir", async () => {
     const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx();
     // The factory's name regex actually rejects `..` first via NAME_RE,
     // but we still want to prove no file lands outside the agents dir.
     await assert.rejects(
-      tool.execute("call-2", {
-        name: "../escape",
-        slash: "ok",
-        description: "x",
-        composition: "single-spawn",
-        phases: [{ components: ["cwd-guard"], prompt: "p" }],
-      }),
+      tool.execute(
+        "call-2",
+        {
+          name: "../escape",
+          slash: "ok",
+          description: "x",
+          composition: "single-spawn",
+          phases: [{ components: ["cwd-guard"], prompt: "p" }],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
       /name must match|path escapes/,
     );
     const escapeAt = path.join(SANDBOX, ".pi", "escape.yml");
     assert.equal(fs.existsSync(escapeAt), false);
+    // Validation throws BEFORE the gate runs.
+    assert.equal(ctx.confirmCalls.length, 0);
   });
 
   it("duplicate-file guard refuses to overwrite an existing spec", async () => {
     const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx();
     const params = {
       name: "dup-agent",
       slash: "dup",
@@ -311,12 +441,18 @@ describe("emit_agent_spec tool execute()", () => {
       composition: "single-spawn",
       phases: [{ components: ["cwd-guard"], prompt: "first" }],
     };
-    await tool.execute("c1", params);
+    await tool.execute("c1", params, undefined, undefined, ctx);
     const dest = path.join(SANDBOX, ".pi", "agents", "dup-agent.yml");
     const firstYaml = fs.readFileSync(dest, "utf8");
 
     await assert.rejects(
-      tool.execute("c2", { ...params, description: "second emit" }),
+      tool.execute(
+        "c2",
+        { ...params, description: "second emit" },
+        undefined,
+        undefined,
+        ctx,
+      ),
       /already exists/,
     );
     // Original content untouched.
@@ -325,35 +461,105 @@ describe("emit_agent_spec tool execute()", () => {
 
   it("name regex enforced through tool execute (catches stale params)", async () => {
     const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx();
     await assert.rejects(
-      tool.execute("c3", {
-        name: "BAD_NAME",
-        slash: "ok",
-        description: "x",
-        composition: "single-spawn",
-        phases: [{ components: ["cwd-guard"], prompt: "p" }],
-      }),
+      tool.execute(
+        "c3",
+        {
+          name: "BAD_NAME",
+          slash: "ok",
+          description: "x",
+          composition: "single-spawn",
+          phases: [{ components: ["cwd-guard"], prompt: "p" }],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
       /name must match/,
     );
+    assert.equal(ctx.confirmCalls.length, 0);
   });
 
   it("phase rules enforced through tool execute (composer cannot bypass)", async () => {
     const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx();
     await assert.rejects(
-      tool.execute("c4", {
-        name: "phase-bad",
-        slash: "phase",
-        description: "x",
-        composition: "sequential-phases-with-brief",
-        phases: [
-          { components: ["cwd-guard"], prompt: "scout" }, // missing emit-summary
-          { components: ["stage-write"], prompt: "draft" },
-        ],
-      }),
+      tool.execute(
+        "c4",
+        {
+          name: "phase-bad",
+          slash: "phase",
+          description: "x",
+          composition: "sequential-phases-with-brief",
+          phases: [
+            { components: ["cwd-guard"], prompt: "scout" }, // missing emit-summary
+            { components: ["stage-write"], prompt: "draft" },
+          ],
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
       /phase 1 must include `emit-summary`/,
     );
     assert.equal(
       fs.existsSync(path.join(SANDBOX, ".pi", "agents", "phase-bad.yml")),
+      false,
+    );
+    assert.equal(ctx.confirmCalls.length, 0);
+  });
+});
+
+describe("emit_agent_spec tool execute() — sub-agent / print-mode (hasUI=false)", () => {
+  it("returns staged payload without writing or calling confirm", async () => {
+    const tool = loadTool(SANDBOX);
+    const ctx = makeExecCtx({ hasUI: false });
+    const params = {
+      name: "staged-agent",
+      slash: "staged",
+      description: "x",
+      composition: "single-spawn",
+      phases: [{ components: ["cwd-guard"], prompt: "p" }],
+    };
+    const result = await tool.execute(
+      "call-1",
+      params,
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.details.staged, true);
+    assert.equal(result.details.name, "staged-agent");
+    assert.equal(result.details.slash, "staged");
+    assert.equal(result.details.composition, "single-spawn");
+    assert.equal(typeof result.details.yaml, "string");
+    assert.match(result.content[0].text, /staged for parent review/);
+
+    // No file landed; confirm was never called.
+    assert.equal(
+      fs.existsSync(path.join(SANDBOX, ".pi", "agents", "staged-agent.yml")),
+      false,
+    );
+    assert.equal(ctx.confirmCalls.length, 0);
+  });
+
+  it("treats undefined ctx (legacy harnesses) as no-UI: stages, no write, no throw", async () => {
+    const tool = loadTool(SANDBOX);
+    const params = {
+      name: "no-ctx-agent",
+      slash: "noctx",
+      description: "x",
+      composition: "single-spawn",
+      phases: [{ components: ["cwd-guard"], prompt: "p" }],
+    };
+    const result = await tool.execute("c5", params);
+
+    assert.equal(result.details.staged, true);
+    assert.equal(
+      fs.existsSync(path.join(SANDBOX, ".pi", "agents", "no-ctx-agent.yml")),
       false,
     );
   });
@@ -361,95 +567,371 @@ describe("emit_agent_spec tool execute()", () => {
 
 /* ---------- parentSide harvest + finalize ---------------------------- */
 
-describe("emit-agent-spec parentSide", () => {
-  it("records the spec name on a successful emit_agent_spec call and verifies the file exists at finalize", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-ps-"));
-    try {
-      const agentsDir = path.join(root, ".pi", "agents");
-      fs.mkdirSync(agentsDir, { recursive: true });
-      fs.writeFileSync(path.join(agentsDir, "demo.yml"), "name: demo\n");
-
-      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
-      EMIT_AGENT_SPEC.harvest(
-        toolStart("emit_agent_spec", { name: "demo", slash: "demo" }),
-        state,
-      );
-      const result = (await EMIT_AGENT_SPEC.finalize(
-        state,
-        fctx(root),
-      )) as EmitAgentSpecResult;
-
-      assert.equal(result.wrote, true);
-      assert.equal(result.name, "demo");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+describe("emit-agent-spec parentSide harvest", () => {
+  it("ignores tool_execution_end with isError=true (cancelled / threw)", () => {
+    const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+    EMIT_AGENT_SPEC.harvest(
+      toolEnd({
+        toolName: "emit_agent_spec",
+        isError: true,
+        result: {
+          details: {
+            name: "denied-agent",
+            cancelled: true,
+            reason: "denied",
+            staged: false,
+          },
+        },
+      }),
+      state,
+    );
+    assert.equal(state.staged.length, 0);
+    assert.equal(state.childWrote.length, 0);
   });
 
-  it("reports wrote=false when the on-disk file is missing after the call", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-ps-"));
-    try {
-      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
-      EMIT_AGENT_SPEC.harvest(
-        toolStart("emit_agent_spec", { name: "ghost", slash: "ghost" }),
-        state,
-      );
-      const result = (await EMIT_AGENT_SPEC.finalize(
-        state,
-        fctx(root),
-      )) as EmitAgentSpecResult;
-      assert.equal(result.wrote, false);
-      assert.equal(result.name, "ghost");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+  it("pushes to staged when details.staged === true", () => {
+    const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+    EMIT_AGENT_SPEC.harvest(
+      toolEnd({
+        toolName: "emit_agent_spec",
+        result: {
+          details: {
+            name: "sub-agent",
+            slash: "sub",
+            composition: "single-spawn",
+            yaml: "name: sub-agent\n",
+            staged: true,
+          },
+        },
+      }),
+      state,
+    );
+    assert.equal(state.staged.length, 1);
+    assert.equal(state.staged[0].name, "sub-agent");
+    assert.equal(state.staged[0].slash, "sub");
+    assert.equal(state.staged[0].composition, "single-spawn");
+    assert.equal(state.staged[0].yaml, "name: sub-agent\n");
+    assert.equal(state.childWrote.length, 0);
   });
 
-  it("ignores unrelated events, non-string args.name, and pre-tool message_end events", async () => {
+  it("pushes to childWrote when details.staged === false (direct-mode write)", () => {
+    const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+    EMIT_AGENT_SPEC.harvest(
+      toolEnd({
+        toolName: "emit_agent_spec",
+        result: {
+          details: {
+            name: "direct-write",
+            path: "/abs/path/.pi/agents/direct-write.yml",
+            composition: "single-spawn",
+            staged: false,
+          },
+        },
+      }),
+      state,
+    );
+    assert.equal(state.childWrote.length, 1);
+    assert.equal(state.childWrote[0].name, "direct-write");
+    assert.equal(
+      state.childWrote[0].path,
+      "/abs/path/.pi/agents/direct-write.yml",
+    );
+    assert.equal(state.staged.length, 0);
+  });
+
+  it("ignores unrelated events and non-end events", () => {
     const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
     EMIT_AGENT_SPEC.harvest({ type: "message_end" } as NDJSONEvent, state);
     EMIT_AGENT_SPEC.harvest(
-      toolStart("emit_summary", { title: "t", body: "b" }),
+      toolEnd({
+        toolName: "emit_summary",
+        result: { details: { staged: true, yaml: "x" } },
+      }),
       state,
     );
     EMIT_AGENT_SPEC.harvest(
-      toolStart("emit_agent_spec", { name: 42 }),
+      {
+        type: "tool_execution_start",
+        toolName: "emit_agent_spec",
+        args: { name: "won't-harvest" },
+      } as NDJSONEvent,
       state,
     );
-    assert.equal(state.wrote, true); // tool fired
-    assert.equal(state.name, undefined); // but name was not a string
-
-    const result = (await EMIT_AGENT_SPEC.finalize(
-      state,
-      fctx(SANDBOX),
-    )) as EmitAgentSpecResult;
-    assert.equal(result.wrote, false);
-    assert.equal(result.name, undefined);
+    assert.equal(state.staged.length, 0);
+    assert.equal(state.childWrote.length, 0);
   });
 
-  it("integrates with execute(): tool-write + parentSide harvest yield wrote=true", async () => {
-    // Drives the real tool execute, then runs harvest+finalize over a
-    // matching synthetic event so the on-disk file produced by execute()
-    // is what finalize verifies.
-    const tool = loadTool(SANDBOX);
-    await tool.execute("ci", {
-      name: "integration",
-      slash: "integration",
-      description: "x",
-      composition: "single-spawn",
-      phases: [{ components: ["cwd-guard"], prompt: "p" }],
-    });
-
+  it("rejects malformed staged details (non-string fields)", () => {
     const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
     EMIT_AGENT_SPEC.harvest(
-      toolStart("emit_agent_spec", { name: "integration", slash: "integration" }),
+      toolEnd({
+        toolName: "emit_agent_spec",
+        result: {
+          details: { name: 42, slash: "ok", staged: true, yaml: "x" },
+        },
+      }),
       state,
     );
-    const result = (await EMIT_AGENT_SPEC.finalize(
-      state,
-      fctx(SANDBOX),
-    )) as EmitAgentSpecResult;
-    assert.equal(result.wrote, true);
-    assert.equal(result.name, "integration");
+    assert.equal(state.staged.length, 0);
+  });
+});
+
+describe("emit-agent-spec parentSide finalize", () => {
+  it("returns early with childWrote in written[] when no staged calls", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      state.childWrote.push({
+        name: "already",
+        path: path.join(root, ".pi", "agents", "already.yml"),
+      });
+      const fc = makeFctx(root);
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.written.length, 1);
+      assert.equal(result.written[0].name, "already");
+      assert.equal(result.denied.length, 0);
+      assert.equal(result.errors.length, 0);
+      assert.equal(fc.confirmCalls.length, 0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("approves all staged when fctx.ctx.ui.confirm returns true; files land", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      state.staged.push({
+        name: "alpha",
+        slash: "alpha",
+        composition: "single-spawn",
+        yaml: "name: alpha\n",
+      });
+      state.staged.push({
+        name: "beta",
+        slash: "beta",
+        composition: "single-spawn",
+        yaml: "name: beta\n",
+      });
+      const fc = makeFctx(root, { confirmAnswers: [true, true] });
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.written.length, 2);
+      assert.equal(result.denied.length, 0);
+      assert.equal(result.errors.length, 0);
+      assert.equal(fc.confirmCalls.length, 2);
+      assert.equal(
+        fs.readFileSync(
+          path.join(root, ".pi", "agents", "alpha.yml"),
+          "utf8",
+        ),
+        "name: alpha\n",
+      );
+      assert.equal(
+        fs.readFileSync(
+          path.join(root, ".pi", "agents", "beta.yml"),
+          "utf8",
+        ),
+        "name: beta\n",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies one spec independently of others; siblings still write", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      state.staged.push({
+        name: "yes",
+        slash: "yes",
+        composition: "single-spawn",
+        yaml: "name: yes\n",
+      });
+      state.staged.push({
+        name: "no",
+        slash: "no",
+        composition: "single-spawn",
+        yaml: "name: no\n",
+      });
+      const fc = makeFctx(root, { confirmAnswers: [true, false] });
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.written.length, 1);
+      assert.equal(result.written[0].name, "yes");
+      assert.equal(result.denied.length, 1);
+      assert.equal(result.denied[0].name, "no");
+      assert.equal(result.denied[0].reason, "denied");
+      assert.equal(
+        fs.existsSync(path.join(root, ".pi", "agents", "no.yml")),
+        false,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels everything with reason=no-ui when fctx.ctx.hasUI=false", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      state.staged.push({
+        name: "a",
+        slash: "a",
+        composition: "single-spawn",
+        yaml: "name: a\n",
+      });
+      state.staged.push({
+        name: "b",
+        slash: "b",
+        composition: "single-spawn",
+        yaml: "name: b\n",
+      });
+      const fc = makeFctx(root, { hasUI: false });
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.written.length, 0);
+      assert.equal(result.denied.length, 2);
+      assert.equal(result.denied[0].reason, "no-ui");
+      assert.equal(result.denied[1].reason, "no-ui");
+      assert.equal(
+        fs.existsSync(path.join(root, ".pi", "agents", "a.yml")),
+        false,
+      );
+      assert.equal(fc.notifyCalls.length, 1);
+      assert.match(
+        fc.notifyCalls[0].message,
+        /staged but no UI to confirm/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels with reason=no-ui when ctx.ui.confirm is missing (older extension contexts)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      state.staged.push({
+        name: "z",
+        slash: "z",
+        composition: "single-spawn",
+        yaml: "name: z\n",
+      });
+      const fc = makeFctx(root, { hasUI: true, omitConfirm: true });
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.denied.length, 1);
+      assert.equal(result.denied[0].reason, "no-ui");
+      assert.equal(
+        fs.existsSync(path.join(root, ".pi", "agents", "z.yml")),
+        false,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-validates fs-state at finalize: stale duplicate file lands in errors[]", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      // Pre-create the destination — simulate a sibling write between
+      // child stage-time and parent finalize-time.
+      fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, ".pi", "agents", "race.yml"),
+        "pre-existing\n",
+        "utf8",
+      );
+
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      state.staged.push({
+        name: "race",
+        slash: "race",
+        composition: "single-spawn",
+        yaml: "name: race\n",
+      });
+      const fc = makeFctx(root);
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.errors.length, 1);
+      assert.equal(result.errors[0].name, "race");
+      assert.equal(result.errors[0].reason, "already exists");
+      assert.equal(result.written.length, 0);
+      // Confirm is NOT called for a spec that fails fs-state re-validation.
+      assert.equal(fc.confirmCalls.length, 0);
+      // Pre-existing file untouched.
+      assert.equal(
+        fs.readFileSync(
+          path.join(root, ".pi", "agents", "race.yml"),
+          "utf8",
+        ),
+        "pre-existing\n",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("integrates with execute(): direct-mode child write flows into childWrote → result.written", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "emit-spec-fz-"));
+    try {
+      const tool = loadTool(root);
+      const ctx = makeExecCtx();
+      const childResult = await tool.execute(
+        "ci",
+        {
+          name: "integration",
+          slash: "integration",
+          description: "x",
+          composition: "single-spawn",
+          phases: [{ components: ["cwd-guard"], prompt: "p" }],
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+
+      const state: EmitAgentSpecState = EMIT_AGENT_SPEC.initialState();
+      EMIT_AGENT_SPEC.harvest(
+        toolEnd({
+          toolName: "emit_agent_spec",
+          result: { details: childResult.details },
+        }),
+        state,
+      );
+      const fc = makeFctx(root);
+      const result = (await EMIT_AGENT_SPEC.finalize(
+        state,
+        fc,
+      )) as EmitAgentSpecResult;
+
+      assert.equal(result.written.length, 1);
+      assert.equal(result.written[0].name, "integration");
+      // Parent didn't gate (child already wrote).
+      assert.equal(fc.confirmCalls.length, 0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
