@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -35,10 +35,6 @@ function parseArgs(argv) {
       out.passthrough.push(a);
     }
   }
-  if (!out.name) {
-    printHelp();
-    process.exit(1);
-  }
   return out;
 }
 
@@ -48,8 +44,30 @@ function printHelp() {
       `Loads pi-sandbox/agents/<name>.yaml and launches pi with the recipe's\n` +
       `system prompt, tool allowlist, extensions, and skills. The sandbox\n` +
       `extension restricts all fs activity to <dir> (default: cwd where you\n` +
-      `invoked npm run agent) and disables bash entirely.\n`,
+      `invoked npm run agent) and disables bash entirely.\n\n` +
+      `Run without a name to list available agents.\n`,
   );
+}
+
+function listAgents() {
+  let entries;
+  try {
+    entries = readdirSync(AGENTS_DIR);
+  } catch (e) {
+    die(`failed to read ${AGENTS_DIR}: ${e.message}`);
+  }
+  const names = entries
+    .filter((f) => f.endsWith(".yaml"))
+    .map((f) => f.slice(0, -".yaml".length))
+    .sort();
+  const rel = path.relative(REPO_ROOT, AGENTS_DIR) || AGENTS_DIR;
+  if (names.length === 0) {
+    process.stdout.write(`No agents found in ${rel}\n`);
+    return;
+  }
+  process.stdout.write(`Available agents (${rel}):\n`);
+  for (const n of names) process.stdout.write(`  ${n}\n`);
+  process.stdout.write(`\nRun: npm run agent -- <name>\n`);
 }
 
 function loadRecipe(name) {
@@ -102,6 +120,10 @@ function resolveSkillPaths(names) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+if (!args.name) {
+  listAgents();
+  process.exit(0);
+}
 const recipe = loadRecipe(args.name);
 
 const sandboxRoot = path.resolve(args.sandbox || process.env.INIT_CWD || process.cwd());
