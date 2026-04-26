@@ -5,9 +5,11 @@
   "type": "module",
   "description": "Workspace for building and testing pi agents.",
   "scripts": {
-    "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --"
+    "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
+    "agent": "bash -c 'set -a && source models.env && set +a && exec node scripts/run-agent.mjs \"$@\"' --"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.69.0"
+    "@mariozechner/pi-coding-agent": "^0.69.0",
+    "yaml": "^2.8.3"
   }
 }
