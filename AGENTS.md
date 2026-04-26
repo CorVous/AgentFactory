@@ -70,23 +70,30 @@ vs. author-TS":
   `sequential-phases-with-brief`, and `single-spawn-with-dispatch`
   (the dispatcher topology — see "Dispatcher topology" below);
   emits GAP for the RPC delegator-with-LLM-reviewer topology.
-  **Primary entry is
-  `npm run agent-composer:i`** — an interactive pi session that
-  loads the composer skill plus the always-on rails (cwd-guard
-  + sandbox-fs) and exposes ONLY
-  `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec` so the
-  model cannot author code, only declare a spec. Every
-  `emit_agent_spec` call routes through a `ctx.ui.confirm` dialog
-  that previews the YAML byte-for-byte before it lands; on
-  denial the LLM is instructed to ask the user (in chat) what
-  to revise, then re-emit. The print-mode form
+  Two sanctioned entries with different chat shapes:
+    - **`npm run agent-composer:i`** *(chat with the composer
+      LLM)* — interactive pi session that loads the composer
+      skill plus the always-on rails (cwd-guard + sandbox-fs)
+      and exposes ONLY
+      `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`.
+      The composer LLM is the conversation partner; on a denied
+      `emit_agent_spec` it asks (in chat) what to revise and
+      re-emits in the same session.
+    - **`npm run agent:i -- agent-composer`** then
+      `/agent-composer "<request>"` *(chat with the outer pi)*
+      — the YAML-self-hosted slash command at
+      `pi-sandbox/.pi/agents/agent-composer.yml`. The runner
+      dispatches one composer phase via `delegate()`; the
+      `emit_agent_spec` gate renders in the outer pi's TUI and
+      the slash command finishes one-shot. To revise a denied
+      spec, re-invoke `/agent-composer` with a refined request
+      (no chat with the composer LLM itself).
+  Every `emit_agent_spec` call (in either entry) routes through
+  a `ctx.ui.confirm` dialog that previews the YAML byte-for-byte
+  before it lands. The print-mode form
   (`npm run agent-composer -- -p "..."`) ALWAYS cancels — useful
   only for cancel-path smoke testing, since `ctx.ui.confirm`
-  returns false unconditionally in print mode. The composer is
-  NOT self-hosted via a YAML slash command — one-shot
-  invocations from a stock pi session have no chat affordance
-  for revising a denied spec, so all composer use flows through
-  the chatty interactive entry.
+  returns false unconditionally in print mode.
 - **`pi-agent-builder`** — from-scratch authorship. Use when the
   composer flagged a gap, or for shapes the composer cannot
   express (custom UI widgets, compaction strategies, event-only
@@ -105,15 +112,25 @@ remains as a reference for ad-hoc TS-authoring sessions.
 ### Invoking the skill
 
 ```sh
-# Composer (primary entry — interactive chat session). The composer
-# loads its skill plus the always-on rails (cwd-guard + sandbox-fs)
-# and exposes `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`.
-# Each emit_agent_spec call confirms the YAML with the user before
-# writing; on denial the LLM asks (in chat) what to change and
-# re-emits. This is the only sanctioned composer entry — there is no
-# self-hosted YAML slash command, because one-shot invocations don't
-# have a chat affordance for revising a denied spec.
+# Composer entry A: chat WITH the composer LLM. Interactive pi
+# session loading the composer skill + always-on rails (cwd-guard
+# + sandbox-fs) and exposing
+# `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`. Each
+# emit_agent_spec call confirms the YAML before writing; on denial
+# the LLM asks (in chat) what to change and re-emits in the same
+# session.
 npm run agent-composer:i
+
+# Composer entry B: YAML-self-hosted slash command. The
+# `agent-composer.yml` spec at pi-sandbox/.pi/agents/ registers
+# `/agent-composer` via the YAML runner. Open the REPL and dispatch
+# one-shot:
+npm run agent:i -- agent-composer
+#   then at the prompt:
+#   /agent-composer "Drafter that stages writes for approval"
+# The emit_agent_spec gate renders in the outer pi's TUI; on denial
+# the slash command finishes — re-invoke /agent-composer with a
+# refined request to revise.
 
 # Print-mode form. ALWAYS cancels every emit (ctx.ui.confirm returns
 # false unconditionally in print mode). Use only for cancel-path

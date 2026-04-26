@@ -48,8 +48,10 @@ list_agents() {
   echo
   if [[ -d "$AGENTS_DIR" ]]; then
     local found=0
-    for spec in "$AGENTS_DIR"/*.yml "$AGENTS_DIR"/*.yaml; do
-      [[ -e "$spec" ]] || continue
+    shopt -s nullglob
+    local specs=("$AGENTS_DIR"/*.yml "$AGENTS_DIR"/*.yaml)
+    shopt -u nullglob
+    for spec in "${specs[@]}"; do
       found=1
       local stem slash desc
       stem="$(basename "$spec")"
@@ -64,6 +66,7 @@ list_agents() {
   else
     echo "  (no agents directory at $AGENTS_DIR)"
   fi
+  return 0
 }
 
 NAME=""
