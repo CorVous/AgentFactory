@@ -115,9 +115,28 @@ Set `AGENT_DEBUG=1` in the environment when launching an agent and the
 via `ctx.ui.notify` on `session_start`. Useful when you've added a new
 write tool and want to confirm it was picked up by introspection.
 
+The rails — `agent-header`, `agent-footer`, and `deferred-write`'s
+end-of-turn `ctx.ui.confirm` dialog — only render under a real PTY,
+so `pi -p` print mode can't exercise them. For integration testing,
+drive a full TUI session under tmux:
+
 ```sh
-AGENT_DEBUG=1 npm run agent -- deferred-writer -p "ping"
+set -a; source models.env; set +a
+tmux new-session -d -s pi-test -x 200 -y 50 \
+  'AGENT_DEBUG=1 npm run agent -- deferred-writer'
+sleep 5                                              # let pi boot + print debug
+tmux send-keys -t pi-test 'draft hello.txt saying hi' Enter
+sleep 30                                             # wait for the model
+tmux capture-pane -t pi-test -p                       # snapshot the screen
+tmux send-keys -t pi-test 'y' Enter                   # approve deferred_write dialog
+sleep 5
+tmux capture-pane -t pi-test -p
+tmux send-keys -t pi-test '/quit' Enter
 ```
+
+Caveats: this hits the real model so each run costs a fraction of a
+cent, and `capture-pane -p` returns plain text — colors and bold from
+`agent-header` won't show up in the snapshot.
 
 ## Mandatory safety rails for sub-agents
 
