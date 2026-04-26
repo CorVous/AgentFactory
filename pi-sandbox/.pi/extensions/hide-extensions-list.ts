@@ -44,12 +44,16 @@ function findAndRemove(node: Component, label: string): boolean {
   if (!isContainer(node)) return false;
   const arr = node.children;
   for (let i = 0; i < arr.length; i++) {
+    // Recurse first so deeper matches splice from the closest container.
+    // Otherwise an ancestor (e.g. pi's chatContainer when [Extensions] is its
+    // first child) matches at the wrong level and we splice the whole
+    // ancestor out, taking all chat history with it.
+    if (findAndRemove(arr[i]!, label)) return true;
     if (firstStrippedLine(arr[i]!) === label) {
       // Drop the matched section and the trailing Spacer pi adds after it.
       arr.splice(i, i + 1 < arr.length ? 2 : 1);
       return true;
     }
-    if (findAndRemove(arr[i]!, label)) return true;
   }
   return false;
 }
