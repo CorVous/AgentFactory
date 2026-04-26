@@ -86,7 +86,7 @@ export default function (pi: ExtensionAPI) {
         }
         stats.push(ctxColored);
 
-        const left = stats.join(" ");
+        const left = stats.join(" / ");
         const right = ctx.model?.id || "no-model";
         const leftW = visibleWidth(left);
         const rightW = visibleWidth(right);
