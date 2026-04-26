@@ -9,7 +9,7 @@
 // targeting paths that already exist.
 //
 // Designed to compose with sandbox.ts: paths are validated against the
-// same root (AGENT_SANDBOX_ROOT, falling back to ctx.cwd).
+// same root (the `--sandbox-root` flag, falling back to ctx.cwd).
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => {
     if (drafts.length === 0) return;
     const queued = drafts.splice(0, drafts.length);
-    const root = path.resolve(process.env.AGENT_SANDBOX_ROOT || ctx.cwd);
+    const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || ctx.cwd);
 
     type Plan = { relPath: string; destAbs: string; content: string; sha: string; bytes: number };
     const plans: Plan[] = [];

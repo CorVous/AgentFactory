@@ -1,7 +1,7 @@
 // agent-footer — replaces pi's default footer with one that fits the
 // `npm run agent` rails:
-//   line 1, left:  `sandbox: <root>` (the AGENT_SANDBOX_ROOT, with home
-//                  replaced by ~), instead of pi's `cwd (branch)`. The
+//   line 1, left:  `sandbox: <root>` (the `--sandbox-root` flag value,
+//                  with home replaced by ~), instead of pi's `cwd (branch)`. The
 //                  agent can't escape the sandbox so the host cwd /
 //                  branch are misleading noise.
 //   line 1, right: `tools: <name1, name2, ...>` from pi.getActiveTools(),
@@ -41,7 +41,7 @@ function sanitizeStatusText(text: string): string {
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
-    const root = path.resolve(process.env.AGENT_SANDBOX_ROOT || ctx.cwd);
+    const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || ctx.cwd);
     const displayRoot = homeReplace(root);
 
     ctx.ui.setFooter((_tui, theme, footerData) => ({

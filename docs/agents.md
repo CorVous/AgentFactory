@@ -11,15 +11,19 @@ agent gets five baseline extensions:
   path-bearing tools is discovered at session start from
   `pi.getAllTools()` (any tool whose schema declares `path: string`),
   with a static fallback of `{read, write, edit, ls, grep, find}` for
-  the installed pi 0.69 built-ins.
+  the installed pi 0.69 built-ins. Owns the `--sandbox-root <path>`
+  flag (read by `agent-footer`, `deferred-write`, and `no-edit` via
+  `pi.getFlag`); falls back to `ctx.cwd` when the flag is unset.
 - `no-startup-help` — suppresses pi's default startup header (logo,
   keybinding cheatsheet, onboarding tips) since most of those keybindings
   reference features focused agents don't use.
 - `agent-header` — replaces the (now-empty) header with a banner that
   shows the agent name (bold accent) and the recipe's `description:`
-  field on the next line (dim). Reads `AGENT_NAME` and
-  `AGENT_DESCRIPTION` from the environment; both are set by the runner
-  from the recipe filename and `description:` field.
+  field on the next line (dim). Reads the `--agent-name` and
+  `--agent-description` flags; the runner sets both from the recipe
+  filename and `description:` field. Either flag can be passed on the
+  `npm run agent --` line to override the recipe (passthrough flags
+  come after recipe-derived ones, so the CLI value wins).
 - `agent-footer` — replaces pi's default footer. Line 1 shows
   `sandbox: <root>` on the left and `tools: <name1, name2, ...>` (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
@@ -57,8 +61,11 @@ noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 The runner always passes `--no-extensions --no-skills --no-context-files`
 to pi, so only what the recipe declares is loaded. Tool names go through
 pi's `--tools` allowlist (built-in + extension-registered tools both
-qualify). The sandbox extension reads `AGENT_SANDBOX_ROOT` (set by the
-runner) to know where to clamp paths.
+qualify). Recipe-derived values reach the extensions as registered CLI
+flags: `--sandbox-root <path>` (always set), `--agent-name <name>`
+(always set), `--agent-description <text>` (when `description:` is set),
+and `--no-edit-add` / `--no-edit-skip` (when the matching list is
+non-empty). All five appear under "Extension CLI Flags" in `pi --help`.
 
 ## Where agent code lives
 

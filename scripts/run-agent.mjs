@@ -154,29 +154,25 @@ const piArgs = [
 ];
 for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
+piArgs.push("--sandbox-root", sandboxRoot);
+piArgs.push("--agent-name", args.name);
+if (typeof recipe.description === "string" && recipe.description.trim()) {
+  piArgs.push("--agent-description", recipe.description.trim());
+}
+if (Array.isArray(recipe.noEditAdd) && recipe.noEditAdd.length > 0) {
+  piArgs.push("--no-edit-add", recipe.noEditAdd.join(","));
+}
+if (Array.isArray(recipe.noEditSkip) && recipe.noEditSkip.length > 0) {
+  piArgs.push("--no-edit-skip", recipe.noEditSkip.join(","));
+}
 piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 
-const childEnv = {
-  ...process.env,
-  AGENT_SANDBOX_ROOT: sandboxRoot,
-  AGENT_NAME: args.name,
-};
-if (typeof recipe.description === "string" && recipe.description.trim()) {
-  childEnv.AGENT_DESCRIPTION = recipe.description.trim();
-}
-if (Array.isArray(recipe.noEditAdd) && recipe.noEditAdd.length > 0) {
-  childEnv.AGENT_NO_EDIT_ADD = recipe.noEditAdd.join(",");
-}
-if (Array.isArray(recipe.noEditSkip) && recipe.noEditSkip.length > 0) {
-  childEnv.AGENT_NO_EDIT_SKIP = recipe.noEditSkip.join(",");
-}
-
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
-  env: childEnv,
+  env: process.env,
 });
 
 child.on("exit", (code, signal) => {
