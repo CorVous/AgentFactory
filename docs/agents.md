@@ -4,12 +4,18 @@ Day-to-day, the way to launch a focused agent is `npm run agent -- <name>`.
 The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
 `pi-sandbox/agents/<name>.yaml`, resolves the model tier, and execs `pi`
 from the directory you invoked it from (or `--sandbox <dir>`). Every
-agent gets the `sandbox` baseline extension, which blocks `bash` outright
-and rejects any path-bearing tool call whose `path` resolves outside the
-sandbox root. The set of path-bearing tools is discovered at session
-start from `pi.getAllTools()` (any tool whose schema declares
-`path: string`), with a static fallback of `{read, write, edit, ls,
-grep, find}` for the installed pi 0.69 built-ins.
+agent gets two baseline extensions:
+
+- `sandbox` — blocks `bash` outright, rejects any path-bearing tool call
+  whose `path` resolves outside the sandbox root, and replaces pi's
+  footer cwd/branch line with `sandbox: <root>`. The set of path-bearing
+  tools is discovered at session start from `pi.getAllTools()` (any tool
+  whose schema declares `path: string`), with a static fallback of
+  `{read, write, edit, ls, grep, find}` for the installed pi 0.69
+  built-ins.
+- `no-startup-help` — suppresses pi's default startup header (logo,
+  keybinding cheatsheet, onboarding tips) since most of those keybindings
+  reference features focused agents don't use.
 
 ```sh
 set -a; source models.env; set +a
@@ -26,7 +32,7 @@ model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal mode
 prompt: |                         # replaces pi's default system prompt
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox] baseline
+extensions: [deferred-write]      # merged with the [sandbox, no-startup-help] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail

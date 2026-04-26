@@ -12,7 +12,7 @@ const EXTENSIONS_DIR = path.join(SANDBOX_ROOT, ".pi", "extensions");
 const SKILLS_DIR = path.join(SANDBOX_ROOT, "skills");
 const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
 
-const BASELINE_EXTENSIONS = ["sandbox"];
+const BASELINE_EXTENSIONS = ["sandbox", "no-startup-help"];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
 function die(msg) {
