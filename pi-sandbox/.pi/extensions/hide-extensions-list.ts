@@ -1,11 +1,14 @@
-// hide-extensions-list — strips pi's `[Extensions]` section from the
-// chat history at startup. Pi calls `showLoadedResources` immediately
-// after extension session_start handlers finish, with no per-section
-// suppression in the public extension API. So we use `setWidget` as a
-// side-channel to capture the TUI instance, schedule a setTimeout(0)
-// callback that runs after `showLoadedResources` has appended the
-// section, and splice the matching subtree (plus its trailing Spacer)
-// out of the chat container.
+// hide-extensions-list — baseline rail that strips pi's `[Extensions]`
+// section from the chat history at startup. The agent-footer already
+// shows the active tools, and the path listing pi appends is noise.
+//
+// Pi calls `showLoadedResources` immediately after extension
+// session_start handlers finish, with no per-section suppression in
+// the public extension API. So we use `setWidget` as a side-channel
+// to capture the TUI instance, schedule a setTimeout(0) callback that
+// runs after `showLoadedResources` has appended the section, and
+// splice the matching subtree (plus its trailing Spacer) out of the
+// chat container.
 //
 // This reaches into private TUI state shape and is fragile if pi's
 // internal layout changes. If a future pi exposes a quietStartup
