@@ -135,7 +135,8 @@ const recipe = loadRecipe(args.name);
 const sandboxRoot = path.resolve(args.sandbox || process.env.INIT_CWD || process.cwd());
 if (!existsSync(sandboxRoot)) die(`sandbox dir does not exist: ${sandboxRoot}`);
 
-const model = resolveModel(recipe.model);
+const recipeModel = recipe.model || "TASK_RABBIT_MODEL";
+const model = resolveModel(recipeModel);
 const extensionPaths = resolveExtensionPaths(Array.isArray(recipe.extensions) ? recipe.extensions : []);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
@@ -158,6 +159,9 @@ piArgs.push("--sandbox-root", sandboxRoot);
 piArgs.push("--agent-name", args.name);
 if (typeof recipe.description === "string" && recipe.description.trim()) {
   piArgs.push("--agent-description", recipe.description.trim());
+}
+if (TIER_VARS.has(recipeModel)) {
+  piArgs.push("--agent-tier", recipeModel);
 }
 if (Array.isArray(recipe.noEditAdd) && recipe.noEditAdd.length > 0) {
   piArgs.push("--no-edit-add", recipe.noEditAdd.join(","));

@@ -18,12 +18,15 @@ agent gets five baseline extensions:
   keybinding cheatsheet, onboarding tips) since most of those keybindings
   reference features focused agents don't use.
 - `agent-header` — replaces the (now-empty) header with a banner that
-  shows the agent name (bold accent) and the recipe's `description:`
-  field on the next line (dim). Reads the `--agent-name` and
-  `--agent-description` flags; the runner sets both from the recipe
-  filename and `description:` field. Either flag can be passed on the
-  `npm run agent --` line to override the recipe (passthrough flags
-  come after recipe-derived ones, so the CLI value wins).
+  shows the agent name (bold accent), optionally suffixed dim with the
+  model tier (e.g. `deferred-writer · Task Rabbit`), and the recipe's
+  `description:` field on the next line (dim). Reads the `--agent-name`,
+  `--agent-description`, and `--agent-tier` flags; the runner sets all
+  three from the recipe filename, `description:`, and `model:` (the
+  tier suffix is skipped when `model:` is a literal model ID rather
+  than a tier var). Each flag can be passed on the `npm run agent --`
+  line to override the recipe (passthrough flags come after
+  recipe-derived ones, so the CLI value wins).
 - `agent-footer` — replaces pi's default footer. Line 1 shows
   `sandbox: <root>` on the left and `tools: <name1, name2, ...>` (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
@@ -64,8 +67,9 @@ pi's `--tools` allowlist (built-in + extension-registered tools both
 qualify). Recipe-derived values reach the extensions as registered CLI
 flags: `--sandbox-root <path>` (always set), `--agent-name <name>`
 (always set), `--agent-description <text>` (when `description:` is set),
-and `--no-edit-add` / `--no-edit-skip` (when the matching list is
-non-empty). All five appear under "Extension CLI Flags" in `pi --help`.
+`--agent-tier <TIER_VAR>` (when `model:` is a tier var name), and
+`--no-edit-add` / `--no-edit-skip` (when the matching list is
+non-empty). All six appear under "Extension CLI Flags" in `pi --help`.
 
 ## Where agent code lives
 
