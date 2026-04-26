@@ -120,12 +120,12 @@ export default function (pi: ExtensionAPI) {
         const overwrite = fs.existsSync(p.destAbs) ? " [OVERWRITE]" : "";
         const header = `${p.destAbs} (${p.bytes} bytes, sha ${p.sha.slice(0, 10)}…)${overwrite}`;
         const lines = p.content.split("\n");
-        const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n\n\n");
+        const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n");
         const tail =
           lines.length > PREVIEW_LINES_PER_FILE
-            ? `\n\n\n… (+${lines.length - PREVIEW_LINES_PER_FILE} more lines)`
+            ? `\n… (+${lines.length - PREVIEW_LINES_PER_FILE} more lines)`
             : "";
-        return `${header}\n\n\n${shown}${tail}`;
+        return `${header}\n\n${shown}${tail}`;
       })
       .join("\n\n---\n\n");
 
