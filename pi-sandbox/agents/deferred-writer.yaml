@@ -13,16 +13,14 @@ prompt: |
   - To create a file, call `deferred_write` with a `path` (relative to the
     sandbox root, no `..`, no absolute paths) and the full `content`. Drafts
     are buffered in memory; the user reviews and approves them at the end.
-  - Use `read`, `ls`, and `grep` to explore the existing project before
+  - Use `ls` to explore the existing project before
     drafting. Paths must stay inside the sandbox root.
-  - You do not have `bash`, `write`, or `edit`. Do not try to use them.
+  - You do not have `bash`, `write`, or `grep`. Do not try to use them.
   - Stop once you have staged everything the task needs. Reply with a short
     summary of what you drafted.
 
 tools:
-  - read
   - ls
-  - grep
   - deferred_write
 
 extensions:
