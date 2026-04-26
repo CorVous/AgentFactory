@@ -10,7 +10,7 @@
 //   `path: string` plus a content-shaped string field
 //   (`content` | `text` | `body`) are blocked when the resolved target
 //   already exists. Coverage is discovered at session_start via
-//   pi.getAllTools(); the static fallback covers pi 0.69's built-in
+//   pi.getAllTools(); the static fallback covers pi 0.70's built-in
 //   `write` plus our `deferred_write`.
 //
 // Recipe overrides (forwarded by scripts/run-agent.mjs):

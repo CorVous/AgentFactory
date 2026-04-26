@@ -5,7 +5,7 @@
 // Coverage is discovered at session_start: we walk pi.getAllTools() and
 // classify every tool whose schema declares `path: string` as
 // path-bearing. The static fallback below is a safety net for the
-// installed pi 0.69 built-ins; introspection automatically picks up
+// installed pi 0.70 built-ins; introspection automatically picks up
 // custom tools (including deferred_write) and any future built-ins.
 //
 // Sandbox root is read from the `--sandbox-root` flag (set by
