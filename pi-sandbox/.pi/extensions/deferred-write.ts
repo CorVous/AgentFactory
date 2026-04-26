@@ -1,8 +1,12 @@
-// Deferred-write extension — replaces the old `/deferred-writer` slash
-// command. Drafts written via the `deferred_write` tool are buffered in
-// extension memory and surfaced to the user (via ctx.ui.confirm) once the
-// agent loop completes. Approved drafts are written to disk under the
-// sandbox root; rejected drafts are discarded.
+// Deferred-write extension. Drafts written via the `deferred_write` tool
+// are buffered in extension memory and surfaced to the user (via
+// ctx.ui.confirm) once the agent loop completes. Approved drafts are
+// written to disk under the sandbox root; rejected drafts are discarded.
+//
+// This extension does not enforce no-overwrite. If a recipe wants to
+// forbid modifying existing files, pair it with the `no-edit` extension,
+// which blocks `edit` outright and rejects `write`/`deferred_write`
+// targeting paths that already exist.
 //
 // Designed to compose with sandbox.ts: paths are validated against the
 // same root (AGENT_SANDBOX_ROOT, falling back to ctx.cwd).
@@ -75,10 +79,6 @@ export default function (pi: ExtensionAPI) {
         skips.push(`${d.relPath}: escapes sandbox`);
         continue;
       }
-      if (fs.existsSync(destAbs)) {
-        skips.push(`${d.relPath}: already exists at ${destAbs}`);
-        continue;
-      }
       const bytes = Buffer.byteLength(d.content, "utf8");
       if (bytes > MAX_BYTES_PER_FILE) {
         skips.push(`${d.relPath}: ${bytes} bytes > ${MAX_BYTES_PER_FILE}`);
@@ -111,7 +111,8 @@ export default function (pi: ExtensionAPI) {
 
     const preview = plans
       .map((p) => {
-        const header = `${p.destAbs} (${p.bytes} bytes, sha ${p.sha.slice(0, 10)}…)`;
+        const overwrite = fs.existsSync(p.destAbs) ? " [OVERWRITE]" : "";
+        const header = `${p.destAbs} (${p.bytes} bytes, sha ${p.sha.slice(0, 10)}…)${overwrite}`;
         const lines = p.content.split("\n");
         const shown = lines.slice(0, PREVIEW_LINES_PER_FILE).join("\n");
         const tail =
@@ -131,10 +132,6 @@ export default function (pi: ExtensionAPI) {
     const wrote: string[] = [];
     const failed: string[] = [];
     for (const p of plans) {
-      if (fs.existsSync(p.destAbs)) {
-        failed.push(`${p.relPath}: destination now exists`);
-        continue;
-      }
       try {
         fs.mkdirSync(path.dirname(p.destAbs), { recursive: true });
         fs.writeFileSync(p.destAbs, p.content, "utf8");

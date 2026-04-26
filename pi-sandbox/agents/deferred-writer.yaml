@@ -25,3 +25,4 @@ tools:
 
 extensions:
   - deferred-write
+  - no-edit

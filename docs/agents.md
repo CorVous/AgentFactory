@@ -45,14 +45,23 @@ runner) to know where to clamp paths.
 
 ## Worked example: deferred-writer
 
-`pi-sandbox/agents/deferred-writer.yaml` pairs the `deferred-write`
-extension (`pi-sandbox/.pi/extensions/deferred-write.ts`) with the
-sandbox baseline. The agent's only write channel is the `deferred_write`
-tool, which buffers drafts in extension memory; on `agent_end` the
-extension previews the queued drafts via `ctx.ui.confirm` and writes
-approved ones to disk under the sandbox root (sha256-verified after
-write, ≤ 50 files / ≤ 2 MB each). Non-interactive runs refuse to write
-because there's no UI to confirm.
+`pi-sandbox/agents/deferred-writer.yaml` composes three extensions:
+
+- `sandbox` (baseline) — disables `bash`, clamps fs activity to the root.
+- `deferred-write` — registers the `deferred_write` tool. Drafts are
+  buffered in extension memory; on `agent_end` the extension previews the
+  queued drafts via `ctx.ui.confirm` and writes approved ones to disk
+  (sha256-verified after write, ≤ 50 files / ≤ 2 MB each).
+- `no-edit` — blocks `edit` outright and rejects `write` /
+  `deferred_write` whose target already exists. Drop this from the recipe
+  if you want an agent that can overwrite or edit existing files.
+
+Non-interactive runs refuse to write because there's no UI to confirm.
+
+`deferred-write` and `no-edit` are independent rails: an agent that wants
+overwrite-on-approval keeps `deferred-write` and omits `no-edit`; an
+agent using plain `write` but still wanting create-only semantics keeps
+`no-edit` and omits `deferred-write`.
 
 ## Mandatory safety rails for sub-agents
 
