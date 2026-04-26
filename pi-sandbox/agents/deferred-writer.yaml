@@ -2,7 +2,7 @@
 # All filesystem activity is sandboxed to the directory you launched
 # `npm run agent` from (or --sandbox <dir>). bash is disabled.
 
-model: TASK_MODEL
+model: TASK_RABBIT_MODEL
 
 prompt: |
   You are a careful drafter. Your job is to read the user's request, inspect

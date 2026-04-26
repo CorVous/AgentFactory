@@ -13,7 +13,7 @@ const SKILLS_DIR = path.join(SANDBOX_ROOT, "skills");
 const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
 
 const BASELINE_EXTENSIONS = ["sandbox"];
-const TIER_VARS = new Set(["PLAN_MODEL", "LEAD_MODEL", "TASK_MODEL"]);
+const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
 function die(msg) {
   process.stderr.write(`run-agent: ${msg}\n`);
@@ -68,7 +68,7 @@ function loadRecipe(name) {
 }
 
 function resolveModel(tierOrId) {
-  const requested = tierOrId || "TASK_MODEL";
+  const requested = tierOrId || "TASK_RABBIT_MODEL";
   if (TIER_VARS.has(requested)) {
     const v = process.env[requested];
     if (!v) die(`tier ${requested} is not set; source models.env first`);
