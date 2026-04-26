@@ -35,11 +35,17 @@ export default function (pi: ExtensionAPI) {
       "Draft a file. Content is buffered in memory and presented to the user " +
       "for approval at the end of the agent loop; nothing hits disk until then. " +
       "Use this in place of `write`. `path` must be relative to the sandbox root " +
-      "(no absolute paths, no `..`). Approved drafts are written; rejected drafts " +
-      "are discarded.",
+      "(no absolute paths, no `..`). `content` MUST be the complete, final file " +
+      "contents — every line you want on disk, verbatim. Do not abbreviate or " +
+      "use placeholders like `...`, `// rest unchanged`, or `TODO: fill in`. " +
+      "Approved drafts are written; rejected drafts are discarded.",
     parameters: Type.Object({
       path: Type.String({ description: "Relative destination path inside the sandbox root." }),
-      content: Type.String({ description: "Full text content of the file." }),
+      content: Type.String({
+        description:
+          "Complete final text of the file. Every line you want on disk, " +
+          "verbatim — no placeholders, no abbreviations, no `...`.",
+      }),
     }),
     async execute(_id, params) {
       const bytes = Buffer.byteLength(params.content, "utf8");
