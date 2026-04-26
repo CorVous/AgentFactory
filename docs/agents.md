@@ -4,7 +4,7 @@ Day-to-day, the way to launch a focused agent is `npm run agent -- <name>`.
 The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
 `pi-sandbox/agents/<name>.yaml`, resolves the model tier, and execs `pi`
 from the directory you invoked it from (or `--sandbox <dir>`). Every
-agent gets four baseline extensions:
+agent gets five baseline extensions:
 
 - `sandbox` — blocks `bash` outright and rejects any path-bearing tool
   call whose `path` resolves outside the sandbox root. The set of
@@ -15,6 +15,11 @@ agent gets four baseline extensions:
 - `no-startup-help` — suppresses pi's default startup header (logo,
   keybinding cheatsheet, onboarding tips) since most of those keybindings
   reference features focused agents don't use.
+- `agent-header` — replaces the (now-empty) header with a banner that
+  shows the agent name (bold accent) and the recipe's `description:`
+  field on the next line (dim). Reads `AGENT_NAME` and
+  `AGENT_DESCRIPTION` from the environment; both are set by the runner
+  from the recipe filename and `description:` field.
 - `agent-footer` — replaces pi's default footer. Line 1 shows
   `sandbox: <root>` on the left and `tools: <name1, name2, ...>` (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
@@ -38,10 +43,11 @@ npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthro
 ```yaml
 # pi-sandbox/agents/<name>.yaml
 model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal model ID
+description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # replaces pi's default system prompt
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-footer, hide-extensions-list] baseline
+extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail

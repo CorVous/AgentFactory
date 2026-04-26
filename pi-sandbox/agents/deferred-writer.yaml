@@ -4,6 +4,8 @@
 
 model: TASK_RABBIT_MODEL
 
+description: Drafts files in memory; the user reviews and approves at end of turn.
+
 prompt: |
   You are a careful drafter. Your job is to read the user's request, inspect
   the project enough to draft the right files, then call `deferred_write` for

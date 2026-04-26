@@ -12,7 +12,13 @@ const EXTENSIONS_DIR = path.join(SANDBOX_ROOT, ".pi", "extensions");
 const SKILLS_DIR = path.join(SANDBOX_ROOT, "skills");
 const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
 
-const BASELINE_EXTENSIONS = ["sandbox", "no-startup-help", "agent-footer", "hide-extensions-list"];
+const BASELINE_EXTENSIONS = [
+  "sandbox",
+  "no-startup-help",
+  "agent-header",
+  "agent-footer",
+  "hide-extensions-list",
+];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
 function die(msg) {
@@ -157,6 +163,9 @@ const childEnv = {
   AGENT_SANDBOX_ROOT: sandboxRoot,
   AGENT_NAME: args.name,
 };
+if (typeof recipe.description === "string" && recipe.description.trim()) {
+  childEnv.AGENT_DESCRIPTION = recipe.description.trim();
+}
 if (Array.isArray(recipe.noEditAdd) && recipe.noEditAdd.length > 0) {
   childEnv.AGENT_NO_EDIT_ADD = recipe.noEditAdd.join(",");
 }
