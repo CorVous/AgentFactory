@@ -9,11 +9,12 @@
 //                  registered by extensions. Truncated with an ellipsis
 //                  on narrow terminals; dropped entirely if there is no
 //                  room for a 2-column gap after the sandbox label.
-//   line 2, left:  `$cost  CTX%` — accumulated assistant cost from
-//                  session history plus the context-usage percent.
-//                  pi's default token-flow stats (↑input, ↓output,
-//                  cache R/W, /<window-size>) are intentionally
-//                  dropped.
+//   line 2, left:  `$cost / <bar>` — accumulated assistant cost from
+//                  session history plus a 5-cell eighths-block bar for
+//                  the context-usage percent (warning tint > 70%,
+//                  error tint > 90%). pi's default token-flow stats
+//                  (↑input, ↓output, cache R/W, /<window-size>) are
+//                  intentionally dropped.
 //   line 2, right: model id.
 //   line 3 (opt):  extension status texts set via ctx.ui.setStatus().
 
@@ -22,6 +23,21 @@ import path from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+
+// Eighths-block horizontal bar. 5 cells × 8 eighths = 40 buckets, so each
+// bucket covers ~2.5% of context. Empty cells render `░` so the track is
+// visible even at 0%; partial cells use the standard left-fill set.
+const BAR_BLOCKS = ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
+function renderBar(percent: number, width: number): string {
+  const max = width * 8;
+  const totalEighths = Math.max(0, Math.min(max, Math.round((percent / 100) * max)));
+  let out = "";
+  for (let i = 0; i < width; i++) {
+    const cellEighths = Math.max(0, Math.min(8, totalEighths - i * 8));
+    out += BAR_BLOCKS[cellEighths];
+  }
+  return out;
+}
 
 function homeReplace(p: string): string {
   const home = os.homedir();
@@ -78,7 +94,7 @@ export default function (pi: ExtensionAPI) {
         const stats: string[] = [];
         if (cost) stats.push(`$${cost.toFixed(3)}`);
 
-        const ctxStr = typeof ctxPct === "number" ? `${ctxPct.toFixed(1)}%` : "?";
+        const ctxStr = typeof ctxPct === "number" ? renderBar(ctxPct, 5) : "?";
         let ctxColored = ctxStr;
         if (typeof ctxPct === "number") {
           if (ctxPct > 90) ctxColored = theme.fg("error", ctxStr);
