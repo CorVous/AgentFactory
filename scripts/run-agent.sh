@@ -1,32 +1,35 @@
 #!/usr/bin/env bash
-# run-agent.sh — generic launcher for any YAML-defined pi agent.
+# run-agent.sh — interactive launcher for YAML-defined pi agents.
 #
 # Every YAML spec under pi-sandbox/.pi/agents/*.yml registers a slash
 # command via the auto-discovered yaml-agent-runner.ts when pi starts
-# in the sandbox cwd. This script gives those agents a one-shot script
-# form by forwarding to `pi -p "/<slash> <args>"` from inside the
-# sandbox. Agents already reachable interactively as `/<slash>` from
-# `npm run pi` thus also become reachable from a single CLI call.
+# in the sandbox cwd. This script opens an interactive pi session
+# from the sandbox and (optionally) prints a one-line hint with the
+# slash to type for a named agent.
+#
+# A previous one-shot `pi -p "/<slash>"` dispatch path was removed:
+# every gate-bearing emitted agent silently no-ops in print mode
+# because `ctx.ui.confirm` returns false unconditionally there.
+# Interactive mode is the only sanctioned entry.
 #
 # Usage:
-#   run-agent.sh                       # list available agents and exit
-#   run-agent.sh -l | --list           # same
-#   run-agent.sh -h | --help           # this help
-#   run-agent.sh <name> [args...]      # dispatch one-shot (script form)
+#   run-agent.sh                         # list available agents and exit
+#   run-agent.sh -l | --list             # same
+#   run-agent.sh -h | --help             # this help
 #   run-agent.sh -i | --interactive [<name>]
-#                                      # open interactive pi from the
-#                                      # sandbox cwd. When <name> is given,
-#                                      # prints a hint about the slash to
-#                                      # type; otherwise just opens pi.
+#                                        # open interactive pi from the
+#                                        # sandbox cwd. When <name> is
+#                                        # given, prints a one-line hint
+#                                        # with the slash to type;
+#                                        # otherwise just opens pi.
 #
 # Examples:
-#   npm run agent
-#   npm run agent -- agent-composer "Drafter that stages writes for approval"
-#   npm run agent:i                                  # plain pi REPL
-#   npm run agent:i -- agent-composer                # REPL with hint
+#   npm run agent                        # list agents and exit
+#   npm run agent:i                      # plain pi REPL in sandbox
+#   npm run agent:i -- some-emitted      # REPL with /<slash> hint
 #
-# `<name>` is the YAML filename stem (e.g. `agent-composer` for
-# `pi-sandbox/.pi/agents/agent-composer.yml`). The script reads the
+# `<name>` is the YAML filename stem (e.g. `some-emitted` for
+# `pi-sandbox/.pi/agents/some-emitted.yml`). The script reads the
 # YAML's `slash:` field as the authoritative slash name.
 
 set -euo pipefail
@@ -36,17 +39,19 @@ REPO="$(cd "$HERE/.." && pwd)"
 SANDBOX="$REPO/pi-sandbox"
 AGENTS_DIR="$SANDBOX/.pi/agents"
 
-usage() { sed -n '2,30p' "$0"; }
+usage() { sed -n '2,32p' "$0"; }
 
 INTERACTIVE=0
 
 list_agents() {
-  echo "Available agents (script form: npm run agent -- <name> [args]):"
+  echo "Available agents (open with: npm run agent:i -- <name>):"
   echo
   if [[ -d "$AGENTS_DIR" ]]; then
     local found=0
-    for spec in "$AGENTS_DIR"/*.yml "$AGENTS_DIR"/*.yaml; do
-      [[ -e "$spec" ]] || continue
+    shopt -s nullglob
+    local specs=("$AGENTS_DIR"/*.yml "$AGENTS_DIR"/*.yaml)
+    shopt -u nullglob
+    for spec in "${specs[@]}"; do
       found=1
       local stem slash desc
       stem="$(basename "$spec")"
@@ -61,6 +66,7 @@ list_agents() {
   else
     echo "  (no agents directory at $AGENTS_DIR)"
   fi
+  return 0
 }
 
 NAME=""
@@ -75,7 +81,7 @@ while [[ $# -gt 0 ]]; do
       exit 2 ;;
     *)
       NAME="$1"; shift
-      break ;;  # everything after the name is forwarded as args
+      break ;;
   esac
 done
 
@@ -83,6 +89,15 @@ done
 if [[ $INTERACTIVE -eq 0 && -z "$NAME" ]]; then
   list_agents
   exit 0
+fi
+
+# A bare name without -i is no longer supported — the one-shot
+# dispatch path was removed because gate-bearing agents always
+# cancel in print mode. Tell the user to use -i instead.
+if [[ $INTERACTIVE -eq 0 && -n "$NAME" ]]; then
+  echo "One-shot dispatch was removed (gate-bearing agents cancel" >&2
+  echo "in print mode). Use:  npm run agent:i -- $NAME" >&2
+  exit 2
 fi
 
 SLASH=""
@@ -113,37 +128,18 @@ if [[ -z "${TASK_MODEL:-}" && -f "$REPO/models.env" ]]; then
   set -a; source "$REPO/models.env"; set +a
 fi
 
-if [[ $INTERACTIVE -eq 1 ]]; then
-  # Drop into pi from the sandbox cwd. The yaml-agent-runner registers
-  # every spec's slash command on startup, so the user can type
-  # `/<slash> <args>` at the prompt. When a name was given, surface the
-  # exact slash to type as a one-line hint on stderr (stdout is pi's TUI).
-  if [[ -n "$SLASH" ]]; then
-    echo "[run-agent] Interactive mode. Type: /$SLASH <args>" >&2
-  fi
-  (
-    cd "$SANDBOX"
-    exec env \
-      PI_SKIP_UPDATE_CHECK=1 \
-      "$REPO/node_modules/.bin/pi" \
-        --no-context-files \
-        --provider openrouter
-  )
+# Drop into pi from the sandbox cwd. The yaml-agent-runner registers
+# every spec's slash command on startup, so the user can type
+# `/<slash> <args>` at the prompt. When a name was given, surface the
+# exact slash to type as a one-line hint on stderr (stdout is pi's TUI).
+if [[ -n "$SLASH" ]]; then
+  echo "[run-agent] Interactive mode. Type: /$SLASH <args>" >&2
 fi
-
-# Compose the prompt: "/<slash> <args joined>". Empty args yield "/<slash>",
-# which the runner's handler intercepts with a usage notify and exits.
-PROMPT="/$SLASH"
-if [[ $# -gt 0 ]]; then
-  PROMPT="$PROMPT $*"
-fi
-
 (
   cd "$SANDBOX"
   exec env \
     PI_SKIP_UPDATE_CHECK=1 \
     "$REPO/node_modules/.bin/pi" \
-      --no-context-files --no-session \
-      --mode json \
-      -p "$PROMPT"
+      --no-context-files \
+      --provider openrouter
 )

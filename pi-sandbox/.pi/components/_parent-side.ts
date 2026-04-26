@@ -178,6 +178,51 @@ export interface DispatchRequestsResult {
   tasks: string[];
 }
 
+// dispatch-agent — orchestrator stub. A dispatcher LLM calls
+// `dispatch_agent({name, args})` to programmatically invoke either
+// another emitted YAML agent (looked up by `<name>.yml` stem under
+// `.pi/agents/`) or the special virtual entry `composer` (which
+// spawns the pi-agent-composer skill the same way the
+// `agent-composer.sh` entry script does). The child execute() is a
+// pure stub; the parent-side harvests the call from
+// `tool_execution_start` events and runs the actual dispatch from
+// `finalize`, threading the outer `ctx` through so any nested
+// gate (stage_write confirms, emit_agent_spec confirms) renders in
+// whichever process owns the user's TUI.
+export interface RawDispatchRequest {
+  name: unknown;
+  args: unknown;
+}
+export interface DispatchAgentState {
+  requests: RawDispatchRequest[];
+}
+/** One entry in DispatchAgentResult.dispatches — covers both the
+ *  ok and error shapes so callers can render either via a single
+ *  iteration. */
+export interface DispatchedAgentOutcome {
+  /** The `name` the dispatcher LLM passed. Echoed verbatim for
+   *  logging / error messages even when validation rejected it. */
+  name: string;
+  /** The `args` the dispatcher LLM passed. Empty string when the
+   *  dispatcher omitted args. */
+  args: string;
+  /** True iff the dispatch ran end-to-end without an unrecoverable
+   *  error. The dispatched agent may still have produced denied or
+   *  errored sub-calls — those surface inside `details`. */
+  ok: boolean;
+  /** One-line human-readable summary suitable for the dispatcher
+   *  LLM's tool result `content`. */
+  summary: string;
+  /** Optional structured details from the dispatched agent's own
+   *  finalize results — currently the per-component byComponent
+   *  map serialized as a plain object so a future grand-parent
+   *  can harvest it. May be undefined for error outcomes. */
+  details?: Record<string, unknown>;
+}
+export interface DispatchAgentResult {
+  dispatches: DispatchedAgentOutcome[];
+}
+
 // emit-agent-spec — dual-mode. In a direct-human (ctx.hasUI=true)
 // session, the child writes the YAML itself after an inline confirm,
 // and the parent harvest records the file path for logs. In a sub-

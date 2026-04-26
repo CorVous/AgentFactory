@@ -21,6 +21,7 @@ activate sandbox-fs automatically.
 | "draft a file and show me", "stage, then approve", "preview before writing" | `stage-write` | `sandbox_ls` (or `sandbox_ls,sandbox_read`) |
 | "write X into `<dir>`", "no approval needed", batch / scripted run | (none beyond auto-inject) | `sandbox_read,sandbox_write,sandbox_edit,sandbox_ls,sandbox_grep` |
 | "look at X, then write Y", "given what's there, produce the missing W" | `emit-summary` (phase 1), `stage-write` (phase 2) | per-phase subset |
+| "orchestrate", "fan out to several agents", "run these agents in sequence", "agent that calls other agents", "ask the composer to design X then run it" (no LLM reviewer required) | `dispatch-agent` | `dispatch_agent` (plus optional read sandbox verbs for pre-dispatch reconnaissance) |
 | "dispatch several drafters then review", "orchestrator that reviews" | `stage-write`, `review`, `run-deferred-writer` (deferred — emit GAP) | per-spawn |
 | "have an LLM check each draft before saving" (single drafter, no fan-out) | `stage-write`, `review` (deferred — emit GAP) | per-spawn |
 
@@ -60,26 +61,32 @@ If a signal points at a component the library doesn't have (e.g.
 
 ## 3. Pick composition topology
 
-`compositions.md` names two the YAML composer can emit. Apply this
-cascade in order; the first match wins:
+`compositions.md` names three the YAML composer can emit. Apply
+this cascade in order; the first match wins:
 
 ```
-if run-deferred-writer ∈ components        → GAP (orchestrator deferred)
-else if review ∈ components                → GAP (orchestrator deferred)
+if run-deferred-writer ∈ components        → GAP (RPC reviewer deferred)
+else if review ∈ components                → GAP (RPC reviewer deferred)
+else if dispatch-agent ∈ components        → single-spawn-with-dispatch
 else if emit-summary ∈ components && stage-write ∈ components
                                            → sequential-phases-with-brief
 else                                       → single-spawn
 ```
 
 The `review` / `run-deferred-writer` branches go straight to step 5
-because the YAML runner cannot drive an RPC delegator session —
-both `emit_agent_spec` and the runner reject those components. Do
-NOT try to express orchestrator shapes in YAML; the gap message
-points the user at `pi-agent-builder`, which authors RPC
-extensions from primitives.
+because the YAML runner cannot drive an RPC delegator-with-LLM-
+reviewer session — both `emit_agent_spec` and the runner reject
+those components. The dispatcher topology
+(`single-spawn-with-dispatch`) covers the "orchestrate without an
+LLM reviewer" case: the dispatcher LLM invokes other emitted
+agents (or the composer itself) via `dispatch_agent`, and each
+dispatched agent's gates render in the user's TUI as if the user
+had run it directly. Use it whenever the ask is "fan out / run in
+sequence / agent-calls-agent" and there's NO requirement for an
+LLM to gate writes — fall back to GAP if there is.
 
-If neither remaining topology fits the user's ask (e.g. the user
-wants a fire-and-forget background drafter with no parent
+If none of the remaining topologies fits the user's ask (e.g. the
+user wants a fire-and-forget background drafter with no parent
 harvesting), go to step 5.
 
 ## 4. Emit the spec
@@ -162,13 +169,39 @@ The runner enforces phase-1 ⊇ `{emit-summary}` and phase-2 ⊇
 outside phase 2 of `sequential-phases-with-brief` is left
 unsubstituted at runtime.
 
-### orchestrator (deferred — emit GAP)
+### Example (single-spawn-with-dispatch — dispatcher / meta-composer)
+
+```
+emit_agent_spec({
+  name: "<filename>",
+  slash: "<slash-command>",
+  description: "<one line>",
+  composition: "single-spawn-with-dispatch",
+  phases: [
+    {
+      components: ["dispatch-agent"],
+      tools: ["dispatch_agent"],
+      prompt: "You orchestrate sub-agents. Task: {args}.\n\nUse dispatch_agent({name, args}) to invoke any agent in .pi/agents/, or use the special name `composer` to ask the pi-agent-composer skill to design a brand-new agent on demand. Each call's gates render in the user's TUI for approval; you'll see the result in the next message before deciding the next dispatch. Reply DONE when complete."
+    }
+  ]
+})
+```
+
+The dispatcher LLM has its own chat context, so a denied
+composer spec naturally produces "what would you like to change?"
+in chat — that's the cleaner UX answer to the revise loop than
+the standalone composer's in-session prompt. Don't wire `review`
+or `run-deferred-writer` here — those are still deferred. The
+dispatcher topology is for orchestration without an LLM reviewer.
+
+### orchestrator-with-LLM-reviewer (deferred — emit GAP)
 
 `emit_agent_spec` rejects any phase containing `review` or
-`run-deferred-writer`. The runner cannot drive an RPC delegator
-session — that topology stays in `pi-agent-builder`'s scope. If
-the user's ask requires fan-out + LLM review, jump to step 5
-(GAP) instead of trying to express it in YAML.
+`run-deferred-writer`. The runner cannot drive an RPC
+delegator-with-reviewer session — that topology stays in
+`pi-agent-builder`'s scope. If the user's ask requires an LLM to
+gate writes (fan-out + verdict-driven approve/revise), jump to
+step 5 (GAP) instead of trying to express it in YAML.
 
 ## 5. Flag the gap
 

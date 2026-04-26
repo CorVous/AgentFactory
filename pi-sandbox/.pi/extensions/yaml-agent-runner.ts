@@ -4,11 +4,18 @@
 // On extension load, globs `.pi/agents/*.yml` (relative to pi's cwd, which
 // is `pi-sandbox/` for every npm-script entry point), parses each, and
 // registers one slash command per spec. Each handler dispatches the
-// declared phases via `delegate()` from `../lib/delegate.ts`, mapping
-// component names to the canonical `parentSide` exports. For
-// `sequential-phases-with-brief`, the runner harvests phase-1
-// `emit_summary` calls into a bounded brief and substitutes it into
-// phase-2's prompt as `{brief}`.
+// declared phases via `runSpec` from `../lib/dispatch-spec.ts`, which
+// wraps `delegate()` for each composition:
+//   - single-spawn — one phase
+//   - sequential-phases-with-brief — phase-1 emit_summary builds a brief
+//     for phase-2's prompt as `{brief}`
+//   - single-spawn-with-dispatch — dispatcher LLM with `dispatch_agent`
+//     can programmatically invoke other emitted agents (or the composer)
+//
+// Per-spec dispatch logic lives in `../lib/dispatch-spec.ts` so the
+// dispatch-agent component (the agent-calls-agent path) can reuse it
+// without duplicating per-composition wiring. This file is now a thin
+// glob+register layer.
 //
 // Orchestrator topology (rpc-delegator-over-concurrent-drafters) is NOT
 // runnable here — `delegate()` is single-spawn json-mode only. Specs
@@ -21,53 +28,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { parse as yamlParse } from "yaml";
-import { parentSide as EMIT_AGENT_SPEC } from "../components/emit-agent-spec.ts";
-import { parentSide as EMIT_SUMMARY } from "../components/emit-summary.ts";
-import { parentSide as STAGE_WRITE } from "../components/stage-write.ts";
-import type { EmitSummaryResult, ParentSide } from "../components/_parent-side.ts";
-import { delegate } from "../lib/delegate.ts";
-import { reservedComponentNames } from "../lib/auto-inject.ts";
+import {
+  runSpec,
+  validateSpec,
+  type AgentSpec,
+} from "../lib/dispatch-spec.ts";
+
+// Re-export shared helpers under their old names so external test
+// files keep importing from here. The implementations now live in
+// dispatch-spec.ts; this module is a thin registration layer.
+export {
+  buildBrief,
+  MAX_BRIEF_BYTES,
+  substitute,
+  validateSpec,
+  type AgentSpec,
+  type PhaseSpec,
+} from "../lib/dispatch-spec.ts";
 
 const AGENTS_DIR = path.resolve(process.cwd(), ".pi", "agents");
-export const MAX_BRIEF_BYTES = 16_000;
-
-// User-listable components. cwd-guard and sandbox-fs are NOT here —
-// they're auto-injected by delegate() via the POLICIES /
-// TOOL_PROVIDERS registries. Listing them in a phase's `components`
-// is rejected by validateSpec.
-//
-// Adding `review` / `run-deferred-writer` here would not make them
-// work — `delegate()` doesn't manage the RPC loop they require — so
-// they are rejected at validation time instead (see `validateSpec`).
-const COMPONENTS: Record<string, () => ParentSide<any, unknown>> = {
-  "stage-write": () => STAGE_WRITE,
-  "emit-summary": () => EMIT_SUMMARY,
-  "emit-agent-spec": () => EMIT_AGENT_SPEC,
-};
-
-export interface PhaseSpec {
-  name?: string;
-  components: string[];
-  /** Optional explicit child --tools allowlist for this phase. When set,
-   *  becomes the child's tool surface verbatim (passed through delegate's
-   *  `toolsOverride`). When omitted, delegate unions the components'
-   *  declared tools. The validator requires every component's declared
-   *  tools to be present in this list when set. */
-  tools?: string[];
-  prompt: string;
-}
-
-export interface AgentSpec {
-  name: string;
-  slash: string;
-  description: string;
-  composition: "single-spawn" | "sequential-phases-with-brief";
-  /** Optional skill path; passed as `--skill <path>` (with `--no-skills`
-   *  for override semantics) on every phase's child spawn. Resolved
-   *  relative to pi's cwd (the sandbox root) at registration time. */
-  skill?: string;
-  phases: PhaseSpec[];
-}
 
 export default function (pi: ExtensionAPI) {
   if (!fs.existsSync(AGENTS_DIR)) return;
@@ -100,232 +79,8 @@ export default function (pi: ExtensionAPI) {
           );
           return;
         }
-        const sandboxRoot = path.resolve(process.cwd());
-        const baseSubs = { args: args.trim(), sandboxRoot };
-
-        if (spec.composition === "single-spawn") {
-          const phase = spec.phases[0];
-          await delegate(ctx, {
-            components: phase.components.map((n) => COMPONENTS[n]()),
-            prompt: substitute(phase.prompt, baseSubs),
-            skill: spec.skill,
-            toolsOverride: phase.tools,
-          });
-          return;
-        }
-
-        // sequential-phases-with-brief
-        const scoutPhase = spec.phases[0];
-        const draftPhase = spec.phases[1];
-        const scoutResult = await delegate(ctx, {
-          components: scoutPhase.components.map((n) => COMPONENTS[n]()),
-          prompt: substitute(scoutPhase.prompt, baseSubs),
-          skill: spec.skill,
-          toolsOverride: scoutPhase.tools,
-        });
-        const summaries =
-          (scoutResult.byComponent.get("emit-summary") as
-            | EmitSummaryResult
-            | undefined)?.summaries ?? [];
-        if (summaries.length === 0) {
-          ctx.ui.notify(
-            "scout phase emitted no summaries; aborting before drafter",
-            "error",
-          );
-          return;
-        }
-        const brief = buildBrief(summaries);
-        if (Buffer.byteLength(brief, "utf8") > MAX_BRIEF_BYTES) {
-          ctx.ui.notify(
-            `brief is ${Buffer.byteLength(brief, "utf8")} bytes > ${MAX_BRIEF_BYTES} budget; aborting`,
-            "error",
-          );
-          return;
-        }
-        await delegate(ctx, {
-          components: draftPhase.components.map((n) => COMPONENTS[n]()),
-          prompt: substitute(draftPhase.prompt, { ...baseSubs, brief }),
-          skill: spec.skill,
-          toolsOverride: draftPhase.tools,
-        });
+        await runSpec(ctx, spec, args.trim());
       },
     });
   }
-}
-
-export function substitute(
-  template: string,
-  vars: Record<string, string>,
-): string {
-  return template.replace(/\{(args|sandboxRoot|brief)\}/g, (m, key) => {
-    const v = vars[key];
-    return v === undefined ? m : v;
-  });
-}
-
-/**
- * Concatenate scout-phase summaries into a `## title\nbody` block. The
- * caller is responsible for byte-budget enforcement via MAX_BRIEF_BYTES;
- * this helper is purely formatting so it can be unit tested without the
- * surrounding handler.
- */
-export function buildBrief(
-  summaries: ReadonlyArray<{ title: string; body: string }>,
-): string {
-  return summaries.map((s) => `## ${s.title}\n${s.body}`).join("\n\n");
-}
-
-export function validateSpec(raw: unknown, file: string): AgentSpec {
-  if (!raw || typeof raw !== "object") {
-    throw new Error(`${file}: not an object`);
-  }
-  const r = raw as Record<string, unknown>;
-  const name = expectString(r, "name", file);
-  const slash = expectString(r, "slash", file);
-  const description = expectString(r, "description", file);
-  const composition = expectString(r, "composition", file);
-  if (
-    composition !== "single-spawn" &&
-    composition !== "sequential-phases-with-brief"
-  ) {
-    throw new Error(
-      `${file}: composition "${composition}" not runnable here. ` +
-        `Only single-spawn and sequential-phases-with-brief are supported. ` +
-        `Use pi-agent-builder for orchestrator topologies.`,
-    );
-  }
-  const phasesRaw = r.phases;
-  if (!Array.isArray(phasesRaw) || phasesRaw.length === 0) {
-    throw new Error(`${file}: phases must be a non-empty array`);
-  }
-  const phases: PhaseSpec[] = phasesRaw.map((p, i) => {
-    if (!p || typeof p !== "object") {
-      throw new Error(`${file}: phases[${i}] is not an object`);
-    }
-    const pr = p as Record<string, unknown>;
-    const components = pr.components;
-    if (!Array.isArray(components) || components.length === 0) {
-      throw new Error(`${file}: phases[${i}].components must be non-empty`);
-    }
-    const reserved = reservedComponentNames();
-    for (const c of components) {
-      if (typeof c !== "string") {
-        throw new Error(`${file}: phases[${i}].components has non-string entry`);
-      }
-      if (c === "review" || c === "run-deferred-writer") {
-        throw new Error(
-          `${file}: phases[${i}] declares "${c}", which requires the ` +
-            `RPC-delegator topology. Not runnable via delegate(). ` +
-            `Use pi-agent-builder.`,
-        );
-      }
-      if (reserved.has(c)) {
-        throw new Error(
-          `${file}: phases[${i}].components must not list "${c}" — ` +
-            `auto-injected by the runner.`,
-        );
-      }
-      if (!COMPONENTS[c]) {
-        throw new Error(
-          `${file}: phases[${i}] unknown component "${c}". ` +
-            `Known: ${Object.keys(COMPONENTS).join(", ")}.`,
-        );
-      }
-    }
-    const promptRaw = pr.prompt;
-    if (typeof promptRaw !== "string" || promptRaw.length === 0) {
-      throw new Error(`${file}: phases[${i}].prompt must be a non-empty string`);
-    }
-    const nameRaw = pr.name;
-
-    // Optional explicit tools allowlist. When set, must be a non-empty
-    // string array AND must cover every tool each declared component
-    // contributes — otherwise a typo silently strips a component's
-    // ability to do its job. The auto-injected sandbox-fs surface is
-    // activated by `tools` containing at least one sandbox_* verb;
-    // delegate() handles that automatically, so the runner doesn't
-    // need its own intersection check.
-    let tools: string[] | undefined;
-    if (pr.tools !== undefined) {
-      if (
-        !Array.isArray(pr.tools) ||
-        pr.tools.length === 0 ||
-        !pr.tools.every((t) => typeof t === "string" && t.length > 0)
-      ) {
-        throw new Error(
-          `${file}: phases[${i}].tools must be a non-empty array of strings`,
-        );
-      }
-      tools = pr.tools as string[];
-      const declared = new Set<string>();
-      for (const c of components as string[]) {
-        const fixed = COMPONENTS[c]();
-        for (const t of fixed.tools) declared.add(t);
-      }
-      const missing = [...declared].filter((t) => !tools!.includes(t));
-      if (missing.length > 0) {
-        throw new Error(
-          `${file}: phases[${i}].tools is missing tools required by ` +
-            `declared components: ${missing.join(", ")}. Either add them ` +
-            `to the explicit list or drop the offending components.`,
-        );
-      }
-    }
-
-    return {
-      name: typeof nameRaw === "string" ? nameRaw : undefined,
-      components: components as string[],
-      tools,
-      prompt: promptRaw,
-    };
-  });
-
-  if (composition === "single-spawn" && phases.length !== 1) {
-    throw new Error(
-      `${file}: single-spawn requires exactly 1 phase, got ${phases.length}`,
-    );
-  }
-  if (
-    composition === "sequential-phases-with-brief" &&
-    phases.length !== 2
-  ) {
-    throw new Error(
-      `${file}: sequential-phases-with-brief requires exactly 2 phases, ` +
-        `got ${phases.length}`,
-    );
-  }
-
-  // Optional skill — string path resolved against pi's cwd (sandbox root).
-  // Required to be an existing directory if set.
-  let skill: string | undefined;
-  if (r.skill !== undefined) {
-    if (typeof r.skill !== "string" || r.skill.length === 0) {
-      throw new Error(`${file}: skill must be a non-empty string when set`);
-    }
-    const resolved = path.resolve(process.cwd(), r.skill);
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(resolved);
-    } catch {
-      throw new Error(`${file}: skill path does not exist: ${resolved}`);
-    }
-    if (!stat.isDirectory()) {
-      throw new Error(`${file}: skill path is not a directory: ${resolved}`);
-    }
-    skill = resolved;
-  }
-
-  return { name, slash, description, composition, skill, phases };
-}
-
-function expectString(
-  r: Record<string, unknown>,
-  key: string,
-  file: string,
-): string {
-  const v = r[key];
-  if (typeof v !== "string" || v.length === 0) {
-    throw new Error(`${file}: missing or non-string "${key}"`);
-  }
-  return v;
 }

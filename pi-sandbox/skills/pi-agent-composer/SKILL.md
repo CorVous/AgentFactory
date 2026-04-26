@@ -1,6 +1,6 @@
 ---
 name: pi-agent-composer
-description: Composes pi agents by emitting a YAML spec (components + per-phase prompts) via the `emit_agent_spec` tool. Use this skill when the user wants to compose a pi-coding-agent extension parts-first — pick whichever components the ask requires and declare them with one of two composition topologies (single-spawn, sequential-phases-with-brief). Trigger on phrases like "compose pi agent", "parts-first", "component-driven", "pi extension that uses cwd-guard / stage-write / emit-summary", or any ask of the form "build a pi agent that uses X". This skill does NOT author code — it emits a YAML spec the auto-discovered runner extension turns into a slash command. Orchestrator topology (RPC delegator + review + run-deferred-writer) is deferred — emit GAP for those asks. If the ask doesn't decompose into the runnable components, STOP and emit a GAP message so the user can fall back to `pi-agent-builder`.
+description: Composes pi agents by emitting a YAML spec (components + per-phase prompts) via the `emit_agent_spec` tool. Use this skill when the user wants to compose a pi-coding-agent extension parts-first — pick whichever components the ask requires and declare them with one of three composition topologies (single-spawn, sequential-phases-with-brief, single-spawn-with-dispatch). Trigger on phrases like "compose pi agent", "parts-first", "component-driven", "pi extension that uses cwd-guard / stage-write / emit-summary / dispatch-agent", or any ask of the form "build a pi agent that uses X". This skill does NOT author code — it emits a YAML spec the auto-discovered runner extension turns into a slash command. The dispatcher topology (single-spawn-with-dispatch + dispatch-agent) covers orchestrator-shaped asks where one LLM programmatically invokes other emitted agents (or the composer itself); the RPC delegator topology (review + run-deferred-writer) is still deferred — emit GAP for those asks. If the ask doesn't decompose into the runnable components, STOP and emit a GAP message so the user can fall back to `pi-agent-builder`.
 ---
 
 # Pi Agent Composer
@@ -51,6 +51,7 @@ template" the parent extension copy-adapts).
 | --- | --- | --- |
 | `stage-write.ts` | Stub drafter channel | The child should draft files the *parent previews and approves* before anything hits disk. Child calls `stage_write({path, content})`; parent harvests from NDJSON `tool_execution_start` events and `fs.writeFileSync`s only on user approval (or LLM verdict, when paired with `review`). |
 | `emit-summary.ts` | Stub structured-output channel | The child should return one or more *named summaries* instead of free-form assistant text. Child calls `emit_summary({title, body})`; parent harvests from NDJSON, caps byte-length per body, and persists to `.pi/scratch/<title>.md` or assembles into a brief for a follow-on phase. |
+| `dispatch-agent.ts` | Stub dispatcher channel | An orchestrator LLM should programmatically invoke other emitted agents (or the composer itself) the same way a user would. Child calls `dispatch_agent({name, args})`; parent harvests from NDJSON, looks up `<name>.yml` (or the special `composer` virtual entry), and runs the dispatched agent via `runSpec` so its gates render in the user's TUI. Pair with `composition: single-spawn-with-dispatch`. |
 | `review.ts` | Stub reviewer verdict | A reviewer LLM renders `approve`/`revise` on staged drafts. Parent harvests verdicts; `approve` ⇒ promote, `revise` ⇒ re-dispatch the drafter with the feedback string. When `review` is in the component set, the LLM is the gate — no `ctx.ui.confirm` fires. |
 | `run-deferred-writer.ts` | Stub dispatch verb | A delegator LLM dispatches one drafter per call. Parent harvests `{task}` strings and runs drafter children in parallel via `Promise.all`. Pair with `review.ts` inside an RPC delegator session. |
 
@@ -79,13 +80,14 @@ what they want changed and re-emit with their reply baked in
 
 ## Compositions catalog
 
-Two runnable topologies plus one deferred. Pick one based on the
+Three runnable topologies plus one deferred. Pick one based on the
 component set; full detail in `compositions.md`.
 
 | Topology | When | What the runner does |
 | --- | --- | --- |
 | `single-spawn` | One child, one phase. Covers recon-style, confined-drafter, and drafter-with-approval shapes. | One `delegate()` call. Reference: `pi-sandbox/.pi/extensions/deferred-writer.ts` (41-line thin agent over `delegate()`). |
 | `sequential-phases-with-brief` | Two phases run serially; the runner assembles a brief from phase 1's `emit_summary` output and substitutes it into phase 2's prompt as `{brief}`. | Two `delegate()` calls bracketing brief assembly. |
+| `single-spawn-with-dispatch` | One dispatcher LLM that programmatically invokes other emitted agents (or the composer itself) via `dispatch_agent({name, args})`. Each dispatched agent's gates render in the user's TUI as if the user had run it directly. | One `delegate()` call with `dispatch-agent` in components; the parentSide harvests dispatch intents and runs each via `runSpec` after the child exits. |
 | `rpc-delegator-over-concurrent-drafters` | Persistent RPC delegator LLM dispatches drafters via `run_deferred_writer` and reviews their drafts via `review`. | **Deferred — emit GAP.** `delegate()` is single-spawn json-mode only. Reference for hand-authored RPC: `pi-sandbox/.pi/extensions/delegated-writer.ts`. Use `pi-agent-builder`. |
 
 ## Always-on rails
@@ -105,6 +107,7 @@ worth the pause.
 | --- | --- | --- |
 | `stage_*` | Child proposes a side effect; parent holds the commit. The stub returns immediately; the parent decides later whether to persist. | `stage_write`. Future candidates: `stage_exec`, `stage_http_call`. |
 | `emit_*` | Structured-output harvest; no side effect deferred. The parent receives a named piece of structured text to display / persist / forward. | `emit_summary`. Future candidates: `emit_finding`, `emit_metric`. |
+| `dispatch_*` | Child requests a sub-pi run; parent runs it and feeds the result back into the child's next message. The dispatched run can itself contain gates, which surface in the user's TUI. | `dispatch_agent`. Future candidates: none yet — keep dispatcher concerns inside this verb until a second use case appears. |
 | role name | Purpose-specific stub. Used when no prefix family fits, typically because the tool is single-use inside one composition. | `review`, `run_deferred_writer`. Future candidate: `ask_user`. |
 
 ## Anti-patterns

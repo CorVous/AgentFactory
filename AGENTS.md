@@ -66,25 +66,34 @@ vs. author-TS":
   declarative YAML spec via the `emit_agent_spec` tool. The
   auto-discovered runner (`pi-sandbox/.pi/extensions/yaml-agent-runner.ts`)
   reads `.pi/agents/*.yml` and registers a slash command per spec,
-  dispatching each phase via `delegate()`. Covers `single-spawn`
-  and `sequential-phases-with-brief`; emits GAP for the
-  orchestrator topology. **Primary entry is
-  `npm run agent-composer:i`** — an interactive pi session that
-  loads the composer skill plus the always-on rails (cwd-guard
-  + sandbox-fs) and exposes ONLY
-  `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec` so the
-  model cannot author code, only declare a spec. Every
-  `emit_agent_spec` call routes through a `ctx.ui.confirm` dialog
-  that previews the YAML byte-for-byte before it lands; on
-  denial the LLM is instructed to ask the user (in chat) what
-  to revise, then re-emit. The print-mode form
+  dispatching each phase via `delegate()`. Covers `single-spawn`,
+  `sequential-phases-with-brief`, and `single-spawn-with-dispatch`
+  (the dispatcher topology — see "Dispatcher topology" below);
+  emits GAP for the RPC delegator-with-LLM-reviewer topology.
+  Two sanctioned entries with different chat shapes:
+    - **`npm run agent-composer:i`** *(chat with the composer
+      LLM)* — interactive pi session that loads the composer
+      skill plus the always-on rails (cwd-guard + sandbox-fs)
+      and exposes ONLY
+      `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`.
+      The composer LLM is the conversation partner; on a denied
+      `emit_agent_spec` it asks (in chat) what to revise and
+      re-emits in the same session.
+    - **`npm run agent:i -- agent-composer`** then
+      `/agent-composer "<request>"` *(chat with the outer pi)*
+      — the YAML-self-hosted slash command at
+      `pi-sandbox/.pi/agents/agent-composer.yml`. The runner
+      dispatches one composer phase via `delegate()`; the
+      `emit_agent_spec` gate renders in the outer pi's TUI and
+      the slash command finishes one-shot. To revise a denied
+      spec, re-invoke `/agent-composer` with a refined request
+      (no chat with the composer LLM itself).
+  Every `emit_agent_spec` call (in either entry) routes through
+  a `ctx.ui.confirm` dialog that previews the YAML byte-for-byte
+  before it lands. The print-mode form
   (`npm run agent-composer -- -p "..."`) ALWAYS cancels — useful
   only for cancel-path smoke testing, since `ctx.ui.confirm`
-  returns false unconditionally in print mode. The composer is
-  NOT self-hosted via a YAML slash command — one-shot
-  invocations from a stock pi session have no chat affordance
-  for revising a denied spec, so all composer use flows through
-  the chatty interactive entry.
+  returns false unconditionally in print mode.
 - **`pi-agent-builder`** — from-scratch authorship. Use when the
   composer flagged a gap, or for shapes the composer cannot
   express (custom UI widgets, compaction strategies, event-only
@@ -103,28 +112,43 @@ remains as a reference for ad-hoc TS-authoring sessions.
 ### Invoking the skill
 
 ```sh
-# Composer (primary entry — interactive chat session). The composer
-# loads its skill plus the always-on rails (cwd-guard + sandbox-fs)
-# and exposes `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`.
-# Each emit_agent_spec call confirms the YAML with the user before
-# writing; on denial the LLM asks (in chat) what to change and
-# re-emits. This is the only sanctioned composer entry — there is no
-# self-hosted YAML slash command, because one-shot invocations don't
-# have a chat affordance for revising a denied spec.
+# Composer entry A: chat WITH the composer LLM. Interactive pi
+# session loading the composer skill + always-on rails (cwd-guard
+# + sandbox-fs) and exposing
+# `sandbox_read,sandbox_ls,sandbox_grep,emit_agent_spec`. Each
+# emit_agent_spec call confirms the YAML before writing; on denial
+# the LLM asks (in chat) what to change and re-emits in the same
+# session.
 npm run agent-composer:i
+
+# Composer entry B: YAML-self-hosted slash command. The
+# `agent-composer.yml` spec at pi-sandbox/.pi/agents/ registers
+# `/agent-composer` via the YAML runner. Open the REPL and dispatch
+# one-shot:
+npm run agent:i -- agent-composer
+#   then at the prompt:
+#   /agent-composer "Drafter that stages writes for approval"
+# The emit_agent_spec gate renders in the outer pi's TUI; on denial
+# the slash command finishes — re-invoke /agent-composer with a
+# refined request to revise.
 
 # Print-mode form. ALWAYS cancels every emit (ctx.ui.confirm returns
 # false unconditionally in print mode). Use only for cancel-path
 # smoke testing — useless for the approve path.
 npm run agent-composer -- -p "Drafter that stages writes for approval"
 
-# Generic launcher — dispatch any YAML-defined agent the composer
-# already emitted, by its filename stem. Forwards to
-# `pi -p "/<slash> <args>"` from the sandbox cwd. Run with no args
-# to list available agents.
-npm run agent
-npm run agent -- some-emitted-agent "args …"
+# Generic launcher — open an interactive pi session in the sandbox
+# so the user can dispatch any YAML-defined agent the composer
+# already emitted via its slash command. Run with no args to list
+# available agents.
+#
+# The previous one-shot `npm run agent -- <name> <args>` dispatch
+# path was removed: every gate-bearing emitted agent silently
+# no-ops in print mode (`ctx.ui.confirm` returns false there).
+# Interactive mode is the only sanctioned entry.
+npm run agent                                    # list available agents
 npm run agent:i                                  # plain pi REPL in sandbox
+npm run agent:i -- some-emitted-agent            # REPL with /<slash> hint
 ```
 
 The npm scripts source `models.env` first, so `$TASK_MODEL` etc.
@@ -149,6 +173,46 @@ This runs from `pi-sandbox/` cwd so `skills/pi-agent-builder`,
 For prompts with lots of nested quotes, put the prompt in a file under
 `pi-sandbox/.pi/scratch/` and pass `@.pi/scratch/prompt.md` — cleaner
 than escaping inline `-p "..."`.
+
+### Dispatcher topology (agent-calls-agent + meta-composer)
+
+Composer-emitted agents can themselves dispatch other emitted
+agents (or the composer itself) via the `dispatch-agent` component
+plus `composition: single-spawn-with-dispatch`. The dispatcher LLM
+calls `dispatch_agent({name, args})`; the parent harvests the
+intent and runs the named agent through the same `runSpec` path
+the user-facing slash invocation uses, threading the outer `ctx`
+through so any nested gate (stage_write confirms, emit_agent_spec
+confirms) renders in the user's TUI.
+
+Two motivating use cases:
+
+- **Agent-calls-emitted-agent.** Run an orchestrator that fans
+  out to several composer-emitted drafters / recon agents. Each
+  dispatched agent's gates render for the user as if they had
+  invoked it directly.
+- **Agent-calls-composer (meta-composer).** Use the special
+  `name: "composer"` virtual entry to ask the pi-agent-composer
+  skill to design a brand-new sub-agent on demand. The
+  composer's YAML confirm dialog renders in the user's TUI; on
+  deny, the dispatcher LLM's own chat affordance becomes the
+  natural revise loop ("what would you like to change?"). This
+  is the cleaner UX answer to "how does the user revise a
+  denied composer spec?" — moving the revise loop one level UP
+  into the orchestrator's chat instead of relying on
+  `agent-composer:i`'s direct chat session.
+
+Author dispatchers via `npm run agent-composer:i` and run them
+via `npm run agent:i -- <name>`. Print-mode dispatch always
+cancels every gated sub-call (same `ctx.ui.confirm` returns-
+false-in-print rule that affects every other gated path), so
+dispatchers are interactive-only.
+
+The RPC delegator-with-LLM-reviewer topology (`review` +
+`run-deferred-writer`) remains GAP'd — the dispatcher topology
+covers fan-out *without* an LLM reviewer; revise loops happen
+at the dispatcher LLM's chat layer, not via an in-flight
+reviewer. Use `pi-agent-builder` for the RPC reviewer shape.
 
 ### Where agent code lives
 
@@ -214,9 +278,9 @@ pattern:
    case (e.g. `name: "../../etc/x"` or `relPath: "/etc/passwd"`)
    fails closed before any fs syscall.
 3. Cite the existing privileged components (`cwd-guard.ts`,
-   `sandbox-fs.ts`, `stage-write.ts`, `emit-agent-spec.ts`) in
-   your PR description so the reviewer knows what pattern you're
-   matching.
+   `sandbox-fs.ts`, `stage-write.ts`, `emit-agent-spec.ts`,
+   `dispatch-agent.ts`) in your PR description so the reviewer
+   knows what pattern you're matching.
 
 **Parent-side helpers.** A component can also expose a parent-side
 `ParentSide<S, R>` for `delegate()` to consume. Parent-side code
@@ -529,8 +593,8 @@ generation), a separate class of issues surfaces:
     loaded into child pi processes via `pi -e <abs path>`, not
     auto-discovered by the parent. Two universal rails (cwd-guard
     + sandbox-fs) plus role stubs (stage-write, emit-summary,
-    review, run-deferred-writer, emit-agent-spec). See
-    `stage-write.ts` for the pure-stub pattern and the
+    review, run-deferred-writer, emit-agent-spec, dispatch-agent).
+    See `stage-write.ts` for the pure-stub pattern and the
     "Authoring a new component" section above for the full
     privileged-vs-stub guide. Distinct from pi's per-cwd
     `.pi/child-tools/` convention (which a generated extension
@@ -539,6 +603,9 @@ generation), a separate class of issues surfaces:
     `pi-sandbox/.pi/lib/component-policy.ts`.
   - `pi-sandbox/.pi/lib/` — runtime support for the components.
     `delegate.ts` (the parent-side runner shared by extensions),
+    `dispatch-spec.ts` (shared per-spec dispatch engine — the
+    YAML runner and dispatch-agent's parentSide both consume
+    runSpec/validateSpec from here),
     `policies.ts` + `tool-providers.ts` (registries of universal
     + conditional rails), `auto-inject.ts` (the augmentation
     logic the runner calls), `component-policy.ts` (path

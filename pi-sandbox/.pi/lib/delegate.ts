@@ -53,8 +53,9 @@ const FORBIDDEN_TOOLS = new Set([
 export interface DelegateOpts {
   components: ReadonlyArray<ParentSide<any, unknown>>;
   prompt: string;
-  /** Override the tier-inferred model. Default: `$LEAD_MODEL` if review or
-   *  run-deferred-writer are in the component set, else `$TASK_MODEL`. */
+  /** Override the tier-inferred model. Default: `$LEAD_MODEL` if review,
+   *  run-deferred-writer, or dispatch-agent are in the component set
+   *  (all orchestrator-class roles), else `$TASK_MODEL`. */
   model?: string;
   /** Extra tokens to union into the child's --tools CSV. Rarely needed. */
   extraTools?: string[];
@@ -220,7 +221,10 @@ function resolveModel(
   names: Set<string>,
 ): string | undefined {
   if (opts.model) return opts.model;
-  const needsLead = names.has("review") || names.has("run-deferred-writer");
+  const needsLead =
+    names.has("review") ||
+    names.has("run-deferred-writer") ||
+    names.has("dispatch-agent");
   const tierVar = needsLead ? "LEAD_MODEL" : "TASK_MODEL";
   const value = process.env[tierVar];
   if (!value) {

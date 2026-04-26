@@ -287,6 +287,78 @@ describe("validatePhases — sequential-phases-with-brief", () => {
   });
 });
 
+describe("validatePhases — single-spawn-with-dispatch", () => {
+  it("accepts a phase with dispatch-agent in components and dispatch_agent in tools", () => {
+    assert.doesNotThrow(() =>
+      validatePhases("single-spawn-with-dispatch", [
+        { components: ["dispatch-agent"], tools: ["dispatch_agent"] },
+      ]),
+    );
+  });
+
+  it("rejects a phase without dispatch-agent in components", () => {
+    assert.throws(
+      () =>
+        validatePhases("single-spawn-with-dispatch", [
+          { components: ["stage-write"], tools: ["dispatch_agent", "stage_write"] },
+        ]),
+      /must include `dispatch-agent` in components/,
+    );
+  });
+
+  it("rejects a phase without dispatch_agent in tools", () => {
+    assert.throws(
+      () =>
+        validatePhases("single-spawn-with-dispatch", [
+          { components: ["dispatch-agent"], tools: ["sandbox_ls"] },
+        ]),
+      /must include `dispatch_agent` in tools/,
+    );
+  });
+
+  it("rejects a phase missing the tools field entirely", () => {
+    assert.throws(
+      () =>
+        validatePhases("single-spawn-with-dispatch", [
+          { components: ["dispatch-agent"] },
+        ]),
+      /must include `dispatch_agent` in tools/,
+    );
+  });
+
+  it("rejects more than one phase", () => {
+    assert.throws(
+      () =>
+        validatePhases("single-spawn-with-dispatch", [
+          { components: ["dispatch-agent"], tools: ["dispatch_agent"] },
+          { components: ["dispatch-agent"], tools: ["dispatch_agent"] },
+        ]),
+      /single-spawn-with-dispatch requires exactly 1 phase/,
+    );
+  });
+
+  it("rejects dispatch-agent declared in single-spawn (wrong composition)", () => {
+    assert.throws(
+      () =>
+        validatePhases("single-spawn", [
+          { components: ["dispatch-agent"], tools: ["dispatch_agent"] },
+        ]),
+      /requires composition `single-spawn-with-dispatch`/,
+    );
+  });
+
+  it("rejects dispatch-agent declared in sequential-phases-with-brief", () => {
+    assert.throws(
+      () =>
+        validatePhases("sequential-phases-with-brief", [
+          { components: ["emit-summary", "dispatch-agent"], tools: ["dispatch_agent"] },
+          { components: ["stage-write"] },
+        ]),
+      /requires composition `single-spawn-with-dispatch`/,
+    );
+  });
+});
+
 describe("validatePhases — RPC-only components", () => {
   it("rejects review with a GAP-pointing message", () => {
     assert.throws(
@@ -334,7 +406,11 @@ describe("COMPOSITION_NAMES", () => {
   it("exposes the canonical set the YAML composer accepts", () => {
     assert.deepEqual(
       [...COMPOSITION_NAMES].sort(),
-      ["sequential-phases-with-brief", "single-spawn"],
+      [
+        "sequential-phases-with-brief",
+        "single-spawn",
+        "single-spawn-with-dispatch",
+      ],
     );
   });
 });
