@@ -1,14 +1,14 @@
 // agent-footer — replaces pi's default footer with one that fits the
 // `npm run agent` rails:
-//   line 1, left:  `sandbox: <root>` (the `--sandbox-root` flag value,
-//                  with home replaced by ~), instead of pi's `cwd (branch)`. The
-//                  agent can't escape the sandbox so the host cwd /
-//                  branch are misleading noise.
-//   line 1, right: `tools: <name1, name2, ...>` from pi.getActiveTools(),
-//                  i.e. the recipe's `tools:` allowlist plus any tools
+//   line 1, left:  the `--sandbox-root` flag value (home replaced by
+//                  ~), instead of pi's `cwd (branch)`. The agent can't
+//                  escape the sandbox so the host cwd / branch are
+//                  misleading noise.
+//   line 1, right: comma-separated active tools from pi.getActiveTools()
+//                  — the recipe's `tools:` allowlist plus any tools
 //                  registered by extensions. Truncated with an ellipsis
 //                  on narrow terminals; dropped entirely if there is no
-//                  room for a 2-column gap after the sandbox label.
+//                  room for a 2-column gap after the sandbox path.
 //   line 2, left:  `<bar>| $cost` — 5-cell eighths-block context-usage
 //                  bar (warning tint > 70%, error tint > 90%), followed
 //                  by the accumulated assistant cost from session
@@ -59,14 +59,14 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setFooter((_tui, theme, footerData) => ({
       invalidate() {},
       render(width: number): string[] {
-        const sandboxLabel = `sandbox: ${displayRoot}`;
+        const sandboxLabel = displayRoot;
         let activeTools: string[] = [];
         try {
           activeTools = pi.getActiveTools();
         } catch {
           // getActiveTools may not be ready in some session states.
         }
-        const toolsLabel = activeTools.length > 0 ? `tools: ${activeTools.join(", ")}` : "";
+        const toolsLabel = activeTools.length > 0 ? activeTools.join(", ") : "";
         const sbW = visibleWidth(sandboxLabel);
         const tlW = visibleWidth(toolsLabel);
         const minGap = 2;

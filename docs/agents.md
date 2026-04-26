@@ -27,8 +27,8 @@ agent gets five baseline extensions:
   than a tier var). Each flag can be passed on the `npm run agent --`
   line to override the recipe (passthrough flags come after
   recipe-derived ones, so the CLI value wins).
-- `agent-footer` — replaces pi's default footer. Line 1 shows
-  `sandbox: <root>` on the left and `tools: <name1, name2, ...>` (from
+- `agent-footer` — replaces pi's default footer. Line 1 shows the
+  sandbox root on the left and the comma-separated active tools (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
   extension-registered tools) on the right. Line 2 shows `$cost` and
   the context-usage percent on the left, model id on the right —
