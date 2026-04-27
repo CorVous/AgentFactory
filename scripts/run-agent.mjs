@@ -187,7 +187,11 @@ const busRoot =
   args.agentBus ||
   process.env.PI_AGENT_BUS_ROOT ||
   path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
-piArgs.push("--agent-bus-root", busRoot);
+// Only push --agent-bus-root when agent-bus is loaded; otherwise pi
+// rejects the flag as unknown.
+const recipeExtensions = Array.isArray(recipe.extensions) ? recipe.extensions : [];
+const usesBus = recipeExtensions.includes("agent-bus");
+if (usesBus) piArgs.push("--agent-bus-root", busRoot);
 if (typeof recipe.description === "string" && recipe.description.trim()) {
   piArgs.push("--agent-description", recipe.description.trim());
 }
