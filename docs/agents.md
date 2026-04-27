@@ -34,10 +34,7 @@ agent gets six baseline extensions:
   `approve_delegation` are filtered out of the tool list because every
   delegating agent has them — they tell the user nothing about what
   the recipe can actually do, and the agents-it-can-spawn list on
-  line 3 already conveys delegation capability. Line 2 shows `$cost`
-  and the context-usage percent on the left, model id on the right —
-  pi's default token-flow stats (↑input, ↓output, cache R/W, context
-  window size) are intentionally dropped. Line 3 (when populated)
+  line 2 already conveys delegation capability. Line 2 (when populated)
   shows the recipe's `skills:` list on the left and the recipes this
   agent may `delegate` to on the right — both as plain comma-separated
   lists, no labels, matching line 1's bare style. Read from the
@@ -45,7 +42,10 @@ agent gets six baseline extensions:
   (pi.getFlag is scoped per-extension, so cross-extension flag reads
   have to bounce through env, mirroring how `agent-status-reporter`
   reads `--rpc-sock`); the line is skipped entirely when both lists
-  are empty. Line 4 is the extension-status line.
+  are empty. Line 3 shows `$cost` and the context-usage percent on
+  the left, model id on the right — pi's default token-flow stats
+  (↑input, ↓output, cache R/W, context window size) are intentionally
+  dropped. Line 4 is the extension-status line.
 - `hide-extensions-list` — strips pi's `[Extensions]` section (added by
   `showLoadedResources` to the chat history at startup) since the
   agent-footer already shows the active tools and the path listing is

@@ -13,14 +13,7 @@
 //                  Truncated with an ellipsis on narrow terminals;
 //                  dropped entirely if there is no room for a 2-column
 //                  gap after the sandbox path.
-//   line 2, left:  `<bar>| $cost` — 5-cell eighths-block context-usage
-//                  bar (warning tint > 70%, error tint > 90%), followed
-//                  by the accumulated assistant cost from session
-//                  history. pi's default token-flow stats (↑input,
-//                  ↓output, cache R/W, /<window-size>) are
-//                  intentionally dropped.
-//   line 2, right: model id.
-//   line 3 (opt):  the recipe's `skills:` list on the left and the
+//   line 2 (opt):  the recipe's `skills:` list on the left and the
 //                  recipes this agent may `delegate` to on the right
 //                  (comma-separated, no labels — matches line 1's
 //                  bare-list style). Read from the PI_AGENT_SKILLS /
@@ -29,6 +22,13 @@
 //                  cross-extension flag reads have to bounce through
 //                  env, mirroring how agent-status-reporter reads
 //                  --rpc-sock). Skipped when both lists are empty.
+//   line 3, left:  `<bar>| $cost` — 5-cell eighths-block context-usage
+//                  bar (warning tint > 70%, error tint > 90%), followed
+//                  by the accumulated assistant cost from session
+//                  history. pi's default token-flow stats (↑input,
+//                  ↓output, cache R/W, /<window-size>) are
+//                  intentionally dropped.
+//   line 3, right: model id.
 //   line 4 (opt):  extension status texts set via ctx.ui.setStatus().
 
 import os from "node:os";
@@ -53,7 +53,7 @@ function sanitizeStatusText(text: string): string {
 // Tools that every delegating agent gets via the implicit-wire in
 // run-agent.mjs. Always-on tools tell the user nothing about the
 // recipe, so we drop them from the line-1 tool list — agents-it-can-
-// spawn is conveyed on line 3 instead.
+// spawn is conveyed on line 2 instead.
 const HIDDEN_TOOLS = new Set(["delegate", "approve_delegation"]);
 
 function parseEnvList(value: string | undefined): string[] {
@@ -152,12 +152,14 @@ export default function (pi: ExtensionAPI) {
 
         const dimLeft = theme.fg("dim", left);
         const dimRest = theme.fg("dim", statsLine.slice(left.length));
-        const lines = [pwdLine, dimLeft + dimRest];
+        const lines = [pwdLine];
 
         if (skills.length > 0 || agents.length > 0) {
           const composedLine = renderLeftRight(width, skills.join(", "), agents.join(", "), "…");
           lines.push(truncateToWidth(theme.fg("dim", composedLine), width, theme.fg("dim", "...")));
         }
+
+        lines.push(dimLeft + dimRest);
 
         const statuses = footerData.getExtensionStatuses();
         if (statuses.size > 0) {
