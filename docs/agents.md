@@ -200,3 +200,101 @@ When an extension delegates to a child `pi` process:
   `$LEAD_HARE_MODEL` for reviewers, `$RABBIT_SAGE_MODEL` for orchestration.
 
 See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
+
+## Multi-agent: spawn vs. talk
+
+Two orthogonal extensions cover the two distinct relationships a recipe
+might want with another agent. Neither requires a YAML schema change —
+both opt in via `extensions:` + `tools:`. A recipe can load either, both,
+or neither.
+
+### `agent-spawn` — blocking delegation (ephemeral, anonymous)
+
+Registers the `delegate({recipe, task, sandbox?, timeout_ms?})` tool. The
+parent calls `delegate`, the runner shells out
+`node scripts/run-agent.mjs <recipe> --sandbox <dir> -p <task>` as a
+child process, captures stdout (truncated to 20 KB), forwards the
+parent's `AbortSignal`, and returns when the child exits. The child runs
+through the same runner as a normal `npm run agent`, so it inherits the
+full baseline rails (sandbox, no-edit if its recipe loads it). Default
+timeout is 5 minutes.
+
+Use this for focused subtasks where you want a structured result. The
+child has no name on the bus and dies after the call. Worked example:
+`pi-sandbox/agents/delegator.yaml`.
+
+### `agent-bus` — async peer messaging (long-lived, named)
+
+Registers three tools and one CLI flag:
+
+- `agent_send({to, body, in_reply_to?})` — fire-and-forget. Connects to
+  `${BUS_ROOT}/${to}.sock`, writes one JSON envelope, returns
+  `{msg_id, delivered}`. `peer offline` / `timeout` are normal failure
+  modes (no retry, no offline queue).
+- `agent_inbox({since_ts?, peek?})` — pull buffered envelopes. By
+  default returned messages are cleared from the inbox; `peek=true`
+  keeps them.
+- `agent_list()` — probe `${BUS_ROOT}/*.sock` for live peers; clean up
+  stale socks left by crashed peers.
+- `--agent-bus-root <dir>` — the rendezvous directory. Resolution
+  order: this flag → `$PI_AGENT_BUS_ROOT` → `~/.pi-agent-bus/<basename
+  of sandbox-root>`. The runner sets the flag automatically and accepts
+  `--agent-bus <dir>` (parallel to `--sandbox <dir>`) to override.
+
+Each agent listens on `${BUS_ROOT}/${name}.sock` (name comes from
+`--agent-name`, which the runner sets from the recipe filename or a
+passthrough override). Incoming messages buffer in an in-memory inbox
+and, between turns, are pushed into the agent's next turn via
+`pi.sendUserMessage("[from <peer>] <body>")`. Mid-turn arrivals are
+held in a `pendingDuringTurn` queue and drained at `turn_end` so the
+live LLM call is never interrupted.
+
+The bus root deliberately lives **outside** `--sandbox-root` so the
+`sandbox` extension's path-rejection doesn't trip on socket paths. The
+bus extension never invokes path-bearing built-in tools, so the sandbox
+allowlist is unaffected.
+
+Stale-sock handling: on bind, `EADDRINUSE` triggers a probe-connect; if
+the previous owner refuses, the sock is unlinked and bind retried once.
+A live peer at the same name fails loudly. On send, `ECONNREFUSED` /
+`ENOENT` opportunistically unlinks the dead sock and returns
+`{delivered:false, reason:"peer offline"}`.
+
+v1 defaults intentionally deferred to later: no auth (filesystem perms
+only), no offline queue, no synthesised request/response correlation
+beyond the optional `in_reply_to` field, hard-fail on name collision.
+
+Worked example: `pi-sandbox/agents/peer-chatter.yaml`.
+
+### Why two systems and not one
+
+Spawn is a blocking function call (ephemeral, anonymous handle,
+structured return); peer-talk is async messaging (long-lived, stable
+name, `pi.sendUserMessage` delivery). Forcing delegation through the bus
+would make every subtask allocate a name and burn turns polling an
+inbox; forcing peers through `createAgentSession` doesn't work at all
+since peers are independent processes. Keeping them as two independent
+extensions lets recipes mix exactly the relationship they need.
+
+### Verifying the multi-agent rails under tmux
+
+Same pattern as the rails-debug section above. Two panes:
+
+```sh
+set -a; source models.env; set +a
+tmux new-session -d -s bus-test -x 200 -y 50 \
+  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p1 -- --agent-name planner'
+tmux split-window -t bus-test \
+  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a'
+sleep 5
+tmux send-keys -t bus-test:0.0 'call agent_list, then agent_send to worker-a with body "ping"' Enter
+sleep 30
+tmux capture-pane -t bus-test:0.1 -p   # expect "[from planner] ping" on next user turn
+tmux send-keys -t bus-test:0.0 '/quit' Enter
+tmux send-keys -t bus-test:0.1 '/quit' Enter
+```
+
+For `delegate`, run `npm run agent -- delegator --sandbox /tmp/p` and
+prompt *"delegate to recipe peer-chatter with task 'list /tmp'"* — the
+child spawns, runs in print mode, exits, and the captured stdout comes
+back as the tool result.
