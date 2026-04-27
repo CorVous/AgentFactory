@@ -217,28 +217,37 @@ The runner implicitly loads `agent-spawn` and adds `delegate` +
 `approve_delegation` to the tool allowlist, and pushes
 `--allowed-agents deferred-writer` so the child recipe is locked.
 
-Flow per batch:
+Flow per batch (or per parallel set of batches):
 
 1. Foreman calls `delegate({recipe: "deferred-writer", task: "…"})`.
+   Returns immediately with a `delegation_id`; the child is spawning
+   in the background. Repeat for each independent batch before
+   collecting any results — all children run in parallel.
 2. The runner spawns a child `pi -p` with `--rpc-sock <path>`.
 3. Child drafts in memory, hits `agent_end`. Its `deferred-confirm`
    has no `ctx.hasUI` (print mode) but does have `--rpc-sock`, so
    `requestHumanApproval` opens the socket and sends
    `request-approval` with the preview.
-4. Foreman's per-call RPC server stashes the request in the
-   pending-delegations registry; `delegate` returns the preview +
-   `delegation_id` to the foreman LLM.
-5. Foreman LLM reads the preview, decides:
+4. The foreman's per-call RPC server receives the request. The child
+   remains paused on the open socket.
+5. Foreman calls `approve_delegation({id})` (no decision yet). Blocks
+   until the child settles, then returns the preview.
+6. Foreman LLM reads the preview, decides:
    - `approve_delegation({id, approved: true})` — auto-approve.
    - `approve_delegation({id, approved: false})` — discard.
    - `approve_delegation({id, escalate: true})` — ask the human via
      `requestHumanApproval`, which renders `ctx.ui.confirm` in the
      foreman's terminal (or recursively forwards if the foreman is
      itself a child).
-6. The decision is sent over the open RPC connection. Child resumes,
+7. The decision is sent over the open RPC connection. Child resumes,
    applies (or discards) the drafts, prints `[deferred] writes
    applied: …` to stdout, exits.
-7. `approve_delegation` returns the captured stdout to the foreman.
+8. `approve_delegation` returns the captured stdout (plus the preview
+   as an audit trail) to the foreman.
+
+Shortcut: `approve_delegation({id, approved: true})` combines steps 5–6
+into one call — it blocks until the child settles, sends the decision
+immediately, and includes the preview in the tool result for audit.
 
 A foreman that is itself launched as a child — e.g.
 `delegator → writer-foreman → deferred-writer` — works the same way:
@@ -294,31 +303,31 @@ might want with another agent. `agent-spawn` is implicitly wired by the
 `agents:` recipe field; `agent-bus` is opt-in via `extensions:` +
 `tools:`. A recipe can use either, both, or neither.
 
-### `agent-spawn` — blocking delegation with parent-driven approval
+### `agent-spawn` — non-blocking delegation with parent-driven approval
 
 Wired implicitly when the recipe declares `agents: [a, b, …]`. Registers
 two tools:
 
 - `delegate({recipe, task, sandbox?, timeout_ms?})` — spawns
   `node scripts/run-agent.mjs <recipe> --sandbox <dir> -p <task>
-  -- --rpc-sock <path>` as a subprocess, captures stdout (truncated to
-  20 KB), and races two outcomes: child exits without queuing drafts
-  (returns captured stdout, today's behavior) OR child sends a
-  `request-approval` over the per-call RPC socket (returns the preview
-  + a `delegation_id` to the parent LLM with the child paused).
-  Forwards the parent's `AbortSignal`. Default timeout is 5 minutes.
-- `approve_delegation({id, approved, escalate?, comment?})` — resumes
-  a paused delegation. Pass `approved: true|false` for the parent LLM
-  to decide directly; pass `escalate: true` to ask the human via
-  `requestHumanApproval` (which recurses up the parent chain if the
-  parent itself is a child via `--rpc-sock`). Returns the child's
-  final captured stdout, including the `[deferred] writes applied: …`
-  lines from the apply phase.
-
-Why two tools: putting the parent LLM in the approval loop requires
-returning the preview to the LLM mid-delegation; a single blocking
-`delegate` can't do that. Splitting the flow gives the LLM full
-control without inventing new pi primitives.
+  -- --rpc-sock <path>` as a subprocess and returns immediately with
+  a `delegation_id`. The child runs in the background. The parent LLM
+  can call `delegate` multiple times before calling `approve_delegation`
+  for any of them — all children spawn in parallel. Default timeout is
+  5 minutes (measured from the `delegate` call).
+- `approve_delegation({id, approved?, escalate?, comment?})` — the join
+  point. Blocks until the child settles, then:
+  - **Child exited without drafts**: returns captured stdout; no
+    decision needed.
+  - **Child paused, no decision given**: returns the preview so the
+    parent LLM can review it. Call again with `approved: true|false`
+    to send the decision.
+  - **Child paused, decision given**: sends the decision, waits for
+    the child to finish, returns captured stdout plus the preview as
+    an audit trail.
+  - **`escalate: true`**: asks the human via `requestHumanApproval`
+    (recurses up the parent chain if the parent itself is a child via
+    `--rpc-sock`).
 
 **Pre-flight checks** in `delegate.execute` (in order):
 
@@ -333,14 +342,14 @@ control without inventing new pi primitives.
    root '…'`.
 
 **Pending delegations** are tracked in a globalThis registry
-(`__pi_delegate_pending__`) keyed by `delegation_id`. Each entry
-holds the child process handle, the open RPC connection, the
-preview, and the timeout budget. A watchdog enforces `timeout_ms`
-across the whole life of the delegation (delegate + LLM thinking +
-approve_delegation); exceeding it sends `approved: false` to the
-child and kills the process. `process.once("exit")` cleanup walks
-the registry, denies all pending requests, kills surviving children,
-and unlinks sockets.
+(`__pi_delegate_pending__`) keyed by `delegation_id`. Each entry holds
+the child process handle, a `settled` promise (resolves when the child
+exits or sends a `request-approval`), and a `resolvedConn` field set
+once the child pauses. A watchdog enforces `timeout_ms` across the whole
+life of the delegation (delegate + LLM thinking + approve_delegation);
+exceeding it sends `approved: false` to the child (if paused) and kills
+the process. `process.once("exit")` cleanup walks the registry, denies
+all pending requests, kills surviving children, and unlinks sockets.
 
 **Sockets** are per-call at
 `${os.tmpdir()}/pi-rpc-${pid}-${randomUUID()}.sock`, deliberately
@@ -429,7 +438,7 @@ For non-paused `delegate`, run `npm run agent -- delegator --sandbox
 captured stdout comes back as the tool result.
 
 For the **parent-driven approval** flow, drive `writer-foreman` end-
-to-end:
+to-end (single file):
 
 ```sh
 set -a; source models.env; set +a
@@ -438,13 +447,23 @@ tmux new-session -d -s foreman -x 200 -y 50 \
   'AGENT_DEBUG=1 npm run agent -- writer-foreman --sandbox /tmp/foreman-test'
 sleep 5
 tmux send-keys -t foreman \
-  'delegate to deferred-writer with task "draft hello.txt with text Hi"' Enter
-sleep 90                              # foreman delegates, child pauses,
-                                      # foreman reads preview, calls
-                                      # approve_delegation({approved: true})
+  'draft hello.txt with text "Hi"' Enter
+sleep 90                              # delegate returns immediately (non-blocking),
+                                      # child runs in background, foreman calls
+                                      # approve_delegation({id, approved: true})
 tmux capture-pane -t foreman -p       # expect "[deferred] writes applied: hello.txt"
 ls /tmp/foreman-test/hello.txt        # file present with "Hi"
 tmux send-keys -t foreman '/quit' Enter
+```
+
+For **parallel dispatch** (multiple files at once):
+
+```sh
+tmux send-keys -t foreman \
+  'draft two files in parallel: hello.txt saying "Hi" and world.txt saying "World"' Enter
+sleep 120   # foreman calls delegate twice (both children spawn in parallel),
+            # then approve_delegation for each
+ls /tmp/foreman-test/   # hello.txt and world.txt both present
 ```
 
 Negative cases worth probing manually:

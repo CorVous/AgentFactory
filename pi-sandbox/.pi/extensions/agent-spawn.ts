@@ -1,24 +1,27 @@
-// agent-spawn extension — blocking delegation to a focused child agent
+// agent-spawn extension — non-blocking delegation to a focused child agent
 // with parent-driven approval.
 //
 // Two tools:
 //   - `delegate({recipe, task, sandbox?, timeout_ms?})` spawns
-//     `node scripts/run-agent.mjs <recipe> -p <task>` as a subprocess.
-//     If the child exits without queuing any deferred-* drafts, returns
-//     the captured stdout (today's behavior). If the child queues drafts,
-//     the child pauses on the per-call RPC socket, the parent records
-//     the pending delegation in a globalThis registry, and `delegate`
-//     returns the preview + delegation_id so the parent LLM can review
-//     and decide.
-//   - `approve_delegation({id, approved, escalate?, comment?})` resumes
-//     a paused child. If escalate=true, the parent's own
-//     requestHumanApproval primitive is used (which routes to
-//     ctx.ui.confirm locally OR forwards up the parent's --rpc-sock if
-//     the parent itself is a child).
+//     `node scripts/run-agent.mjs <recipe> -p <task>` as a subprocess and
+//     returns immediately with a `delegation_id`. The child runs in the
+//     background. Call `approve_delegation` when ready to collect the result.
+//     Multiple `delegate` calls in sequence start multiple children in parallel.
+//   - `approve_delegation({id, approved?, escalate?, comment?})` is the join
+//     point. Blocks until the child settles (exits or pauses with drafts).
+//     - If child exited without queuing drafts: returns captured stdout.
+//     - If child paused with drafts queued and no decision given: returns the
+//       preview so the parent LLM can review before deciding. Call again with
+//       approved=true/false to send the decision.
+//     - If child paused and approved/escalate is given: sends the decision,
+//       waits for the child to finish applying/discarding, and returns captured
+//       stdout. The preview is included in the result for audit.
+//     - escalate=true asks the human (or forwards up --rpc-sock chain) instead
+//       of using the approved parameter.
 //
-// Why two tools: putting the parent LLM in the approval loop requires
-// returning the preview to the LLM mid-delegation. A single blocking
-// `delegate` can't do that.
+// Why non-blocking delegate: the parent LLM can kick off N children in
+// sequence without waiting for each to settle, so all N run in parallel.
+// approve_delegation is the join point that waits and collects.
 //
 // Why subprocess and not in-process createAgentSession: the parent's
 // extension surface (including agent-bus's socket binding) would re-fire
@@ -52,12 +55,15 @@ const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 const MAX_OUTPUT_BYTES = 20_000;
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 
+/** Discriminated union resolved by the settlement Promise. */
+type SpawnOutcome =
+  | { kind: "exit"; exit: { code: number | null; signal: NodeJS.Signals | null } }
+  | { kind: "rpc"; conn: net.Socket; req: ApprovalRequest };
+
 interface PendingDelegation {
   id: string;
   recipe: string;
   child: ChildProcess;
-  conn: net.Socket;
-  request: ApprovalRequest;
   startedAt: number;
   timeoutMs: number;
   /** Captured stdout so far (drained continuously even while paused). */
@@ -66,12 +72,23 @@ interface PendingDelegation {
   stderrSoFar: { value: string };
   /** Resolved when the child has exited, with the final exit info. */
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
-  /** Watchdog timer; cleared when approve_delegation runs. */
+  /** Watchdog timer; cleared when approve_delegation sends a decision. */
   timer: NodeJS.Timeout;
   /** RPC server (per-call); closed after the child exits. */
   server: net.Server;
   /** Socket path; unlinked after close. */
   sockPath: string;
+  /**
+   * Resolves when the child either exits cleanly (no drafts) or sends a
+   * request-approval over the RPC socket (drafts queued, child paused).
+   */
+  settled: Promise<SpawnOutcome>;
+  /**
+   * Set synchronously once settled resolves as "rpc". Lets the synchronous
+   * process-exit cleanup walker and watchdog send the denial without awaiting
+   * the settled promise inside a sync callback.
+   */
+  resolvedConn?: net.Socket;
 }
 
 interface SpawnState {
@@ -124,11 +141,13 @@ function ensureProcessCleanup(state: SpawnState): void {
   state.cleanupRegistered = true;
   process.once("exit", () => {
     for (const p of state.pending.values()) {
-      try {
-        p.conn.write(JSON.stringify({ type: "approval-result", approved: false }) + "\n");
-        p.conn.destroy();
-      } catch {
-        /* noop */
+      if (p.resolvedConn) {
+        try {
+          p.resolvedConn.write(JSON.stringify({ type: "approval-result", approved: false }) + "\n");
+          p.resolvedConn.destroy();
+        } catch {
+          /* noop */
+        }
       }
       killSafe(p.child);
       try {
@@ -142,8 +161,8 @@ function ensureProcessCleanup(state: SpawnState): void {
   });
 }
 
-function formatPreview(p: PendingDelegation, header: string): string {
-  return `${header}\n\nrecipe: ${p.recipe}\ndelegation_id: ${p.id}\n\n${p.request.preview}`;
+function formatPreview(entry: PendingDelegation, req: ApprovalRequest): string {
+  return `${req.title}\n\nrecipe: ${entry.recipe}\ndelegation_id: ${entry.id}\n\n${req.preview}`;
 }
 
 function finalText(p: PendingDelegation, exit: { code: number | null; signal: NodeJS.Signals | null }): string {
@@ -171,14 +190,12 @@ export default function (pi: ExtensionAPI) {
     name: "delegate",
     label: "Delegate",
     description:
-      "Spawn a child agent from a recipe in pi-sandbox/agents/, hand it a " +
-      "task, and run it. If the child exits without queuing any deferred " +
-      "drafts, returns the captured stdout. If the child queues drafts, " +
-      "the child pauses; this tool returns the preview and a " +
-      "`delegation_id`. Call `approve_delegation` to resume the child " +
-      "with your approval decision (or escalate to the human). Recipe " +
-      "must be in this agent's allowed list (set via the recipe's " +
-      "`agents:` field).",
+      "Spawn a child agent from a recipe in pi-sandbox/agents/ and hand it a task. " +
+      "Returns immediately with a `delegation_id`; the child runs in the background. " +
+      "Call `approve_delegation` (with the id) when you're ready to collect the result " +
+      "or send your approval decision. You may call `delegate` multiple times in " +
+      "sequence before calling `approve_delegation` — all children spawn in parallel. " +
+      "Recipe must be in this agent's allowed list (set via the recipe's `agents:` field).",
     parameters: Type.Object({
       recipe: Type.String({
         description: "Name of a recipe in pi-sandbox/agents/ (without .yaml suffix).",
@@ -327,55 +344,33 @@ export default function (pi: ExtensionAPI) {
         child.once("exit", (code, sig) => resolve({ code, signal: sig }));
       });
 
-      // Race child-exits-without-RPC against child-requests-approval.
-      const sentinel = await Promise.race([
+      // Build the settlement promise but do NOT await it here — delegate
+      // returns immediately so the parent LLM can start more children.
+      const settled: Promise<SpawnOutcome> = Promise.race([
         exited.then((exit) => ({ kind: "exit" as const, exit })),
-        connectionReady.then((ready) => ({ kind: "rpc" as const, ready })),
+        connectionReady.then((ready) => ({ kind: "rpc" as const, conn: ready.conn, req: ready.req })),
       ]);
 
-      if (sentinel.kind === "exit") {
-        // Child completed with no drafts queued. Today's behavior.
-        signal?.removeEventListener("abort", onAbort);
-        try {
-          server.close();
-        } catch {
-          /* noop */
-        }
-        unlinkSafe(sockPath);
-        const tail = stdoutBuf.truncated ? "\n…(output truncated)" : "";
-        const text = stdoutBuf.value.length > 0 ? `${stdoutBuf.value}${tail}` : stderrBuf.value || "(no output)";
-        return {
-          content: [{ type: "text", text }],
-          details: {
-            recipe: params.recipe,
-            paused: false,
-            exit_code: sentinel.exit.code,
-            exit_signal: sentinel.exit.signal,
-            stdout_bytes: stdoutBuf.value.length,
-            stderr_bytes: stderrBuf.value.length,
-            truncated: stdoutBuf.truncated,
-          },
-        };
-      }
-
-      // Child requested approval. Park the delegation; return preview to LLM.
+      // Watchdog: if approve_delegation is never called within timeoutMs,
+      // deny the pending request (if any) and kill the child.
       const watchdog = setTimeout(() => {
         const e = state.pending.get(id);
         if (!e) return;
-        try {
-          e.conn.write(JSON.stringify({ type: "approval-result", approved: false }) + "\n");
-        } catch {
-          /* noop */
+        if (e.resolvedConn) {
+          try {
+            e.resolvedConn.write(JSON.stringify({ type: "approval-result", approved: false }) + "\n");
+          } catch {
+            /* noop */
+          }
         }
         killSafe(e.child);
+        state.pending.delete(id);
       }, timeoutMs);
 
       const entry: PendingDelegation = {
         id,
         recipe: params.recipe,
         child,
-        conn: sentinel.ready.conn,
-        request: sentinel.ready.req,
         startedAt: Date.now(),
         timeoutMs,
         stdoutSoFar: stdoutBuf,
@@ -384,17 +379,24 @@ export default function (pi: ExtensionAPI) {
         timer: watchdog,
         server,
         sockPath,
+        settled,
       };
       state.pending.set(id, entry);
 
-      // Best-effort post-cleanup once the child eventually exits. The
-      // registry entry stays in place until approve_delegation consumes
-      // it (or the watchdog tears it down explicitly).
+      // Cache the conn synchronously once the child pauses so the cleanup
+      // walker and watchdog can use it from synchronous callbacks.
+      settled.then((outcome) => {
+        if (outcome.kind === "rpc") {
+          entry.resolvedConn = outcome.conn;
+        }
+      });
+
+      // Best-effort post-cleanup once the child eventually exits.
       exited.then(() => {
         clearTimeout(watchdog);
         signal?.removeEventListener("abort", onAbort);
         try {
-          entry.conn.destroy();
+          entry.resolvedConn?.destroy();
         } catch {
           /* noop */
         }
@@ -411,16 +413,13 @@ export default function (pi: ExtensionAPI) {
           {
             type: "text",
             text:
-              `Child paused awaiting approval. Review the preview below, then call ` +
-              `approve_delegation({ id: "${id}", approved: true|false, escalate?: true, comment?: "..." }).\n\n` +
-              formatPreview(entry, entry.request.title),
+              `Child spawning. delegation_id: "${id}"\n` +
+              `Call approve_delegation({ id: "${id}", approved: true|false }) when ready.`,
           },
         ],
         details: {
           recipe: params.recipe,
-          paused: true,
           delegation_id: id,
-          summary: entry.request.summary,
           timeout_ms: timeoutMs,
         },
       };
@@ -431,17 +430,21 @@ export default function (pi: ExtensionAPI) {
     name: "approve_delegation",
     label: "Approve Delegation",
     description:
-      "Resume a paused delegation. Pass { id, approved: true } to apply the " +
-      "child's drafts; { approved: false } to discard them. Pass " +
-      "{ escalate: true } to ask the human user instead — this routes through " +
-      "the same recursive primitive deferred-confirm uses, so it works whether " +
-      "this agent has a UI or is itself running as a child via --rpc-sock " +
-      "(escalation walks up the chain to whoever can answer).",
+      "Collect the result of a delegation and, if the child queued file drafts " +
+      "for approval, send your decision. Blocks until the child settles.\n\n" +
+      "- Child exited without queuing drafts: returns captured stdout. No decision needed.\n" +
+      "- Child paused with drafts queued, no `approved`/`escalate` given: returns the " +
+      "preview so you can review it. Call again with `approved: true|false` to decide.\n" +
+      "- Child paused with drafts queued, `approved` given: sends the decision immediately, " +
+      "waits for the child to finish, and returns captured stdout. The preview is included " +
+      "in the result for audit.\n" +
+      "- `escalate: true`: ask the human user instead (routes recursively up the parent " +
+      "chain if this agent is itself a child via --rpc-sock).",
     parameters: Type.Object({
       id: Type.String({ description: "delegation_id from a previous `delegate` call." }),
       approved: Type.Optional(
         Type.Boolean({
-          description: "Your decision. Required unless escalate=true.",
+          description: "Your decision. Required unless escalate=true or the child exited without drafts.",
         }),
       ),
       escalate: Type.Optional(
@@ -469,30 +472,66 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      let approved: boolean;
-      let source: "agent" | "human";
-      if (params.escalate) {
-        approved = await requestHumanApproval(ctx as ExtensionContext, pi, entry.request);
-        source = "human";
-      } else if (typeof params.approved === "boolean") {
-        approved = params.approved;
-        source = "agent";
-      } else {
+      // Wait for the child to settle (may already be done if child was fast).
+      const outcome = await entry.settled;
+
+      if (outcome.kind === "exit") {
+        // Child completed without queuing any drafts — no approval needed.
+        clearTimeout(entry.timer);
+        state.pending.delete(params.id);
+        const text = finalText(entry, outcome.exit);
+        return {
+          content: [{ type: "text", text }],
+          details: {
+            delegation_id: params.id,
+            recipe: entry.recipe,
+            paused: false,
+            exit_code: outcome.exit.code,
+            exit_signal: outcome.exit.signal,
+            stdout_bytes: entry.stdoutSoFar.value.length,
+            stderr_bytes: entry.stderrSoFar.value.length,
+            truncated: entry.stdoutSoFar.truncated,
+          },
+        };
+      }
+
+      // Child paused with drafts queued. outcome.conn is the open RPC connection.
+      // Phase 1: if no decision given yet, return the preview for review.
+      if (!params.escalate && typeof params.approved !== "boolean") {
         return {
           content: [
             {
               type: "text",
-              text: "approve_delegation: must pass either `approved: true|false` or `escalate: true`.",
+              text:
+                `Child paused awaiting your decision. Review the preview below, ` +
+                `then call approve_delegation({ id: "${params.id}", approved: true|false, escalate?: true }).\n\n` +
+                formatPreview(entry, outcome.req),
             },
           ],
-          details: { error: "missing_decision", id: params.id },
+          details: {
+            recipe: entry.recipe,
+            paused: true,
+            delegation_id: params.id,
+            summary: outcome.req.summary,
+          },
         };
       }
 
-      // Send the decision and stop the watchdog.
+      // Phase 2: decision provided (or escalated). Send it.
+      let approved: boolean;
+      let source: "agent" | "human";
+      if (params.escalate) {
+        approved = await requestHumanApproval(ctx as ExtensionContext, pi, outcome.req);
+        source = "human";
+      } else {
+        approved = params.approved as boolean;
+        source = "agent";
+      }
+
+      // Stop the watchdog and send the decision.
       clearTimeout(entry.timer);
       try {
-        entry.conn.write(JSON.stringify({ type: "approval-result", approved }) + "\n");
+        outcome.conn.write(JSON.stringify({ type: "approval-result", approved }) + "\n");
       } catch {
         /* the child may have died already */
       }
@@ -510,11 +549,14 @@ export default function (pi: ExtensionAPI) {
         }),
       ]);
 
-      // Drain registry; final cleanup of socket/server already happens in
-      // the exit handler attached at delegate time.
+      // Drain registry; final cleanup of socket/server happens in the exited
+      // handler attached at delegate time.
       state.pending.delete(params.id);
 
-      const text = finalText(entry, exit);
+      // Include the preview in the result so the parent LLM has an audit trail
+      // even when it passed approved=true without a prior preview-only call.
+      const previewAudit = `\n\n--- applied preview ---\n${formatPreview(entry, outcome.req)}`;
+      const text = finalText(entry, exit) + (approved ? previewAudit : "");
       return {
         content: [{ type: "text", text }],
         details: {
@@ -533,4 +575,3 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
-
