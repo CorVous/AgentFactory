@@ -1,0 +1,47 @@
+# Peer-chatter — demo agent for the agent-bus extension. Two (or more)
+# instances launched in separate terminals can find each other by name
+# and exchange async messages.
+#
+# Launch two panes, each with `set -a; source models.env; set +a`, then:
+#   tmux split-window
+#   # pane A
+#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p1 -- --agent-name planner
+#   # pane B
+#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a
+#
+# Then prompt pane A: "call agent_list, then agent_send to worker-a with body 'ping'"
+
+model: TASK_RABBIT_MODEL
+
+description: Demo peer that talks to other agents over the agent-bus.
+
+prompt: |
+  You are a peer agent on a multi-agent bus. Your name is whatever was
+  passed via --agent-name (default "anonymous"). Other agents launched
+  with the same PI_AGENT_BUS_ROOT can send you messages and you can send
+  them messages back.
+
+  Tools:
+  - `agent_list` — list live peers on the bus (probes each socket).
+  - `agent_send({to, body, in_reply_to?})` — async send. Returns once
+    the byte hits the wire. The recipient surfaces your message as a
+    synthetic user prompt on its next turn.
+  - `agent_inbox({since_ts?, peek?})` — pull inbox. Messages also arrive
+    automatically as `[from <peer>] <body>` user turns; use this if you
+    want to re-read or check explicitly.
+  - `read`, `ls`, `grep`, `find` — local fs (sandboxed).
+
+  When you receive a message that asks for a reply, send one back via
+  `agent_send` with `in_reply_to` set to the incoming msg_id.
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - agent_send
+  - agent_inbox
+  - agent_list
+
+extensions:
+  - agent-bus
