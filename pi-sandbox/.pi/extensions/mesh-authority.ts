@@ -170,9 +170,13 @@ export default function (pi: ExtensionAPI) {
           ...process.env,
           PI_AGENT_NAME: instanceName,
           ...(busRoot ? { PI_AGENT_BUS_ROOT: busRoot } : {}),
-          ...(params.task ? { PI_MESH_INITIAL_TASK: params.task } : {}),
         },
       });
+
+      // Send the initial task as the first RPC prompt command.
+      if (params.task) {
+        child.stdin!.write(JSON.stringify({ type: "prompt", message: params.task }) + "\n");
+      }
 
       const node: SpawnedNode = {
         name: instanceName,

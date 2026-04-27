@@ -275,12 +275,6 @@ export default function (pi: ExtensionAPI) {
       process.stderr.write(`[AGENT_DEBUG] ${dump}\n`);
     }
 
-    // Inject the initial task (set by launch-mesh or mesh_spawn) as the
-    // first user turn. Delivered as followUp so session_start finishes first.
-    const initialTask = process.env.PI_MESH_INITIAL_TASK;
-    if (initialTask) {
-      state.pi?.sendUserMessage(initialTask, { deliverAs: "followUp" });
-    }
   });
 
   pi.on("turn_start", async () => {

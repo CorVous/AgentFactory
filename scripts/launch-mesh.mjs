@@ -199,9 +199,13 @@ for (let i = 0; i < topology.nodes.length; i++) {
       ...process.env,
       PI_AGENT_NAME: name,
       PI_AGENT_BUS_ROOT: busRoot,
-      ...(task ? { PI_MESH_INITIAL_TASK: task } : {}),
     },
   });
+
+  // Send the initial task as the first RPC prompt command.
+  if (task) {
+    child.stdin.write(JSON.stringify({ type: "prompt", message: task }) + "\n");
+  }
 
   attachPrefixedOutput(child, prefix);
   child.on("exit", (code, signal) => {
