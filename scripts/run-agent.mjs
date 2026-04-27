@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = path.join(REPO_ROOT, "pi-sandbox");
@@ -103,6 +104,11 @@ function loadRecipe(name) {
   if (!recipe || typeof recipe !== "object") die(`recipe ${file} is empty or not an object`);
   if (typeof recipe.prompt !== "string" || !recipe.prompt.trim()) die(`recipe ${file} missing 'prompt'`);
   if (!Array.isArray(recipe.tools)) die(`recipe ${file} missing 'tools' (list)`);
+  if (recipe.shortName !== undefined) {
+    if (typeof recipe.shortName !== "string" || !/^[a-z][a-z0-9-]*$/.test(recipe.shortName)) {
+      die(`recipe ${file} 'shortName' must be a lowercase slug ([a-z][a-z0-9-]*)`);
+    }
+  }
   return recipe;
 }
 
@@ -284,12 +290,12 @@ piArgs.push("--sandbox-root", sandboxRoot);
 // the env (already the case for --agent-name read by agent-bus, and
 // now --rpc-sock read by agent-status-reporter while deferred-confirm
 // owns the flag registration).
-let agentName = args.name;
+let agentName = null;                                     // null → generate
 let rpcSock = "";
 const passthrough = [];
 for (let i = 0; i < args.passthrough.length; i++) {
   if (args.passthrough[i] === "--agent-name" && i + 1 < args.passthrough.length) {
-    agentName = args.passthrough[++i];
+    agentName = args.passthrough[++i];                    // manual override wins
   } else if (args.passthrough[i] === "--rpc-sock" && i + 1 < args.passthrough.length) {
     rpcSock = args.passthrough[++i];
     // Keep --rpc-sock in passthrough too so deferred-confirm still sees it.
@@ -299,12 +305,27 @@ for (let i = 0; i < args.passthrough.length; i++) {
   }
 }
 args.passthrough = passthrough;
-piArgs.push("--agent-name", agentName);
 
 const busRoot =
   args.agentBus ||
   process.env.PI_AGENT_BUS_ROOT ||
   path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
+
+// If no manual --agent-name was provided in passthrough, generate one
+// of the form `<breed>-<shortName>`. The bus-root scan catches live
+// peers from other terminals so two `peer-chatter` runs never collide
+// on the bus socket. agent-spawn does its own pre-generation for
+// delegated children (it knows the full sibling set), so this branch
+// usually only runs for user-launched roots.
+if (agentName === null) {
+  const shortName =
+    (typeof recipe.shortName === "string" && recipe.shortName) || args.name;
+  const tier = TIER_VARS.has(recipeModel) ? recipeModel : undefined;
+  const taken = await probeBusRoot(busRoot);
+  agentName = generateInstanceName({ tier, shortName, taken });
+}
+piArgs.push("--agent-name", agentName);
+
 // Only push extension-owned flags when their owning extension is
 // actually loaded; otherwise pi rejects the flag as unknown.
 const usesBus = wired.extensions.includes("agent-bus");

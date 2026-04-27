@@ -4,6 +4,7 @@
 # `npm run agent` from (or --sandbox <dir>).
 
 model: TASK_RABBIT_MODEL
+shortName: editor
 
 description: Drafts edits to existing files in memory; user approves the whole batch at end of turn.
 

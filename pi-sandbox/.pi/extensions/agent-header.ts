@@ -14,6 +14,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
+import { prettify } from "./_lib/agent-naming";
 
 // TASK_RABBIT_MODEL → "Task Rabbit"; LEAD_HARE_MODEL → "Lead Hare"; etc.
 function formatTier(tier: string): string {
@@ -50,7 +51,7 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setHeader((_tui, theme) => {
       const container = new Container();
       if (name) {
-        const head = theme.bold(theme.fg("accent", name));
+        const head = theme.bold(theme.fg("accent", prettify(name)));
         const tail = tierLabel ? theme.fg("dim", ` · ${tierLabel}`) : "";
         container.addChild(new Text(head + tail, 1, 0));
       }

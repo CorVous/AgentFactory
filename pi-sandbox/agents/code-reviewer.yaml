@@ -3,6 +3,7 @@
 # to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
 model: LEAD_HARE_MODEL
+shortName: critic
 
 description: Reads code and emits a structured review.
 

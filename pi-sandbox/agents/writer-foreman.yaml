@@ -12,6 +12,7 @@
 # Run: `npm run agent -- writer-foreman --sandbox /tmp/foreman-test`
 
 model: LEAD_HARE_MODEL
+shortName: foreman
 
 description: Decomposes a drafting request, delegates batches to deferred-writer, and approves the children itself.
 
