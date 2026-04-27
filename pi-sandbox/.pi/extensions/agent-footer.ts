@@ -20,11 +20,12 @@
 //                  ↓output, cache R/W, /<window-size>) are
 //                  intentionally dropped.
 //   line 2, right: model id.
-//   line 3 (opt):  `skills: <names>` on the left and `agents: <names>`
-//                  on the right — the recipe's `skills:` list and the
-//                  recipes this agent may `delegate` to. Read from the
-//                  PI_AGENT_SKILLS / PI_AGENT_AGENTS env vars set by
-//                  the runner (pi.getFlag is scoped per extension, so
+//   line 3 (opt):  the recipe's `skills:` list on the left and the
+//                  recipes this agent may `delegate` to on the right
+//                  (comma-separated, no labels — matches line 1's
+//                  bare-list style). Read from the PI_AGENT_SKILLS /
+//                  PI_AGENT_AGENTS env vars set by the runner
+//                  (pi.getFlag is scoped per extension, so
 //                  cross-extension flag reads have to bounce through
 //                  env, mirroring how agent-status-reporter reads
 //                  --rpc-sock). Skipped when both lists are empty.
@@ -154,9 +155,7 @@ export default function (pi: ExtensionAPI) {
         const lines = [pwdLine, dimLeft + dimRest];
 
         if (skills.length > 0 || agents.length > 0) {
-          const skillsLabel = skills.length > 0 ? `skills: ${skills.join(", ")}` : "";
-          const agentsLabel = agents.length > 0 ? `agents: ${agents.join(", ")}` : "";
-          const composedLine = renderLeftRight(width, skillsLabel, agentsLabel, "…");
+          const composedLine = renderLeftRight(width, skills.join(", "), agents.join(", "), "…");
           lines.push(truncateToWidth(theme.fg("dim", composedLine), width, theme.fg("dim", "...")));
         }
 
