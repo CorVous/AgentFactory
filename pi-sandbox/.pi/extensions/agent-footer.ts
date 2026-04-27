@@ -6,9 +6,13 @@
 //                  misleading noise.
 //   line 1, right: comma-separated active tools from pi.getActiveTools()
 //                  — the recipe's `tools:` allowlist plus any tools
-//                  registered by extensions. Truncated with an ellipsis
-//                  on narrow terminals; dropped entirely if there is no
-//                  room for a 2-column gap after the sandbox path.
+//                  registered by extensions. `delegate` and
+//                  `approve_delegation` are hidden because every
+//                  delegating agent has them; they're noise next to
+//                  the tools that actually distinguish the recipe.
+//                  Truncated with an ellipsis on narrow terminals;
+//                  dropped entirely if there is no room for a 2-column
+//                  gap after the sandbox path.
 //   line 2, left:  `<bar>| $cost` — 5-cell eighths-block context-usage
 //                  bar (warning tint > 70%, error tint > 90%), followed
 //                  by the accumulated assistant cost from session
@@ -16,7 +20,15 @@
 //                  ↓output, cache R/W, /<window-size>) are
 //                  intentionally dropped.
 //   line 2, right: model id.
-//   line 3 (opt):  extension status texts set via ctx.ui.setStatus().
+//   line 3 (opt):  `skills: <names>` on the left and `agents: <names>`
+//                  on the right — the recipe's `skills:` list and the
+//                  recipes this agent may `delegate` to. Read from the
+//                  PI_AGENT_SKILLS / PI_AGENT_AGENTS env vars set by
+//                  the runner (pi.getFlag is scoped per extension, so
+//                  cross-extension flag reads have to bounce through
+//                  env, mirroring how agent-status-reporter reads
+//                  --rpc-sock). Skipped when both lists are empty.
+//   line 4 (opt):  extension status texts set via ctx.ui.setStatus().
 
 import os from "node:os";
 import path from "node:path";
@@ -37,10 +49,54 @@ function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
+// Tools that every delegating agent gets via the implicit-wire in
+// run-agent.mjs. Always-on tools tell the user nothing about the
+// recipe, so we drop them from the line-1 tool list — agents-it-can-
+// spawn is conveyed on line 3 instead.
+const HIDDEN_TOOLS = new Set(["delegate", "approve_delegation"]);
+
+function parseEnvList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function renderLeftRight(
+  width: number,
+  left: string,
+  right: string,
+  truncIndicator: string,
+): string {
+  const lW = visibleWidth(left);
+  const rW = visibleWidth(right);
+  const minGap = 2;
+  if (lW === 0 && rW === 0) return "";
+  if (lW === 0) {
+    if (rW <= width) return " ".repeat(width - rW) + right;
+    return truncateToWidth(right, width, truncIndicator);
+  }
+  if (rW === 0) {
+    return truncateToWidth(left, width, truncIndicator);
+  }
+  if (lW + minGap + rW <= width) {
+    return left + " ".repeat(width - lW - rW) + right;
+  }
+  if (lW + minGap < width) {
+    const truncR = truncateToWidth(right, width - lW - minGap, truncIndicator);
+    const padW = Math.max(0, width - lW - visibleWidth(truncR));
+    return left + " ".repeat(padW) + truncR;
+  }
+  return truncateToWidth(left, width, truncIndicator);
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || ctx.cwd);
     const displayRoot = homeReplace(root);
+    const skills = parseEnvList(process.env.PI_AGENT_SKILLS);
+    const agents = parseEnvList(process.env.PI_AGENT_AGENTS);
 
     ctx.ui.setFooter((_tui, theme, footerData) => ({
       invalidate() {},
@@ -52,20 +108,9 @@ export default function (pi: ExtensionAPI) {
         } catch {
           // getActiveTools may not be ready in some session states.
         }
-        const toolsLabel = activeTools.length > 0 ? activeTools.join(", ") : "";
-        const sbW = visibleWidth(sandboxLabel);
-        const tlW = visibleWidth(toolsLabel);
-        const minGap = 2;
-
-        let pwdContent: string;
-        if (toolsLabel.length > 0 && sbW + minGap + tlW <= width) {
-          pwdContent = sandboxLabel + " ".repeat(width - sbW - tlW) + toolsLabel;
-        } else if (toolsLabel.length > 0 && sbW + minGap < width) {
-          const truncT = truncateToWidth(toolsLabel, width - sbW - minGap, "…");
-          pwdContent = sandboxLabel + " ".repeat(Math.max(0, width - sbW - visibleWidth(truncT))) + truncT;
-        } else {
-          pwdContent = sandboxLabel;
-        }
+        const visibleTools = activeTools.filter((t) => !HIDDEN_TOOLS.has(t));
+        const toolsLabel = visibleTools.length > 0 ? visibleTools.join(", ") : "";
+        const pwdContent = renderLeftRight(width, sandboxLabel, toolsLabel, "…");
         const pwdLine = truncateToWidth(theme.fg("dim", pwdContent), width, theme.fg("dim", "..."));
 
         let cost = 0;
@@ -107,6 +152,13 @@ export default function (pi: ExtensionAPI) {
         const dimLeft = theme.fg("dim", left);
         const dimRest = theme.fg("dim", statsLine.slice(left.length));
         const lines = [pwdLine, dimLeft + dimRest];
+
+        if (skills.length > 0 || agents.length > 0) {
+          const skillsLabel = skills.length > 0 ? `skills: ${skills.join(", ")}` : "";
+          const agentsLabel = agents.length > 0 ? `agents: ${agents.join(", ")}` : "";
+          const composedLine = renderLeftRight(width, skillsLabel, agentsLabel, "…");
+          lines.push(truncateToWidth(theme.fg("dim", composedLine), width, theme.fg("dim", "...")));
+        }
 
         const statuses = footerData.getExtensionStatuses();
         if (statuses.size > 0) {

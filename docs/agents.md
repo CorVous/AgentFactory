@@ -30,10 +30,21 @@ agent gets six baseline extensions:
 - `agent-footer` — replaces pi's default footer. Line 1 shows the
   sandbox root on the left and the comma-separated active tools (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
-  extension-registered tools) on the right. Line 2 shows `$cost` and
-  the context-usage percent on the left, model id on the right —
+  extension-registered tools) on the right. `delegate` and
+  `approve_delegation` are filtered out of the tool list because every
+  delegating agent has them — they tell the user nothing about what
+  the recipe can actually do, and the agents-it-can-spawn list on
+  line 3 already conveys delegation capability. Line 2 shows `$cost`
+  and the context-usage percent on the left, model id on the right —
   pi's default token-flow stats (↑input, ↓output, cache R/W, context
-  window size) are intentionally dropped. Line 3 is the
+  window size) are intentionally dropped. Line 3 (when populated)
+  shows `skills: <names>` on the left and `agents: <names>` on the
+  right — the recipe's `skills:` list and the recipes this agent
+  may `delegate` to. Read from the `PI_AGENT_SKILLS` /
+  `PI_AGENT_AGENTS` env vars set by the runner (pi.getFlag is scoped
+  per-extension, so cross-extension flag reads have to bounce through
+  env, mirroring how `agent-status-reporter` reads `--rpc-sock`); the
+  line is skipped entirely when both lists are empty. Line 4 is the
   extension-status line.
 - `hide-extensions-list` — strips pi's `[Extensions]` section (added by
   `showLoadedResources` to the chat history at startup) since the
