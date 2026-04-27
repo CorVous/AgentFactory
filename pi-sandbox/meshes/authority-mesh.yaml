@@ -27,7 +27,13 @@ nodes:
   - name: authority
     recipe: mesh-authority
     sandbox: /tmp/pi-mesh-authority/authority
-    # No task: starts interactive (the human or other peers will prompt it)
+    task: |
+      You are the authority in this mesh. Your peers are: analyst, writer, human.
+      Start by calling agent_list to see who is already online.
+      Then wait — messages from peers arrive as [from <peer>] prompts.
+      When a peer sends you a request, handle it using your tools and reply
+      with agent_send({to: "<peer>", body: "<answer>", in_reply_to: "<msg_id>"}).
+      You can also proactively spawn or delegate to nodes with mesh_spawn or delegate.
 
   - name: analyst
     recipe: mesh-node

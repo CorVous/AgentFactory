@@ -48,6 +48,9 @@ interface BusState {
   inTurn: boolean;
   pi?: ExtensionAPI;
   pendingCalls: Map<string, PendingCall>;
+  // Waiters blocked in turn_end (non-TTY keepalive). Each entry is a
+  // resolve() from a Promise; woken when the next message arrives.
+  waiters: Array<() => void>;
 }
 
 // Stash on globalThis so any second import of this module (jiti loads
@@ -62,6 +65,7 @@ function getState(): BusState {
     pendingDuringTurn: [],
     inTurn: false,
     pendingCalls: new Map(),
+    waiters: [],
   });
 }
 
@@ -165,6 +169,13 @@ function handleIncoming(state: BusState, env: Envelope) {
   state.inbox.push(env);
   if (state.inTurn) {
     state.pendingDuringTurn.push(env);
+    return;
+  }
+  // If a turn_end keepalive waiter is parked, wake it instead of pushing
+  // directly — turn_end will drain the inbox when it resumes.
+  const waiter = state.waiters.shift();
+  if (waiter) {
+    waiter();
     return;
   }
   pushToModel(state, [env]);
@@ -282,9 +293,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("turn_end", async () => {
     state.inTurn = false;
-    if (state.pendingDuringTurn.length === 0) return;
-    const drained = state.pendingDuringTurn.splice(0, state.pendingDuringTurn.length);
-    pushToModel(state, drained);
+    const drained = state.pendingDuringTurn.splice(0);
+    if (drained.length > 0) {
+      pushToModel(state, drained);
+      return;
+    }
+    // Non-TTY (piped subprocess) keepalive: block here until the next bus
+    // message arrives so pi doesn't exit between turns. handleIncoming will
+    // wake the waiter, and we then push the buffered messages as followUps.
+    if (!process.stdout.isTTY) {
+      await new Promise<void>((resolve) => {
+        state.waiters.push(resolve);
+      });
+      const waiting = state.inbox.splice(0);
+      if (waiting.length > 0) pushToModel(state, waiting);
+    }
   });
 
   const cleanup = () => {
@@ -293,6 +316,9 @@ export default function (pi: ExtensionAPI) {
       pending.reject(new Error("agent-bus shutdown"));
     }
     state.pendingCalls.clear();
+    // Wake any blocked turn_end waiters so the process can exit cleanly.
+    for (const w of state.waiters) w();
+    state.waiters.length = 0;
     if (state.server) {
       try {
         state.server.close();

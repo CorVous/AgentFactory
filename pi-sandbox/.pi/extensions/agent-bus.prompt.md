@@ -28,5 +28,11 @@ first 8 characters.
 other peers are queued and will surface as user prompts after the call
 returns — you cannot handle them concurrently.
 
+**Keepalive:** when running as a non-interactive subprocess (no TTY),
+the bus extension automatically keeps the process alive between turns,
+waiting for the next incoming bus message. You do not need to loop or
+poll — just finish your response and the process will stay alive until
+a new message arrives or the mesh is shut down.
+
 `peer offline` and `timeout` are normal failure modes, not errors to
 retry — there is no offline queue or retry mechanism.
