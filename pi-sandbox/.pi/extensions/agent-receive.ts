@@ -51,6 +51,10 @@ function makeGate(): { promise: Promise<void>; resolve: () => void } {
 function attachSocket(rt: ReceiveRuntime, sockPath: string, pi: ExtensionAPI): void {
   if (rt.giveUp) return;
   const sock = net.connect(sockPath);
+  // unref so the open conn doesn't keep `pi -p` alive after the
+  // child's last agent_end. We re-ref while parked at agent_end
+  // (during a /view takeover) so the child stays alive there.
+  sock.unref();
   rt.sock = sock;
   let buf = "";
 
@@ -143,9 +147,26 @@ export default function (pi: ExtensionAPI) {
     // handlers in registration order and deferred-confirm is loaded
     // earlier in the baseline list.
     pi.on("agent_end", async () => {
-      while (!rt.released) {
-        if (!rt.releaseGate) rt.releaseGate = makeGate();
-        await rt.releaseGate.promise;
+      if (rt.released || !rt.sock) return;
+      // ref() to keep the event loop alive while we're parked. unref()
+      // again on the way out so the next natural exit path isn't
+      // blocked by the still-open conn.
+      try {
+        rt.sock.ref();
+      } catch {
+        /* destroyed mid-park, fall through */
+      }
+      try {
+        while (!rt.released) {
+          if (!rt.releaseGate) rt.releaseGate = makeGate();
+          await rt.releaseGate.promise;
+        }
+      } finally {
+        try {
+          rt.sock?.unref();
+        } catch {
+          /* noop */
+        }
       }
     });
   });

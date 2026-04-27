@@ -120,6 +120,11 @@ function send(rt: ReporterRuntime, ctx: ExtensionContext) {
 
 function attachSocket(rt: ReporterRuntime, sockPath: string, ctx: ExtensionContext): void {
   const sock = net.connect(sockPath);
+  // Without unref(), the open socket keeps Node's event loop alive
+  // after the child's last agent_end, so `pi -p` hangs instead of
+  // exiting once it's done. Status pushes are best-effort, so it's
+  // safe to drop the conn the moment pi has nothing else to do.
+  sock.unref();
   rt.sock = sock;
   rt.helloSent = false;
   sock.once("connect", () => send(rt, ctx));
