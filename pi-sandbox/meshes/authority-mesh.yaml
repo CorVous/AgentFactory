@@ -47,12 +47,13 @@ nodes:
       You can also use agent_call to ask the writer or authority for help.
 
   - name: writer
-    recipe: mesh-node
+    recipe: mesh-writer
     sandbox: /tmp/pi-mesh-authority/writer
     task: |
       You are the writer peer in a mesh. Your name is "writer".
       Wait for drafting requests from other peers. When a request arrives as
-      [from <peer> re:<id>] <body>, draft the requested content using your
-      tools, then reply with:
-        agent_send({to: "<peer>", body: "<draft>", in_reply_to: "<full_msg_id>"})
+      [from <peer> re:<id>] <body>, draft the requested content, SAVE IT TO A
+      FILE using the write tool, then reply with the file path and a summary:
+        agent_send({to: "<peer>", body: "Saved to <path>: <summary>", in_reply_to: "<full_msg_id>"})
       You can use agent_call to ask the analyst for background information.
+      Always write the file before replying — do not just return the text inline.
