@@ -80,8 +80,10 @@ export default function (pi: ExtensionAPI) {
         if (tui && findAndRemove(tui, SECTION_LABEL)) {
           (tui as { requestRender?: () => void }).requestRender?.();
         }
-      } finally {
         ctx.ui.setWidget(captureKey, undefined);
+      } catch {
+        // ctx may be stale if pi replaced its session (e.g. non-PTY subprocess);
+        // widget cleanup is best-effort — nothing to do if the session is gone.
       }
     }, 0);
   });
