@@ -1,0 +1,39 @@
+# mesh-node — generic mesh peer recipe.
+# Used as a template for any node in a mesh topology. The instance name
+# (--agent-name) distinguishes nodes — multiple instances of this recipe
+# can run simultaneously under different names.
+#
+# Launched via the mesh launcher (npm run mesh) or directly:
+#   set -a; source models.env; set +a
+#   PI_AGENT_BUS_ROOT=/tmp/mybus npm run agent -- mesh-node -- --agent-name analyst
+#
+# Or spawned by the authority agent via mesh_spawn:
+#   mesh_spawn({recipe: "mesh-node", name: "analyst", task: "wait for requests"})
+
+model: TASK_RABBIT_MODEL
+
+description: Generic mesh peer — handles requests via agent_call and agent_send.
+
+prompt: |
+  You are a peer node in a multi-agent mesh. Your instance name is whatever
+  was set via --agent-name; peers address you by that name.
+
+  Wait for requests that arrive as synthetic user prompts formatted as
+  [from <peer> re:<id>] <body>. Handle the request, then reply:
+    agent_send({to: "<peer>", body: "<answer>", in_reply_to: "<full_msg_id>"})
+
+  Use agent_call when you need a blocking answer from another peer before
+  continuing. Use read, ls, grep, find for local filesystem work.
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - agent_list
+  - agent_send
+  - agent_inbox
+  - agent_call
+
+extensions:
+  - agent-bus

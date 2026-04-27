@@ -1,0 +1,52 @@
+# authority-mesh.yaml — example 4-participant mesh topology.
+#
+# Participants:
+#   human     — human REPL (type: relay); no LLM; type @peer to send messages
+#   authority — LLM orchestrator (LEAD_HARE_MODEL); can spawn/stop/delegate
+#   analyst   — LLM peer (TASK_RABBIT_MODEL); handles research requests
+#   writer    — LLM peer (TASK_RABBIT_MODEL); handles drafting requests
+#
+# All participants share the same bus root and discover each other by
+# instance name. Any participant can agent_call or agent_send any other.
+#
+# Launch:
+#   set -a; source models.env; set +a
+#   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
+#
+# The human relay gets a REPL prompt. Example interactions:
+#   [human]> @authority summarise the project and draft a README
+#   [human]> @analyst what does the agent-bus extension do?
+#   [human]> /peers
+
+bus_root: /tmp/pi-mesh-authority
+
+nodes:
+  - name: human
+    type: relay
+
+  - name: authority
+    recipe: mesh-authority
+    sandbox: /tmp/pi-mesh-authority/authority
+    # No task: starts interactive (the human or other peers will prompt it)
+
+  - name: analyst
+    recipe: mesh-node
+    sandbox: /tmp/pi-mesh-authority/analyst
+    task: |
+      You are the analyst peer in a mesh. Your name is "analyst".
+      Wait for requests from other peers. When a request arrives as
+      [from <peer> re:<id>] <body>, research or analyse it using your
+      tools, then reply with:
+        agent_send({to: "<peer>", body: "<findings>", in_reply_to: "<full_msg_id>"})
+      You can also use agent_call to ask the writer or authority for help.
+
+  - name: writer
+    recipe: mesh-node
+    sandbox: /tmp/pi-mesh-authority/writer
+    task: |
+      You are the writer peer in a mesh. Your name is "writer".
+      Wait for drafting requests from other peers. When a request arrives as
+      [from <peer> re:<id>] <body>, draft the requested content using your
+      tools, then reply with:
+        agent_send({to: "<peer>", body: "<draft>", in_reply_to: "<full_msg_id>"})
+      You can use agent_call to ask the analyst for background information.

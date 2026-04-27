@@ -32,6 +32,12 @@ interface Envelope {
   in_reply_to?: string;
 }
 
+interface PendingCall {
+  resolve: (body: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface BusState {
   server?: net.Server;
   sockPath?: string;
@@ -41,6 +47,7 @@ interface BusState {
   pendingDuringTurn: Envelope[];
   inTurn: boolean;
   pi?: ExtensionAPI;
+  pendingCalls: Map<string, PendingCall>;
 }
 
 // Stash on globalThis so any second import of this module (jiti loads
@@ -54,6 +61,7 @@ function getState(): BusState {
     inbox: [],
     pendingDuringTurn: [],
     inTurn: false,
+    pendingCalls: new Map(),
   });
 }
 
@@ -143,6 +151,17 @@ async function bindServer(state: BusState, ctx: { ui: { notify: (m: string, l?: 
 }
 
 function handleIncoming(state: BusState, env: Envelope) {
+  // If this is a reply to a pending agent_call, resolve the blocked tool
+  // directly — don't route to inbox, the caller is already waiting for it.
+  if (env.in_reply_to) {
+    const pending = state.pendingCalls.get(env.in_reply_to);
+    if (pending) {
+      clearTimeout(pending.timer);
+      state.pendingCalls.delete(env.in_reply_to);
+      pending.resolve(env.body);
+      return;
+    }
+  }
   state.inbox.push(env);
   if (state.inTurn) {
     state.pendingDuringTurn.push(env);
@@ -269,6 +288,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   const cleanup = () => {
+    for (const [, pending] of state.pendingCalls) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("agent-bus shutdown"));
+    }
+    state.pendingCalls.clear();
     if (state.server) {
       try {
         state.server.close();
@@ -370,6 +394,71 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: lines.length === 0 ? "(no peers)" : lines.join("\n") }],
         details: { peers },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "agent_call",
+    label: "Agent Call",
+    description:
+      "Send a message to a peer and block until it replies. Unlike agent_send " +
+      "(fire-and-forget), agent_call waits for the recipient to send back a message " +
+      "with in_reply_to matching the outgoing msg_id. Returns the reply body. Use " +
+      "for request-response exchanges where you need the answer before continuing. " +
+      "The recipient must call agent_send({to, body, in_reply_to: <msg_id>}) to unblock " +
+      "the caller. Fails fast if the peer is offline. Default timeout is 30 s.",
+    parameters: Type.Object({
+      to: Type.String({ description: "Name of the recipient agent." }),
+      body: Type.String({ description: "Request body." }),
+      timeout_ms: Type.Optional(
+        Type.Number({ description: "Max wait in ms for a reply. Default 30000." }),
+      ),
+    }),
+    async execute(_id, params) {
+      if (!state.server) {
+        return {
+          content: [{ type: "text", text: "agent-bus not initialized; cannot call." }],
+          details: { delivered: false, reason: "bus not initialized" },
+        };
+      }
+      const timeoutMs = typeof params.timeout_ms === "number" ? params.timeout_ms : 30_000;
+      const env: Envelope = {
+        v: 1,
+        msg_id: randomUUID(),
+        from: state.name,
+        to: params.to,
+        ts: Date.now(),
+        body: params.body,
+      };
+
+      const result = await sendEnvelope(state, env);
+      if (!result.delivered) {
+        return {
+          content: [{ type: "text", text: `agent_call to ${params.to} failed: ${result.reason}.` }],
+          details: { msg_id: env.msg_id, delivered: false, reason: result.reason },
+        };
+      }
+
+      let timedOut = false;
+      const replyBody = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          state.pendingCalls.delete(env.msg_id);
+          reject(new Error("timeout"));
+        }, timeoutMs);
+        state.pendingCalls.set(env.msg_id, { resolve, reject, timer });
+      }).catch(() => "");
+
+      if (timedOut) {
+        return {
+          content: [{ type: "text", text: `agent_call to ${params.to} timed out after ${timeoutMs}ms.` }],
+          details: { msg_id: env.msg_id, delivered: true, reply: null, reason: "timeout" },
+        };
+      }
+      return {
+        content: [{ type: "text", text: `Reply from ${params.to}: ${replyBody}` }],
+        details: { msg_id: env.msg_id, delivered: true, reply: replyBody },
       };
     },
   });

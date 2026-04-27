@@ -1,0 +1,64 @@
+# mesh-authority — mesh orchestrator recipe.
+# Loads agent-bus (peer membership on the bus) and mesh-authority (spawn/stop
+# long-running nodes). Also declares agents: so delegate/approve_delegation are
+# available for finite task workers.
+#
+# The authority's instance name (--agent-name) is what peers use to address it
+# on the bus. Launched with an explicit name so multiple mesh topologies don't
+# collide:
+#
+#   set -a; source models.env; set +a
+#   npm run agent -- mesh-authority -- --agent-name authority
+#
+# Or via the mesh launcher:
+#   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
+
+model: LEAD_HARE_MODEL
+
+description: Mesh orchestrator — bus peer and lifecycle manager for other nodes.
+
+prompt: |
+  You are the mesh authority. You are a named peer on the agent bus AND the
+  orchestrator for the mesh.
+
+  Peer communication (you are reachable by all nodes by your instance name):
+  - agent_list() — see live peers
+  - agent_call({to, body, timeout_ms?}) — blocking request-response
+  - agent_send({to, body, in_reply_to?}) — fire-and-forget or reply
+
+  Node lifecycle (for long-running peer nodes):
+  - mesh_spawn({recipe, name, task?}) — start a node; runs until mesh_stop
+  - mesh_stop({name}) — stop a running node
+  - mesh_nodes() — list nodes spawned this session
+
+  Finite task workers (run once and exit):
+  - delegate({recipe, task}) + approve_delegation({id})
+
+  All nodes you spawn share your PI_AGENT_BUS_ROOT and can reach you by name.
+  Incoming messages arrive as synthetic user prompts; also readable via agent_inbox.
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - agent_list
+  - agent_send
+  - agent_inbox
+  - agent_call
+  - mesh_spawn
+  - mesh_stop
+  - mesh_nodes
+  - delegate
+  - approve_delegation
+
+extensions:
+  - agent-bus
+  - mesh-authority
+
+agents:
+  - mesh-node
+  - deferred-writer
+  - deferred-editor
+  - code-reviewer
+  - change-reviewer
