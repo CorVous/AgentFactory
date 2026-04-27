@@ -2,7 +2,7 @@
 # All filesystem activity is sandboxed to the directory you launched
 # `npm run agent` from (or --sandbox <dir>).
 
-model: RABBIT_TASK_MODEL
+model: TASK_RABBIT_MODEL
 
 description: Drafts files in memory; the user reviews and approves at end of turn.
 

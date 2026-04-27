@@ -12,7 +12,7 @@
 #   > "delegate to recipe peer-chatter with task 'list files in cwd'"
 #   > "delegate to recipe deferred-writer with task 'draft README.md'"
 
-model: HARE_LEAD_MODEL
+model: LEAD_HARE_MODEL
 
 description: Planner that delegates focused subtasks to a child agent recipe.
 

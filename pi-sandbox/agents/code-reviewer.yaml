@@ -2,7 +2,7 @@
 # Read-only via the tools allowlist. All filesystem activity is sandboxed
 # to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
-model: HARE_LEAD_MODEL
+model: LEAD_HARE_MODEL
 
 description: Reads code and emits a structured review.
 

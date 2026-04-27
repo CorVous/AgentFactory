@@ -3,7 +3,7 @@
 # turn. All filesystem activity is sandboxed to the directory you launched
 # `npm run agent` from (or --sandbox <dir>).
 
-model: RABBIT_TASK_MODEL
+model: TASK_RABBIT_MODEL
 
 description: Drafts writes, edits, moves, and deletes; user approves the whole batch at end of turn.
 

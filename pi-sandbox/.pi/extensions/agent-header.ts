@@ -1,6 +1,6 @@
 // agent-header — replaces pi's default startup header with a two-line
 // banner: the agent name (bold accent), optionally suffixed dim with the
-// model tier (e.g. "deferred-writer · Rabbit Task"), and the recipe
+// model tier (e.g. "deferred-writer · Task Rabbit"), and the recipe
 // description on the next line (dim). Reads `--agent-name`,
 // `--agent-description`, and `--agent-tier`; the runner sets all three
 // from the recipe filename, `description:`, and `model:` (when the
@@ -15,7 +15,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 
-// RABBIT_TASK_MODEL → "Rabbit Task"; HARE_LEAD_MODEL → "Hare Lead"; etc.
+// TASK_RABBIT_MODEL → "Task Rabbit"; LEAD_HARE_MODEL → "Lead Hare"; etc.
 function formatTier(tier: string): string {
   return tier
     .replace(/_MODEL$/, "")
@@ -35,7 +35,7 @@ export default function (pi: ExtensionAPI) {
     type: "string",
   });
   pi.registerFlag("agent-tier", {
-    description: "Model tier var name (e.g. RABBIT_TASK_MODEL) appended dim after the agent name",
+    description: "Model tier var name (e.g. TASK_RABBIT_MODEL) appended dim after the agent name",
     type: "string",
   });
 

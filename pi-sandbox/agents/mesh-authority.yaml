@@ -13,7 +13,7 @@
 # Or via the mesh launcher:
 #   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
 
-model: HARE_LEAD_MODEL
+model: LEAD_HARE_MODEL
 
 description: Mesh orchestrator — bus peer and lifecycle manager for other nodes.
 

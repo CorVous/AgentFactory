@@ -19,8 +19,8 @@ npm run pi                                  # raw pi session for exploration
   working directory), and execs pi with the recipe's prompt, tools,
   extensions, and skills. Full reference: [`docs/agents.md`](./docs/agents.md).
 - Models live in `models.env` and are addressed by tier:
-  `RABBIT_SAGE_MODEL` (planner), `HARE_LEAD_MODEL` (overseer),
-  `RABBIT_TASK_MODEL` (worker). Full reference:
+  `RABBIT_SAGE_MODEL` (planner), `LEAD_HARE_MODEL` (overseer),
+  `TASK_RABBIT_MODEL` (worker). Full reference:
   [`docs/model-tiers.md`](./docs/model-tiers.md).
 
 ## More docs
