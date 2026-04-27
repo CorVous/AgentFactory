@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -28,11 +29,20 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
-  const out = { name: null, sandbox: null, passthrough: [] };
+  const out = { name: null, sandbox: null, agentBus: null, passthrough: [] };
+  let passthroughOnly = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--sandbox") {
+    if (passthroughOnly) {
+      out.passthrough.push(a);
+      continue;
+    }
+    if (a === "--") {
+      passthroughOnly = true;
+    } else if (a === "--sandbox") {
       out.sandbox = argv[++i] ?? die("--sandbox requires a directory");
+    } else if (a === "--agent-bus") {
+      out.agentBus = argv[++i] ?? die("--agent-bus requires a directory");
     } else if (a === "--help" || a === "-h") {
       printHelp();
       process.exit(0);
@@ -157,7 +167,31 @@ const piArgs = [
 for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
 piArgs.push("--sandbox-root", sandboxRoot);
-piArgs.push("--agent-name", args.name);
+
+// Pull --agent-name out of passthrough so we can apply the override to
+// both the CLI flag (read by agent-header) and the env var (read by
+// agent-bus, since pi.getFlag is scoped per-extension).
+let agentName = args.name;
+const passthrough = [];
+for (let i = 0; i < args.passthrough.length; i++) {
+  if (args.passthrough[i] === "--agent-name" && i + 1 < args.passthrough.length) {
+    agentName = args.passthrough[++i];
+  } else {
+    passthrough.push(args.passthrough[i]);
+  }
+}
+args.passthrough = passthrough;
+piArgs.push("--agent-name", agentName);
+
+const busRoot =
+  args.agentBus ||
+  process.env.PI_AGENT_BUS_ROOT ||
+  path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
+// Only push --agent-bus-root when agent-bus is loaded; otherwise pi
+// rejects the flag as unknown.
+const recipeExtensions = Array.isArray(recipe.extensions) ? recipe.extensions : [];
+const usesBus = recipeExtensions.includes("agent-bus");
+if (usesBus) piArgs.push("--agent-bus-root", busRoot);
 if (typeof recipe.description === "string" && recipe.description.trim()) {
   piArgs.push("--agent-description", recipe.description.trim());
 }
@@ -177,7 +211,10 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
-  env: process.env,
+  // Mirror the agent name + bus root into env vars so extensions that
+  // can't read the CLI flags via pi.getFlag (which is scoped per
+  // extension) still see them.
+  env: { ...process.env, PI_AGENT_NAME: agentName, PI_AGENT_BUS_ROOT: busRoot },
 });
 
 child.on("exit", (code, signal) => {
