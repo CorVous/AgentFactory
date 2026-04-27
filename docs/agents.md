@@ -39,15 +39,16 @@ stable peer name on the bus.
   keybinding cheatsheet, onboarding tips) since most of those keybindings
   reference features focused agents don't use.
 - `agent-header` — replaces the (now-empty) header with a banner that
-  shows the agent name (bold accent), optionally suffixed dim with the
-  model tier (e.g. `Cottontail Writer · Task Rabbit`), and on the next
-  line (dim) the prettified recipe filename joined with the recipe's
-  `description:` (e.g. `Deferred Writer · Drafts files in memory; …`).
-  Reads `--agent-name`, `--agent-description`, `--agent-tier`, and
-  `--agent-type`; the runner sets them from the generated
-  `<breed>-<shortName>` slug, `description:`, `model:` (tier suffix
-  skipped for literal model IDs), and the recipe filename
-  respectively. Slugs are rendered via the shared `prettify` helper in
+  shows the agent's full display name (bold accent) — the breed from
+  the `<breed>-<shortName>` slug joined with the prettified recipe
+  filename, e.g. `Cottontail Deferred Writer` — optionally suffixed
+  dim with the model tier (e.g. `· Task Rabbit`), and the recipe's
+  `description:` field on the next line (dim). Reads `--agent-name`,
+  `--agent-description`, `--agent-tier`, and `--agent-type`; the
+  runner sets them from the generated `<breed>-<shortName>` slug,
+  `description:`, `model:` (tier suffix skipped for literal model
+  IDs), and the recipe filename respectively. Slug segments are
+  rendered via the shared `prettify` helper in
   `pi-sandbox/.pi/extensions/_lib/agent-naming.ts` (title-case each
   hyphen-segment, join with spaces). Each flag can be passed on the
   `npm run agent --` line to override the recipe (passthrough flags

@@ -57,13 +57,23 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setHeader((_tui, theme) => {
       const container = new Container();
       if (name) {
-        const head = theme.bold(theme.fg("accent", prettify(name)));
+        // Display form combines the breed (first segment of the
+        // <breed>-<shortName> slug) with the prettified recipe
+        // filename, giving "Cinnamon Deferred Author" rather than the
+        // compact slug-prettify "Cinnamon Author". Falls back to plain
+        // prettify(name) when the runner didn't pass --agent-type or
+        // when --agent-name was manually overridden to a no-hyphen
+        // value (e.g. `-- --agent-name planner`).
+        const breed = name.includes("-") ? name.split("-")[0] : "";
+        const displayName = typeLabel && breed
+          ? `${prettify(breed)} ${typeLabel}`
+          : prettify(name);
+        const head = theme.bold(theme.fg("accent", displayName));
         const tail = tierLabel ? theme.fg("dim", ` · ${tierLabel}`) : "";
         container.addChild(new Text(head + tail, 1, 0));
       }
-      if (typeLabel || description) {
-        const text = [typeLabel, description].filter((s) => s.length > 0).join(" · ");
-        container.addChild(new Text(theme.fg("dim", text), 1, 0));
+      if (description) {
+        container.addChild(new Text(theme.fg("dim", description), 1, 0));
       }
       return container;
     });
