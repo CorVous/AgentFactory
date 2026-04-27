@@ -121,7 +121,11 @@ All seven appear under "Extension CLI Flags" in `pi --help`.
 
 When `agents:` is non-empty the runner also implicitly:
 
-- adds `agent-spawn` to `extensions:`, and
+- adds `agent-spawn` to `extensions:`,
+- adds `delegation-boxes` to `extensions:` (renders one status box
+  per pending delegation above the input editor — name, 3-cell
+  context bar, cost, turn, state — laid out 2 or 3 boxes per row
+  depending on terminal width), and
 - adds `delegate` and `approve_delegation` to `tools:`.
 
 Explicit duplicates in the recipe are fine. The inverse is rejected
@@ -129,6 +133,46 @@ loudly: declaring `extensions: [agent-spawn]` or
 `tools: [delegate | approve_delegation]` without `agents:` causes the
 runner to `die()` so the allowlist is never accidentally empty. To
 disable delegation, drop the `agents:` field entirely.
+
+The boxes are populated by the **`agent-status-reporter`** baseline
+extension running inside each delegated child. It self-gates on
+`--rpc-sock` (a no-op for top-level runs) and pushes newline-delimited
+JSON envelopes over the existing per-call socket whenever it crosses a
+turn / tool / provider-response boundary, throttled to one write per
+250 ms. Envelopes:
+
+```jsonc
+// Once per child connection. Tags the conn so subsequent status
+// envelopes can omit `delegation_id`.
+{"type": "hello", "id": "<delegation_id>"}
+
+// Many per child. Cached on the parent's PendingDelegation entry
+// and rendered by delegation-boxes.
+{
+  "type": "status",
+  "delegation_id": "<optional once tagged>",
+  "agent_name": "<from --agent-name>",
+  "model_id": "<ctx.model.id>",
+  "context_pct": 12.4,
+  "context_tokens": 2480,
+  "context_window": 200000,
+  "cost_usd": 0.0123,
+  "turn_count": 3,
+  "state": "running" | "paused" | "settled"
+}
+```
+
+The parent's `agent-spawn` server consumes both envelope types on the
+same socket as the existing `request-approval` flow; a long-lived
+status conn and short-lived approval conn(s) coexist without
+coordination. Status updates are best-effort: connect failures and
+mid-session disconnects retry once at 500 ms then give up silently.
+The parent stamps `state: "paused"` when the child sends
+`request-approval` and `state: "settled"` once the child exits, so the
+final box transitions are visible even if the reporter dropped its
+connection. The 3-cell context bar uses the same eighths-block format
+as the footer (`renderBar(pct, 3)` from
+`pi-sandbox/.pi/extensions/_lib/context-bar.ts`).
 
 ## Where agent code lives
 

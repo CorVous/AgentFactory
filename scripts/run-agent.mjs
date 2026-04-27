@@ -20,6 +20,10 @@ const BASELINE_EXTENSIONS = [
   "agent-footer",
   "hide-extensions-list",
   "deferred-confirm",
+  // Reports {context %, cost, state} over --rpc-sock when run as a
+  // delegated child. Self-gates on the flag, so it no-ops for
+  // top-level runs.
+  "agent-status-reporter",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
@@ -140,7 +144,12 @@ function applyAgentsField(recipe, name) {
     }
   }
 
-  const extensions = explicitExts.includes("agent-spawn") ? explicitExts : [...explicitExts, "agent-spawn"];
+  let extensions = explicitExts.includes("agent-spawn") ? explicitExts : [...explicitExts, "agent-spawn"];
+  // Pair the spawn extension with the per-delegation widget so the parent's
+  // TUI shows live status boxes above the input. delegation-boxes reads
+  // agent-spawn's globalThis registry; loading one without the other would
+  // leave the boxes wired but empty (or the registry rendered nowhere).
+  if (!extensions.includes("delegation-boxes")) extensions = [...extensions, "delegation-boxes"];
   const tools = explicitTools.slice();
   for (const t of SPAWN_TOOLS) if (!tools.includes(t)) tools.push(t);
   return { allowed: declared, extensions, tools };
@@ -213,14 +222,22 @@ for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
 piArgs.push("--sandbox-root", sandboxRoot);
 
-// Pull --agent-name out of passthrough so we can apply the override to
-// both the CLI flag (read by agent-header) and the env var (read by
-// agent-bus, since pi.getFlag is scoped per-extension).
+// Pull --agent-name and --rpc-sock out of passthrough so we can mirror
+// them to env vars. pi.getFlag is scoped to the extension that
+// registered the flag, so cross-extension reads need to bounce through
+// the env (already the case for --agent-name read by agent-bus, and
+// now --rpc-sock read by agent-status-reporter while deferred-confirm
+// owns the flag registration).
 let agentName = args.name;
+let rpcSock = "";
 const passthrough = [];
 for (let i = 0; i < args.passthrough.length; i++) {
   if (args.passthrough[i] === "--agent-name" && i + 1 < args.passthrough.length) {
     agentName = args.passthrough[++i];
+  } else if (args.passthrough[i] === "--rpc-sock" && i + 1 < args.passthrough.length) {
+    rpcSock = args.passthrough[++i];
+    // Keep --rpc-sock in passthrough too so deferred-confirm still sees it.
+    passthrough.push("--rpc-sock", rpcSock);
   } else {
     passthrough.push(args.passthrough[i]);
   }
@@ -256,10 +273,15 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
-  // Mirror the agent name + bus root into env vars so extensions that
-  // can't read the CLI flags via pi.getFlag (which is scoped per
-  // extension) still see them.
-  env: { ...process.env, PI_AGENT_NAME: agentName, PI_AGENT_BUS_ROOT: busRoot },
+  // Mirror the agent name + bus root + rpc sock into env vars so
+  // extensions that can't read the CLI flags via pi.getFlag (which is
+  // scoped per extension) still see them.
+  env: {
+    ...process.env,
+    PI_AGENT_NAME: agentName,
+    PI_AGENT_BUS_ROOT: busRoot,
+    ...(rpcSock ? { PI_RPC_SOCK: rpcSock } : {}),
+  },
 });
 
 child.on("exit", (code, signal) => {
