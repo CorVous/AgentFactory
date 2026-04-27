@@ -80,11 +80,25 @@ function attachSocket(rt: ReceiveRuntime, sockPath: string, pi: ExtensionAPI): v
       try {
         const msg = JSON.parse(line) as { type?: string; body?: unknown };
         if (msg.type === "user-message" && typeof msg.body === "string" && msg.body.length > 0) {
-          // Queue the human's message into the child's next turn. pi
-          // dispatches it the same way it dispatches a CLI prompt or
-          // a /command's pi.sendUserMessage call.
+          // Queue the human's message into the child's pending followUp
+          // queue. pi-agent-core's agent-loop checks getFollowUpMessages()
+          // *between* turns: if a queued message arrives before
+          // agent_end emits, the loop continues with it; if it arrives
+          // after, the followUp sits in the queue and pi -p exits with
+          // it undelivered (print mode is single-shot and doesn't
+          // reopen the session for queued followUps).
+          //
+          // In practice this means: a user-message that arrives while
+          // the child is mid-turn gets picked up cleanly. One that
+          // arrives after the child has finished its current work and
+          // hit agent_end is too late — the child's parked-at-agent_end
+          // handler returns when /back fires and pi exits without
+          // processing the followUp.
+          //
+          // Without `deliverAs`, sendUserMessage throws (swallowed in
+          // pi's wrapper) when isStreaming=true, so always pass it.
           try {
-            pi.sendUserMessage(msg.body);
+            pi.sendUserMessage(msg.body, { deliverAs: "followUp" });
           } catch {
             /* best-effort; if pi rejects, the parent will see no
                new turn and can decide what to do */

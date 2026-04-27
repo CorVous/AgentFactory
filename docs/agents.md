@@ -427,9 +427,21 @@ Three things happen the moment view-mode is entered:
 3. The `input` event handler returns `{action: "handled"}` for any
    non-slash text typed into the editor and forwards it as
    `{type: "user-message", body}` over the control conn —
-   `agent-receive` queues it via `pi.sendUserMessage` for the
-   child's next turn. The forwarded text is echoed into the viewer
+   `agent-receive` queues it via `pi.sendUserMessage(body, {deliverAs:
+   "followUp"})`. The forwarded text is echoed into the viewer
    transcript so the user sees their own messages.
+
+   **Caveat — chat-back only lands mid-turn.** pi-agent-core's loop
+   checks the followUp queue *between* tool-call rounds, before
+   `agent_end` emits. A user-message that arrives while the child is
+   still streaming a response or executing tools is picked up; one
+   that arrives after the child has finished its current work (i.e.
+   while `agent-receive` is parked at `agent_end`) gets queued but
+   never delivered, because `pi -p` is single-shot and exits when the
+   park is released without re-running the loop. End-of-turn approval
+   takeover and transcript watching work in both cases — only the
+   "send the child a brand-new task while it's idle" path requires
+   re-running `delegate` in the parent.
 
 `/back` (or `/unview`) sends `{type: "release"}` to the child,
 unsubscribes the transcript, hides the viewer, and returns control
