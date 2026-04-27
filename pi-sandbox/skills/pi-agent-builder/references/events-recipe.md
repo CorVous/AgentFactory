@@ -15,52 +15,6 @@ pi.on("tool_call", async (event, ctx) => {
 
 Return values matter. An event handler that returns `undefined` is purely observational. A handler that returns a specific shape **modifies or cancels** the operation.
 
-## The lifecycle
-
-Events fire in a stable order across a session. When composing handlers, picture where your hook sits in this flow:
-
-```
-pi starts
-  ├─► session_start { reason: "startup" }
-  └─► resources_discover { reason: "startup" }
-
-user submits prompt
-  ├─► (extension commands checked first — if /name matches, handler runs and input is skipped)
-  ├─► input
-  ├─► (skill/template expansion if not handled)
-  ├─► before_agent_start
-  ├─► agent_start
-  │
-  │   repeats while LLM calls tools:
-  │   ├─► turn_start
-  │   ├─► context
-  │   ├─► before_provider_request
-  │   │
-  │   │   LLM responds, may call tools:
-  │   │   ├─► tool_execution_start
-  │   │   ├─► tool_call            ← can block / mutate input
-  │   │   ├─► tool_execution_update
-  │   │   ├─► tool_result          ← can patch result
-  │   │   └─► tool_execution_end
-  │   │
-  │   └─► turn_end
-  │
-  └─► agent_end
-
-/new, /resume, /fork
-  ├─► session_before_switch / session_before_fork (can cancel)
-  ├─► session_shutdown (old instance)
-  ├─► session_start { reason: "new" | "resume" | "fork" }
-  └─► resources_discover
-
-/compact or auto-compaction
-  ├─► session_before_compact (can cancel or customise)
-  └─► session_compact
-
-exit (Ctrl+C, Ctrl+D)
-  └─► session_shutdown
-```
-
 ## The important events
 
 Event names stabilize around these categories. Verify against `examples/extensions/types.ts` in the installed package for the authoritative list — the set evolves.
@@ -72,8 +26,8 @@ Event names stabilize around these categories. Verify against `examples/extensio
 
 ### Session lifecycle
 
-- `session_start` — session is ready. `event.reason` can be `"startup" | "reload" | "new" | "resume" | "fork"`. Use for one-time setup per session. **Always rehydrate any in-memory state your extension keeps from `ctx.sessionManager.getBranch()` here** — closures don't survive `/reload` or session switch, so data held in module-scope variables is lost.
-- `session_before_switch` — before pi switches to a different session. Cancellable (`{ cancel: true }`).
+- `session_start` — session is ready. `event.reason` can be `"new" | "resume" | "fork"`. Use for one-time setup per session.
+- `session_before_switch` — before pi switches to a different session. Cancellable.
 - `session_switch` — after switching.
 - `session_before_compact` — **cancellable**. Can provide a custom summary, redirect to a different model, or skip compaction entirely.
 - `session_compact` — after compaction completes.
@@ -82,19 +36,11 @@ Event names stabilize around these categories. Verify against `examples/extensio
 ### Context and agent turn
 
 - `context` — fires **before every LLM call**, giving you the message array. Modifying `event.messages` rewrites what the model sees. Use for pruning, injection, RAG.
-- `before_agent_start` — can modify the system prompt for the current turn by returning `{ systemPrompt: event.systemPrompt + "…" }` and/or inject a message via `{ message: { customType, content, display: true } }`. Both fields are optional and chain across extensions.
-- `turn_start` / `turn_end` — fires per turn (one LLM response + its tool calls). `turn_end` carries `{ turnIndex, message, toolResults }` — good for git checkpointing and per-turn housekeeping.
+- `before_agent_start` — can modify the system prompt for the current turn.
 - `agent_step` — per step of the agent loop; observational.
-
-### User-input and terminal events
-
-- `input` — fires when the user submits text, *after* extension commands match but *before* skill/template expansion. Return `{ action: "continue" }` (default), `{ action: "transform", text, images? }` to rewrite, or `{ action: "handled" }` to skip the LLM entirely. `event.source` is `"interactive" | "rpc" | "extension"`.
-- `user_bash` — fires on `!cmd` / `!!cmd` entered in the editor. Return `{ operations }` to swap the backend (SSH, container) via `createLocalBashOperations` as a base, `{ result }` to short-circuit, or nothing for default local execution.
-- `model_select` — fires on `/model`, Ctrl+P, or session restore. `event.source` is `"set" | "cycle" | "restore"`. Typical use: reflect the current model in the status bar with `ctx.ui.setStatus`.
 
 ### Provider and resources
 
-- `before_provider_request` — fires right before the HTTP request to the provider. Return a new payload to replace, or `undefined` to leave unchanged. Handlers chain in load order. Mostly for debugging.
 - `resources_discover` — discover models and providers.
 - The async factory runs **before** `session_start`, `resources_discover`, and before queued provider registrations flush.
 
@@ -114,22 +60,6 @@ pi.on("tool_call", async (event, ctx) => {
 ```
 
 When `block: true` is returned, the LLM sees a tool result with the reason — it can decide to try something else.
-
-For custom tools, use the `isToolCallEventType` guard so TypeScript narrows `event.input` to the tool's parameter type:
-
-```ts
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
-import type { MyToolInput } from "./tools.js";
-
-pi.on("tool_call", async (event, ctx) => {
-  if (isToolCallEventType<"my_tool", MyToolInput>("my_tool", event)) {
-    event.input.action; // typed
-  }
-  if (isToolCallEventType("bash", event)) {
-    // event.input is typed as { command: string; timeout?: number }
-  }
-});
-```
 
 ## Pattern 2: context injection (RAG, memory)
 
@@ -198,47 +128,6 @@ This pattern — exposed by the Vers extension — lets the LLM keep calling `ba
 
 See `references/compaction-recipe.md` for the full treatment. The hook is `session_before_compact` returning `{ summary: "..." }` or `{ cancel: true }`.
 
-## Pattern 6: state rehydration on session start
-
-In-memory state held in module-scope variables is lost on `/reload` and on session switch. Rehydrate it from the session history in `session_start`.
-
-```ts
-let myState: Record<string, unknown> = {};
-
-pi.on("session_start", async (event, ctx) => {
-  for (const entry of ctx.sessionManager.getBranch()) {
-    if (entry.type === "message" && entry.message.role === "toolResult") {
-      if (entry.message.toolName === "my_tool") {
-        myState = entry.message.details?.state ?? {};
-      }
-    }
-  }
-});
-```
-
-Persist the state alongside every tool result you want to survive (in `details`), and rebuild it here on every `session_start` regardless of `reason` — "reload" and "resume" both go through this hook.
-
-## Pattern 7: intercept `!` bash with a custom backend
-
-Route the user's `!cmd` entries through SSH, a container, or a sandbox by returning an `operations` backend built on top of `createLocalBashOperations`:
-
-```ts
-import { createLocalBashOperations } from "@mariozechner/pi-coding-agent";
-
-pi.on("user_bash", (event, ctx) => {
-  const local = createLocalBashOperations();
-  return {
-    operations: {
-      exec(command, cwd, options) {
-        return local.exec(`source ~/.profile\n${command}`, cwd, options);
-      },
-    },
-  };
-});
-```
-
-Alternatively return `{ result: { output, exitCode, cancelled, truncated } }` to skip execution entirely. Nothing → default local execution.
-
 ## Return-value rules
 
 | Event | Return to allow | Return to block | Return to modify |
@@ -259,8 +148,3 @@ Multiple extensions can listen to the same event. Pi runs them in registration o
 2. **Leaking resources on `/reload`.** Hot-reload replaces the extension instance. Subscribe cleanup in `session_shutdown`.
 3. **Infinite loops via `sendUserMessage` inside an event handler.** If you queue a message from `tool_call`, ensure it doesn't cause another matching `tool_call`.
 4. **Mutating `event.messages` in a way the serializer rejects.** Keep the shape — role, content array of typed blocks. Don't invent new roles.
-5. **Losing module-scope state across `/reload` or session switch.** Hydration does not happen automatically — rebuild from `ctx.sessionManager.getBranch()` in `session_start` (Pattern 6).
-
-## Performance notes
-
-`context` and `before_provider_request` run on every LLM call. Keep them cheap. Heavy work (summarisation, external RAG calls) should happen in `turn_end`, `session_before_compact`, or be gated behind a flag you toggle sparingly.

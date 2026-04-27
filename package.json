@@ -5,24 +5,9 @@
   "type": "module",
   "description": "Workspace for building and testing pi agents.",
   "scripts": {
-    "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
-    "agent-composer": "bash -c 'set -a && source models.env && set +a && exec scripts/agent-composer.sh \"$@\"' --",
-    "agent-composer:i": "bash -c 'set -a && source models.env && set +a && exec scripts/agent-composer.sh -i \"$@\"' --",
-    "agent": "bash -c 'set -a && source models.env && set +a && exec scripts/run-agent.sh \"$@\"' --",
-    "agent:i": "bash -c 'set -a && source models.env && set +a && exec scripts/run-agent.sh -i \"$@\"' --",
-    "reverse-pipeline": "bash -c 'set -a && source models.env && set +a && exec tsx scripts/reverse-pipeline/index.ts \"$@\"' --",
-    "test:reverse-pipeline": "node --test --import tsx/esm scripts/reverse-pipeline/__tests__/*.test.ts",
-    "test:grader": "node --test --import tsx/esm scripts/grader/__tests__/*.test.ts",
-    "test:delegate": "node --test --import tsx/esm pi-sandbox/.pi/components/__tests__/*.test.ts",
-    "test:composer": "node --test --import tsx/esm pi-sandbox/.pi/extensions/__tests__/*.test.ts",
-    "test:rails": "node --test --import tsx/esm scripts/lib/__tests__/*.test.ts"
+    "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.69.0"
-  },
-  "devDependencies": {
-    "tsx": "^4.21.0",
-    "yaml": "^2.8.3",
-    "zod": "^4.3.6"
   }
 }

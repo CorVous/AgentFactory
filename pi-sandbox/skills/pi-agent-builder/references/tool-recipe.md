@@ -56,18 +56,7 @@ parameters: Type.Object({
 })
 ```
 
-**Gotcha**: for string enums that need to work with Google/Gemini providers, use the `StringEnum` helper from pi (not `Type.String({ enum: [...] })`) — Google's API is strict about this. `StringEnum` is a **named export** from `@mariozechner/pi-ai`, *not* a method on `Type`. `Type.StringEnum(...)` throws at runtime — import and call it directly:
-
-```ts
-import { StringEnum } from "@mariozechner/pi-ai";
-import { Type } from "typebox";
-
-parameters: Type.Object({
-  verdict: StringEnum(["approve", "revise"] as const, {
-    description: "approve = file is good as-is; revise = send back with feedback",
-  }),
-}),
-```
+**Gotcha**: for string enums that need to work with Google/Gemini providers, use the `StringEnum` helper from pi (not `Type.String({ enum: [...] })`) — Google's API is strict about this.
 
 ### `name` and `label`
 
@@ -113,13 +102,13 @@ async execute(toolCallId, params, signal, onUpdate, ctx) {
 ```ts
 {
   content: Array<{ type: "text"; text: string } | { type: "image"; ... }>,
-  details: Record<string, unknown>,    // REQUIRED — not optional. Pass {} if nothing to say.
+  details?: Record<string, unknown>,  // structured data, not shown to LLM
   isError?: boolean,                   // surfaces as error in UI
   terminate?: boolean,                 // hint to stop after this tool batch (see below)
 }
 ```
 
-The LLM sees `content`. `details` is for your own bookkeeping and for custom renderers — but it is **required** by `AgentToolResult<unknown>`, so a stub tool that has nothing structured to report must still `return { content: [...], details: {} }`. Omitting `details` fails TS compile.
+The LLM sees `content`. `details` is for your own bookkeeping and for custom renderers.
 
 ### Early termination — `terminate: true`
 
@@ -217,39 +206,3 @@ Practical rules:
 ## When to use streaming updates
 
 Call `onUpdate({ status: "..." })` for any operation over ~1 second. The user sees it in the TUI and knows pi hasn't hung. For really long operations (deploys, builds), emit phase updates: `"Building..."`, `"Uploading..."`, `"Waiting for health check..."`.
-
-## Tools that write files
-
-Two patterns, in order of preference:
-
-**Stub-and-harvest (preferred).** The tool's `execute()` returns
-ok without touching disk; the parent harvests the args from the
-NDJSON event stream and does the actual write itself. Reference:
-`pi-sandbox/.pi/components/stage-write.ts`. Pros: child needs no
-`node:fs`, the import scan stays restrictive, the parent gets to
-gate the write (preview, confirm, sha256). Cons: the LLM doesn't
-get synchronous "did it work?" feedback — the parent's notify is
-the channel.
-
-**Privileged in-child write (fallback).** The tool body imports
-`node:fs` and writes directly. Use only when synchronous fs
-feedback in the same turn matters (e.g. `emit-agent-spec.ts`
-writing a YAML spec the LLM needs to confirm landed). Required
-steps:
-
-1. Add the file to `PRIVILEGED_IMPORTS` in
-   `pi-sandbox/.pi/lib/component-policy.ts` listing exactly the
-   `node:*` modules you need (typically `node:fs`, `node:path`).
-2. Add the file to `ROLE_COMPONENTS` in the same file.
-3. Import `validate` from `./cwd-guard.ts` and call it on every
-   absolute path **before** `fs.*Sync` runs. `validate()` does
-   lex+realpath containment against `$PI_SANDBOX_ROOT` and
-   throws on escape, so an LLM-supplied bad path
-   (`name: "../../etc/passwd"`) fails closed.
-
-Reference: `pi-sandbox/.pi/components/emit-agent-spec.ts:153-155`
-for the canonical pattern.
-
-For LLM-driven fs reads/writes (general "let the agent edit
-files"), don't author a tool — request the appropriate `sandbox_*`
-verb in `--tools` and let `sandbox-fs.ts` handle it.

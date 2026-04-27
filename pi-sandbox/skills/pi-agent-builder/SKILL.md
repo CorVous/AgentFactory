@@ -7,16 +7,6 @@ description: Build Pi coding agent extensions and sub-agents in TypeScript. Use 
 
 This skill teaches you to build high-quality extensions and sub-agents for the **Pi coding agent** (`@mariozechner/pi-coding-agent`). Pi is deliberately minimal — it ships a small tool set and defers sub-agents, plan mode, permission gates, browser automation, and similar features to extensions. Your job is to build those extensions well.
 
-> **Before authoring from scratch: check `pi-agent-assembler`.**
-> If the user's request fits one of its documented patterns (recon,
-> drafter-with-approval, confined-drafter, orchestrator), prefer
-> that skill — it composes already-tested parts and is faster and
-> safer for common shapes. Use THIS skill for from-scratch
-> authorship when the assembler flagged a gap, or for shapes the
-> assembler doesn't cover (custom UI widgets, compaction
-> strategies, event-only extensions, context injection, session
-> persistence, pi packages).
-
 The cardinal rule: **when in doubt, read Pi's own docs and source.** Pi is self-documenting — `~/.nvm/.../pi-coding-agent/README.md`, `docs/extensions.md`, `docs/compaction.md`, and `examples/extensions/` are the ground truth. If an API detail isn't in this skill, grep the installed package before guessing.
 
 ## When to use this skill
@@ -53,13 +43,12 @@ export default function (pi: ExtensionAPI) {
 
 | Location | Behavior |
 |---|---|
-| `.pi/extensions/<n>.ts` (project-local) | **Default.** Auto-discovered when pi's cwd is this project; tracked in git so it ships with the repo |
-| `.pi/components/<n>.ts` (project-local) | Curated reusable child-only parts; loaded by a parent extension via `pi -e <abs path>`. Not auto-discovered, so safe for stubs that shadow built-ins (e.g. `stage_write` replacing `write`). |
-| `~/.pi/agent/extensions/<n>.ts` | Global, for user-installed extensions. **Not** where to put an extension you are generating *for a user* — their repo is not your HOME. |
+| `~/.pi/agent/extensions/<n>.ts` | Global, auto-discovered, hot-reloadable via `/reload` |
+| `.pi/extensions/<n>.ts` (project-local) | Auto-discovered in this project only |
 | `pi -e ./path.ts` | Quick test; **not** hot-reloadable |
 | Pi package (npm/git) | Installed via `pi install npm:@scope/name` |
 
-**When in doubt, write to `.pi/extensions/` and `.pi/components/` under the project's sandbox directory** (i.e. relative to pi's current cwd, NOT `$HOME`). An extension that writes to `~/.pi/agent/extensions/` when generating code for a project leaks into the user's global config and is invisible inside their repo — the opposite of what "build me an extension for X project" means.
+Prefer the auto-discovered locations during development. Use `pi -e` only for throwaway experiments.
 
 ## The five things an extension can do
 

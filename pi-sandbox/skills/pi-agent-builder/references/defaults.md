@@ -4,50 +4,6 @@ Apply every rail in this file to every extension you generate, unless the
 user **explicitly** tells you to skip one. Each rail exists because its
 absence caused a real failure in a real session.
 
-## Canonical drafter spawn
-
-For the single-task drafter shape (stage-write stub + user approval
-gate), the worked, copy-ready template lives in the
-pi-agent-assembler skill at
-`pi-sandbox/skills/pi-agent-assembler/patterns/drafter-with-approval.md`.
-Prefer the assembler's skeleton over reconstructing one here — it
-already encodes the rails listed below.
-
-Author from this file only when `pi-agent-assembler` flagged a gap
-(the user's ask doesn't fit any known pattern). In that case, the
-rails to apply when writing a drafter-shape extension are:
-
-- Args check as the first line of the handler. `async (args, ctx)`,
-  not `async (_args, ctx)` — ignoring `args` launches a drafter on
-  an empty task and burns the user's budget on a hardcoded prompt
-  they didn't author.
-- Env check on `process.env.TASK_MODEL` with error exit on unset.
-  No hardcoded model fallback.
-- `sandboxRoot = path.resolve(process.cwd())` pinned once.
-- Child-tool path resolved via
-  `fileURLToPath(import.meta.url)`, not `$HOME` or a hardcoded abs
-  path — the layout must ship with the project.
-- Wrap spawn in `await new Promise(...)` so the handler holds open
-  until the child closes. An async handler that only fires off
-  `spawn(...) + child.on(...)` returns immediately; pi disposes
-  the session and the callbacks later throw *"This extension
-  instance is stale after session replacement or reload."* on
-  `ctx.ui.*` access.
-- Stdout stream callback stays sync — harvest NDJSON into a plain
-  array; do awaitable work (confirm, write) back in the handler
-  body after the Promise resolves. A `(code) => { const ok =
-  await ... }` is a ParseError at module load.
-- `"--provider", "openrouter"` and `"--model", MODEL` as string
-  literals — no `process.env.PI_PROVIDER || "openrouter"` fallback
-  (silently resolves to the wrong provider when the env is unset).
-- `--no-session`, `--no-extensions`, `--thinking off`.
-- `stdio: ["ignore", "pipe", "pipe"]` — pi blocks reading stdin on
-  a pipe even with `-p`.
-- `--tools "stage_write,ls"` — no `read` (see the *Deferred /
-  approval-gated side effects* section below).
-- `setTimeout(...) + child.kill("SIGKILL")` hard cap on the spawn;
-  user-cancel via pi's `signal` does not cover runaway children.
-
 ## For every sub-agent (child `pi` process)
 
 - `--no-extensions` on the child — prevents recursive sub-agents (recursion
@@ -92,158 +48,12 @@ rails to apply when writing a drafter-shape extension are:
   `PLAN_MODEL` for orchestration. Notify an error and return if the env
   var is unset — *do not* silently fall back to a hardcoded model that
   the user didn't pick.
-- `--provider openrouter` as a **literal string** on every child.
-  Not `process.env.PI_PROVIDER`, not `process.env.PROVIDER ||
-  "openrouter"`, and not any other env-var indirection — in this
-  repo, openrouter is the one provider we test against, so hardcode
-  it. An optional env fallback silently resolves to the wrong
-  provider when the env var isn't set, and a model ID with a
-  provider prefix like `deepseek/deepseek-v3.2` will otherwise route
-  to that provider's direct API, which usually has no API key
-  configured and stalls. (If downstream forks need a different
-  provider, they can fork this file.)
+- `--provider openrouter` (or whatever your project standardizes on)
+  explicitly on every child. A model ID with a provider prefix like
+  `deepseek/deepseek-v3.2` will otherwise route to that provider's
+  direct API, which usually has no API key configured and stalls.
 - Pass `--no-session` unless the child's session needs to feed back into
   parent state.
-
-### Persistent RPC sub-agents (single-spawn across phases)
-
-When one child LLM must run across multiple phases (dispatch → review
-→ revise) and *keep its conversation history*, don't respawn. Use
-`--mode rpc` instead of `--mode json -p`. Rails:
-
-- `--mode rpc` instead of `-p "<prompt>"`. The prompt arrives via
-  stdin as `{"type":"prompt","message":"…"}\n` per turn. Stdout is
-  the same NDJSON event stream as `--mode json`.
-- **stdin must stay open for the life of the session** (don't
-  `stdio: ["ignore", ...]` here — the child needs to read prompts).
-  `stdio: ["pipe", "pipe", "pipe"]`.
-- Line-buffer stdout yourself. Events arrive as `\n`-delimited JSON;
-  split on the last `\n` and keep the trailing partial line as a
-  buffer for the next chunk.
-- **RPC cannot re-scope `--tools` between phases.** Pass the *union*
-  of tools any phase will need (e.g. `--tools run_deferred_writer,review`)
-  and narrow per phase via the prompt that opens the phase ("In this
-  turn, call run_deferred_writer once per subtask, then reply DONE").
-  This is a genuine least-privilege rail — the union stays small and
-  excludes every built-in (`bash`/`read`/`grep`/`write`).
-- Still pass `--no-extensions --no-session --thinking off` and a
-  tier-appropriate `--provider openrouter --model "$LEAD_MODEL"`.
-- Still wrap the whole session in a hard timeout (SIGKILL ceiling),
-  still forward the parent's `AbortSignal`, still pin `cwd`.
-- Accumulate cost from `message_end` events (see *Cost tracking*
-  below). In RPC mode you sum across phases; one child, one running
-  total.
-
-Reference: `.pi/extensions/delegated-writer.ts`.
-
-### UI: dashboards and notifies
-
-Pi exposes two persistent-UI channels on `ctx.ui` alongside the
-ephemeral `notify`:
-
-- `ctx.ui.setWidget(key, lines | undefined)` — renders a multi-line
-  block above the editor. Each call with the same `key` replaces the
-  previous content. Pass `undefined` to clear.
-- `ctx.ui.setStatus(key, text | undefined)` — renders a single-line
-  status entry in the bottom status bar. Same key semantics.
-
-Both are fire-and-forget (no await, no return value). Both **may be
-absent** on clients other than the interactive TUI (notably the RPC
-client), so guard every call: `ctx.ui.setWidget?.(key, lines)` and
-wrap in `try { … } catch {}`. Always clear both in `finally`.
-
-Use `setWidget`/`setStatus` for **live progress** that must stay on
-screen (per-child phase, verdicts, accumulating cost). Use `notify`
-only for (a) terminal errors and (b) a single combined final success
-notify on completion — `showStatus` (the info-level `notify` renderer
-at `dist/modes/interactive/interactive-mode.js:2375`) *replaces* the
-previous status line in place when two info-level notifies fire
-back-to-back, so mid-run `notify` calls silently overwrite each
-other. Two ways to sidestep the collapse: combine into one multi-line
-notify, or interleave a non-info level between them.
-
-### Cost tracking (always on)
-
-This is a rail, not an option. Every extension that spawns one or
-more LLM children MUST track and surface cost:
-
-- Accumulate `message.usage.cost.total` from every `message_end`
-  event the child emits. Track per tier separately when you have
-  multiple (e.g. one delegator total + one aggregated drafter total)
-  so the breakdown is legible.
-- Surface a **running total in the status bar** while the command
-  runs (`ctx.ui.setStatus(DASHBOARD_KEY, \`cost: $\${total.toFixed(4)}\`)`).
-  Users watch it climb and kill runaway sessions early.
-- Include the total + per-tier breakdown in the **combined final
-  success notify** (alongside the list of promoted files).
-- On every bail-out path — timeout, max-revisions exceeded, hard
-  error, user abort — still emit a `Session cost (no promotion): $X`
-  notify before returning. Silent bail-outs hide what was spent.
-- A provider that omits the cost field must render as `$0.0000`,
-  never throw. Treat `message?.usage?.cost?.total ?? 0` as the
-  accumulator step.
-
-### Tool allowlist (always on)
-
-Every child LLM gets the minimum tool surface for its role; "just in
-case" is not a reason to add a tool.
-
-- One-shot children: pass `--tools <comma-list>` with exactly the
-  verbs the role needs. Examples: drafter → `stage_write,ls` (no
-  `read` — the drafter produces new files, it does not read existing
-  ones); reviewer → `review`; dispatcher → `run_deferred_writer`.
-- RPC children: see *Persistent RPC sub-agents* above — pass the
-  union of per-phase tools and enforce phase narrowing via the
-  prompt that opens each phase.
-- Built-in tools the role does **not** need (`bash`, `read`, `grep`,
-  `write`, `edit`, `glob`, `ls`, `task`) must not appear in the
-  spawn command. Default tool sets on coding-agent models cause
-  spontaneous `bash`/`read` calls that burn turns.
-- If the child needs a stub tool that shadows a built-in (a
-  `stage_write` standing in for `write`), load it via `-e <absolute
-  path>` *and* pass `--no-extensions` so the only way that tool name
-  resolves is to the stub.
-
-This rail pairs with the sandbox rails in *For every writer /
-mutator* below — a narrow allowlist is how you prove the child
-*can't* write outside the staged channel.
-
-### Component fs access (always on)
-
-When authoring a new component under `pi-sandbox/.pi/components/`,
-follow the privileged-vs-stub split:
-
-- **Default: pure stub.** The child registers a stub tool that
-  takes the LLM's intent as args and returns ok; the parent
-  harvests args from the NDJSON event stream and performs any
-  fs/network/state-changing work itself. No `node:fs` import in
-  the child. Reference: `stage-write.ts`, `emit-summary.ts`,
-  `review.ts`, `run-deferred-writer.ts`. The repo's import scan
-  (`pi-sandbox/.pi/lib/component-policy.ts`) rejects any
-  unprivileged component that imports `node:fs`,
-  `node:child_process`, `node:net`, etc.
-- **For LLM-driven fs.** Don't author a custom tool — request the
-  appropriate `sandbox_*` verb in `--tools`. `sandbox-fs.ts` is
-  auto-injected by `delegate()` (and the YAML runner) whenever a
-  sandbox verb appears, and registers exactly the requested
-  subset.
-- **Privileged exception (rare).** If you genuinely need
-  synchronous fs feedback in the child's `execute()` (like
-  `emit-agent-spec.ts` writing a YAML spec), three steps:
-  1. Add an entry to `PRIVILEGED_IMPORTS` in
-     `pi-sandbox/.pi/lib/component-policy.ts` listing exactly the
-     `node:*` modules you need.
-  2. Add the file to `ROLE_COMPONENTS` in the same file (so the
-     path allowlist accepts it).
-  3. Import `validate` from `./cwd-guard.ts` and call it on every
-     absolute path immediately before the `fs.*` call. `validate()`
-     does lex+realpath containment against `$PI_SANDBOX_ROOT`.
-- **cwd-guard's auditor backstops every spawn.** Even if you
-  forget to call `validate()` in your tool body, cwd-guard's
-  child-side `pi.on("tool_call")` handler walks args for
-  absolute-path strings on every tool call and rejects out-of-cwd
-  paths. Defense-in-depth, not a substitute for per-body
-  validation.
 
 ## For every slash command
 
@@ -298,47 +108,32 @@ zero artifacts on disk.
 
 ### In-memory variant (preferred)
 
-The worked implementation of this variant (stub tool + parent-side
-harvesting + confirm gate + promotion with sha256 verification) is
-the `drafter-with-approval` pattern in pi-agent-assembler. See
-`pi-sandbox/skills/pi-agent-assembler/patterns/drafter-with-approval.md`
-and `pi-sandbox/skills/pi-agent-assembler/parts/stage-write.md` for
-the canonical skeleton; use that skill when the ask matches rather
-than reconstructing here.
-
-The *principles* that make the variant work, for authorship from
-scratch when the assembler flagged a gap:
-
-- The stub tool's `execute` is a no-op; the parent harvests
-  `{path, content}` from `tool_execution_start` NDJSON events
-  (`e.args.path`, `e.args.content` — NOT `e.toolCall.input`).
-  Nothing touches disk until promotion.
-- The stub file MUST use the factory shape
-  (`export default function (pi: ExtensionAPI) { pi.registerTool({…}) }`)
-  — a bare `const stage_write: Tool = { … }; export default stage_write;`
-  loads under `pi -e` without error but registers nothing, and the
-  parent collects zero staged writes.
-- Tool results MUST include `details`; the TS `AgentToolResult`
-  constraint refuses to compile without it. `details: {}` is the
-  correct value for a stub with nothing structured to report.
-- Resolve the stub's abs path from
-  `fileURLToPath(import.meta.url)` relative to the parent
-  extension's own file — not from `$HOME`, not hardcoded. The
-  layout must ship with the project.
-- Spawn the child with `--tools stage_write,ls` — no `read` unless
-  the drafter genuinely needs prior-file context (surface that in
-  the prompt instead where possible; `read` weakens the
-  "stage_write is the only write channel" guarantee).
-- After the child exits, validate each staged entry (string
-  checks, no absolute path, no `..`, sandbox-root check, no
-  pre-existing destination, byte cap per file) before preview.
-- `ctx.ui.confirm` with absolute destinations + byte counts + sha
-  prefix + first N lines of each draft.
-- On approval: `fs.writeFileSync`, re-sha to verify, notify. On
-  refusal: notify "Cancelled"; drafts are unused memory that GC
-  reaps.
-- Cap `MAX_FILES_PROMOTABLE` (50) and per-file `MAX_CONTENT_BYTES`
-  (2 MB) for blast-radius control.
+- Write a small "stub" tool (e.g. `stage_write({ path, content })`) in
+  its own file *outside* the auto-discovered extensions path (e.g.
+  `.pi/child-tools/stage-write.ts`). Its `execute` body is a no-op that
+  just returns `{ content: [{ type: "text", text: "Drafted …" }], details: {} }`.
+- Spawn the child with `-e <abs path to stub tool> --no-extensions --tools stage_write,ls,read`.
+  The child can read the real project (via `ls`/`read` on absolute paths
+  under `sandboxRoot`) but has no `write` tool — `stage_write` is its
+  only channel for producing files.
+- In `--mode json` the child emits `{"type":"tool_execution_start",
+  "toolName":"stage_write", "args": {"path": "...", "content": "..."}}`
+  for every call. The parent harvests `e.args.path` and `e.args.content`
+  from those events and accumulates them in its own memory. Nothing
+  touches disk.
+- After the child exits, validate each staged entry (type checks on
+  path/content, no absolute, no `..`, sandbox-root check, no pre-existing
+  destination, byte-size cap per file) and build a preview.
+- `ctx.ui.confirm` with absolute destinations + byte counts + sha prefix
+  + first N lines of each draft.
+- On approval: `fs.writeFileSync(destAbs, content, "utf8")`, re-sha to
+  verify, notify. On refusal: notify "Cancelled"; drafts are simply
+  unused memory that GC reaps.
+- Cap `MAX_FILES_PROMOTABLE` (50 is reasonable) and a per-file
+  `MAX_CONTENT_BYTES` (2 MB is reasonable) for blast-radius control.
+- **Field name gotcha:** `tool_execution_start` events put the arguments
+  at `e.args`, **not** `e.toolCall.input`. Don't assume; inspect a real
+  event once before writing the parser.
 
 ### Filesystem variant (fallback)
 

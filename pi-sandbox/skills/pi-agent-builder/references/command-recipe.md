@@ -13,7 +13,7 @@ export default function (pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const usage = ctx.getContextUsage();
       if (!usage) {
-        ctx.ui.notify("No usage data yet", "warning");
+        ctx.ui.notify("No usage data yet", "warn");
         return;
       }
       ctx.ui.notify(`Context: ${usage.tokens.toLocaleString()} tokens`, "info");
@@ -27,14 +27,8 @@ The user runs `/stats` in the TUI, the handler fires.
 ## Fields
 
 - `description` — shown in `/help` and in autocomplete. Keep it one line.
-- `handler(args, ctx)` — `args` is a **`string`**, not an object. It's the raw text after the command name. There is no `args.task`, `args.model`, `args.flags`, etc. — pi does no parsing; you do. Parse it yourself (see below).
+- `handler(args, ctx)` — `args` is the **raw string** after the command name (everything after `/stats `). Parse it yourself.
 - `aliases?: string[]` — optional alternate names.
-
-> **Anti-pattern:** writing `args.task`, `args.model`, or any other
-> property access on `args`. TypeScript lets this through with an
-> `any`-inferred receiver at runtime, so the handler silently reads
-> `undefined` and forwards it to child processes, env lookups, or
-> prompts. Every `args.foo` in a command handler is a bug.
 
 ## Argument parsing
 
