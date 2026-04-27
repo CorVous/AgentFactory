@@ -62,11 +62,8 @@ export default function (pi: ExtensionAPI) {
         container.addChild(new Text(head + tail, 1, 0));
       }
       if (typeLabel || description) {
-        const sep = theme.fg("dim", " · ");
-        const parts: string[] = [];
-        if (typeLabel) parts.push(theme.fg("dim", typeLabel));
-        if (description) parts.push(theme.fg("dim", description));
-        container.addChild(new Text(parts.join(sep), 1, 0));
+        const text = [typeLabel, description].filter((s) => s.length > 0).join(" · ");
+        container.addChild(new Text(theme.fg("dim", text), 1, 0));
       }
       return container;
     });
