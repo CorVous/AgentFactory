@@ -97,6 +97,33 @@ function makePrefix(name, idx) {
   return `${COLORS[idx % COLORS.length]}[${name}]${RESET} `;
 }
 
+// Extract a short human-readable summary from a pi RPC JSON event line.
+// Returns a string to display, or null to suppress the line.
+function formatRpcLine(line) {
+  let ev;
+  try { ev = JSON.parse(line); } catch { return null; }
+  if (!ev || typeof ev !== "object") return null;
+  switch (ev.type) {
+    case "turn_start":    return "(thinking…)";
+    case "turn_end":      return null;
+    case "agent_start":   return null;
+    case "agent_end":     return null;
+    case "message_end": {
+      const msg = ev.message;
+      if (!msg || msg.role !== "assistant") return null;
+      const parts = [];
+      for (const c of (msg.content ?? [])) {
+        if (c.type === "text" && c.text) parts.push(c.text.trim());
+      }
+      return parts.length > 0 ? parts.join(" ") : null;
+    }
+    case "extension_error":
+      return `[extension error] ${ev.event}: ${ev.error}`;
+    default:
+      return null;
+  }
+}
+
 function attachPrefixedOutput(child, prefix) {
   let stdoutBuf = "";
   child.stdout?.setEncoding("utf8");
@@ -104,8 +131,10 @@ function attachPrefixedOutput(child, prefix) {
     stdoutBuf += chunk;
     let nl;
     while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
-      process.stdout.write(prefix + stdoutBuf.slice(0, nl) + "\n");
+      const line = stdoutBuf.slice(0, nl);
       stdoutBuf = stdoutBuf.slice(nl + 1);
+      const formatted = formatRpcLine(line);
+      if (formatted !== null) process.stdout.write(prefix + formatted + "\n");
     }
   });
 
