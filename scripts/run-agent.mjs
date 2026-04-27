@@ -270,16 +270,22 @@ piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 
+const recipeSkills = Array.isArray(recipe.skills) ? recipe.skills.filter((s) => typeof s === "string") : [];
+
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
   // Mirror the agent name + bus root + rpc sock into env vars so
   // extensions that can't read the CLI flags via pi.getFlag (which is
-  // scoped per extension) still see them.
+  // scoped per extension) still see them. Skills and allowed-agents
+  // are mirrored too so agent-footer can render them on its third
+  // line without duplicating flag registrations.
   env: {
     ...process.env,
     PI_AGENT_NAME: agentName,
     PI_AGENT_BUS_ROOT: busRoot,
+    PI_AGENT_SKILLS: recipeSkills.join(","),
+    PI_AGENT_AGENTS: wired.allowed.join(","),
     ...(rpcSock ? { PI_RPC_SOCK: rpcSock } : {}),
   },
 });
