@@ -40,13 +40,14 @@ stable peer name on the bus.
   reference features focused agents don't use.
 - `agent-header` — replaces the (now-empty) header with a banner that
   shows the agent name (bold accent), optionally suffixed dim with the
-  model tier (e.g. `Cottontail Writer · Task Rabbit`), and the recipe's
-  `description:` field on the next line (dim). Reads the `--agent-name`,
-  `--agent-description`, and `--agent-tier` flags; the runner sets all
-  three from the generated `<breed>-<shortName>` slug,
-  `description:`, and `model:` (the tier suffix is skipped when `model:`
-  is a literal model ID rather than a tier var). The slug is rendered
-  via the shared `prettify` helper in
+  model tier (e.g. `Cottontail Writer · Task Rabbit`), and on the next
+  line (dim) the prettified recipe filename joined with the recipe's
+  `description:` (e.g. `Deferred Writer · Drafts files in memory; …`).
+  Reads `--agent-name`, `--agent-description`, `--agent-tier`, and
+  `--agent-type`; the runner sets them from the generated
+  `<breed>-<shortName>` slug, `description:`, `model:` (tier suffix
+  skipped for literal model IDs), and the recipe filename
+  respectively. Slugs are rendered via the shared `prettify` helper in
   `pi-sandbox/.pi/extensions/_lib/agent-naming.ts` (title-case each
   hyphen-segment, join with spaces). Each flag can be passed on the
   `npm run agent --` line to override the recipe (passthrough flags

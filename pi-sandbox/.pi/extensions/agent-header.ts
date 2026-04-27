@@ -39,14 +39,20 @@ export default function (pi: ExtensionAPI) {
     description: "Model tier var name (e.g. TASK_RABBIT_MODEL) appended dim after the agent name",
     type: "string",
   });
+  pi.registerFlag("agent-type", {
+    description: "Recipe filename (e.g. deferred-author); prettified into a type label before the description",
+    type: "string",
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     const name = (pi.getFlag("agent-name") as string | undefined)?.trim();
     const description = (pi.getFlag("agent-description") as string | undefined)?.trim();
     const tier = (pi.getFlag("agent-tier") as string | undefined)?.trim();
-    if (!name && !description) return;
+    const type = (pi.getFlag("agent-type") as string | undefined)?.trim();
+    if (!name && !description && !type) return;
 
     const tierLabel = tier ? formatTier(tier) : "";
+    const typeLabel = type ? prettify(type) : "";
 
     ctx.ui.setHeader((_tui, theme) => {
       const container = new Container();
@@ -55,8 +61,12 @@ export default function (pi: ExtensionAPI) {
         const tail = tierLabel ? theme.fg("dim", ` · ${tierLabel}`) : "";
         container.addChild(new Text(head + tail, 1, 0));
       }
-      if (description) {
-        container.addChild(new Text(theme.fg("dim", description), 1, 0));
+      if (typeLabel || description) {
+        const sep = theme.fg("dim", " · ");
+        const parts: string[] = [];
+        if (typeLabel) parts.push(theme.fg("dim", typeLabel));
+        if (description) parts.push(theme.fg("dim", description));
+        container.addChild(new Text(parts.join(sep), 1, 0));
       }
       return container;
     });

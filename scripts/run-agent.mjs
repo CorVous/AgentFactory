@@ -334,6 +334,9 @@ if (wired.allowed.length > 0) piArgs.push("--allowed-agents", wired.allowed.join
 if (typeof recipe.description === "string" && recipe.description.trim()) {
   piArgs.push("--agent-description", recipe.description.trim());
 }
+// Recipe filename, prettified by the header into a "type" label rendered
+// before the description on line 2 (e.g. "Deferred Author · Drafts …").
+piArgs.push("--agent-type", args.name);
 if (TIER_VARS.has(recipeModel)) {
   piArgs.push("--agent-tier", recipeModel);
 }
