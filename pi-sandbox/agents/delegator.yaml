@@ -1,10 +1,17 @@
-# Delegator — demo agent for the agent-spawn extension. Spawns a child
-# agent from another recipe via `delegate(recipe, task)` and blocks
-# until the child exits, returning its captured stdout.
+# Delegator — demo agent for the agent-spawn extension. Decomposes
+# the user's request into focused subtasks and dispatches each to a
+# child agent via `delegate`. Children that queue file drafts pause
+# until the delegator reviews them and calls `approve_delegation`.
 #
-# Compose with peer-chatter (or any other recipe) as the worker target:
-#   npm run agent -- delegator --sandbox /tmp/p
+# `agents:` declares the closed allowlist of recipes this delegator
+# can spawn. The runner (scripts/run-agent.mjs) auto-loads the
+# agent-spawn extension and wires the `delegate` and
+# `approve_delegation` tools — declaring them again here would be
+# redundant but harmless.
+#
+# Run: npm run agent -- delegator --sandbox /tmp/p
 #   > "delegate to recipe peer-chatter with task 'list files in cwd'"
+#   > "delegate to recipe deferred-writer with task 'draft README.md'"
 
 model: LEAD_HARE_MODEL
 
@@ -16,25 +23,42 @@ prompt: |
 
   Tools:
   - `delegate({recipe, task, sandbox?, timeout_ms?})` — spawns a child
-    agent from pi-sandbox/agents/<recipe>.yaml in print mode (`-p`),
-    blocks until it exits, returns its stdout. The child runs through
-    the same runner as `npm run agent`, so it gets the full baseline
-    rails (sandbox, no-edit if its recipe loads it).
+    agent from pi-sandbox/agents/<recipe>.yaml as a subprocess. If the
+    child finishes without queuing file drafts, the tool returns the
+    captured stdout. If the child queues drafts, the tool returns a
+    preview and a `delegation_id`; the child is paused awaiting your
+    decision.
+  - `approve_delegation({id, approved, escalate?, comment?})` — resumes
+    a paused child. Pass `approved: true` to apply the drafts (files
+    land on disk in the child's sandbox), `approved: false` to discard
+    them, or `escalate: true` to ask the human for the call instead.
+    You MUST call this after every paused delegation; if you skip it
+    the child times out and its drafts are dropped.
   - `read`, `ls`, `grep` — local fs (sandboxed) for picking the right
     recipe and crafting the task prompt.
 
   Rules:
   - Pick the smallest recipe that fits the subtask. Read
-    pi-sandbox/agents/ to see what's available.
-  - Each `delegate` call is blocking and adds startup latency (a fresh
-    pi process). Don't delegate trivial work you could do inline.
+    pi-sandbox/agents/ to see what's available; the runner restricts
+    you to the recipes listed under `agents:` below.
+  - Each `delegate` call spawns a fresh pi process — there's startup
+    latency. Don't delegate trivial work you could do inline.
+  - When a delegation pauses, READ the preview before deciding.
+    Auto-approve if the drafts match the task; reject if they don't;
+    escalate if you're genuinely unsure. Don't escalate routinely —
+    that's a sign the task you handed off was too vague.
   - Summarise child output in your reply; don't dump raw stdout.
+
+agents:
+  - change-reviewer
+  - code-reviewer
+  - deferred-author
+  - deferred-editor
+  - deferred-writer
+  - peer-chatter
+  - writer-foreman
 
 tools:
   - read
   - ls
   - grep
-  - delegate
-
-extensions:
-  - agent-spawn

@@ -102,6 +102,50 @@ function loadRecipe(name) {
   return recipe;
 }
 
+// Implicit-wire the agent-spawn extension and its tools when a recipe
+// declares `agents: [...]`. Mirrors the conditional `usesBus` push for
+// --agent-bus-root: only push --allowed-agents when agent-spawn actually
+// runs, otherwise pi rejects the flag as unknown.
+//
+// Inverse rejection: if a recipe loads agent-spawn or its tools without
+// declaring `agents:`, that's a misconfiguration — fail loudly so the
+// allowlist is never accidentally empty.
+function applyAgentsField(recipe, name) {
+  const declared = Array.isArray(recipe.agents) ? recipe.agents.filter((a) => typeof a === "string") : [];
+  const explicitExts = Array.isArray(recipe.extensions) ? recipe.extensions.slice() : [];
+  const explicitTools = Array.isArray(recipe.tools) ? recipe.tools.slice() : [];
+  const SPAWN_TOOLS = ["delegate", "approve_delegation"];
+
+  if (declared.length === 0) {
+    if (explicitExts.includes("agent-spawn")) {
+      die(
+        `recipe ${name} loads extension 'agent-spawn' but has no 'agents:' list — ` +
+          `declare which child recipes are allowed (or drop the extension)`,
+      );
+    }
+    for (const t of SPAWN_TOOLS) {
+      if (explicitTools.includes(t)) {
+        die(
+          `recipe ${name} declares tool '${t}' but has no 'agents:' list — ` +
+            `declare which child recipes are allowed (or drop the tool)`,
+        );
+      }
+    }
+    return { allowed: [], extensions: explicitExts, tools: explicitTools };
+  }
+
+  for (const a of declared) {
+    if (!existsSync(path.join(AGENTS_DIR, `${a}.yaml`))) {
+      die(`recipe ${name} agents: lists '${a}', but pi-sandbox/agents/${a}.yaml does not exist`);
+    }
+  }
+
+  const extensions = explicitExts.includes("agent-spawn") ? explicitExts : [...explicitExts, "agent-spawn"];
+  const tools = explicitTools.slice();
+  for (const t of SPAWN_TOOLS) if (!tools.includes(t)) tools.push(t);
+  return { allowed: declared, extensions, tools };
+}
+
 function resolveModel(tierOrId) {
   const requested = tierOrId || "TASK_RABBIT_MODEL";
   if (TIER_VARS.has(requested)) {
@@ -148,7 +192,8 @@ if (!existsSync(sandboxRoot)) die(`sandbox dir does not exist: ${sandboxRoot}`);
 
 const recipeModel = recipe.model || "TASK_RABBIT_MODEL";
 const model = resolveModel(recipeModel);
-const extensionPaths = resolveExtensionPaths(Array.isArray(recipe.extensions) ? recipe.extensions : []);
+const wired = applyAgentsField(recipe, args.name);
+const extensionPaths = resolveExtensionPaths(wired.extensions);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
 const piArgs = [
@@ -160,7 +205,7 @@ const piArgs = [
   "--model",
   model,
   "--tools",
-  recipe.tools.join(","),
+  wired.tools.join(","),
   "--system-prompt",
   recipe.prompt,
 ];
@@ -187,11 +232,11 @@ const busRoot =
   args.agentBus ||
   process.env.PI_AGENT_BUS_ROOT ||
   path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
-// Only push --agent-bus-root when agent-bus is loaded; otherwise pi
-// rejects the flag as unknown.
-const recipeExtensions = Array.isArray(recipe.extensions) ? recipe.extensions : [];
-const usesBus = recipeExtensions.includes("agent-bus");
+// Only push extension-owned flags when their owning extension is
+// actually loaded; otherwise pi rejects the flag as unknown.
+const usesBus = wired.extensions.includes("agent-bus");
 if (usesBus) piArgs.push("--agent-bus-root", busRoot);
+if (wired.allowed.length > 0) piArgs.push("--allowed-agents", wired.allowed.join(","));
 if (typeof recipe.description === "string" && recipe.description.trim()) {
   piArgs.push("--agent-description", recipe.description.trim());
 }
