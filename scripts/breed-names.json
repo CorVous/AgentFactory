@@ -1,0 +1,42 @@
+{
+  "rabbits": [
+    "cottontail",
+    "flemish",
+    "holland",
+    "rex",
+    "angora",
+    "lionhead",
+    "dutch",
+    "harlequin",
+    "polish",
+    "english",
+    "tan",
+    "havana",
+    "silver",
+    "chinchilla",
+    "californian",
+    "newzealand",
+    "beveren",
+    "champagne",
+    "cinnamon",
+    "britannia",
+    "satin",
+    "thrianta",
+    "mini",
+    "netherland",
+    "lopear"
+  ],
+  "hares": [
+    "jackrabbit",
+    "snowshoe",
+    "arctic",
+    "mountain",
+    "european",
+    "cape",
+    "antelope",
+    "hispid",
+    "brown",
+    "blacktailed",
+    "whitetailed"
+  ]
+}

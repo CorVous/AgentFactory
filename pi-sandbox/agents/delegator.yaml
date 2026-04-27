@@ -13,6 +13,7 @@
 #   > "delegate to recipe deferred-writer with task 'draft README.md'"
 
 model: LEAD_HARE_MODEL
+shortName: captain
 
 description: Planner that delegates focused subtasks to a child agent recipe.
 

@@ -4,6 +4,7 @@
 # `npm run agent` from (or --sandbox <dir>).
 
 model: TASK_RABBIT_MODEL
+shortName: author
 
 description: Drafts writes, edits, moves, and deletes; user approves the whole batch at end of turn.
 

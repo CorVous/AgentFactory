@@ -6,6 +6,27 @@ The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
 from the directory you invoked it from (or `--sandbox <dir>`). Every
 agent gets six baseline extensions:
 
+## Per-instance names
+
+Every agent instance — user-launched root or delegated child — is named
+`<breed>-<shortName>`. The breed is a randomly-picked rabbit (or a hare
+if `model:` is `LEAD_HARE_MODEL`); the short name comes from the
+recipe's optional `shortName:` field, falling back to the recipe
+filename stem. The slug is filesystem-safe and doubles as the
+`agent-bus` socket identity; the header prettifies it for display (so
+`cottontail-writer` renders as "Cottontail Writer"). Breed pools live
+in [`scripts/breed-names.json`](../scripts/breed-names.json) and the
+generator + collision detection in
+[`scripts/agent-naming.mjs`](../scripts/agent-naming.mjs).
+
+Collision detection runs in two places: `agent-spawn` tracks in-flight
+sibling slugs in its `state.pending` registry so two parallel
+`deferred-writer` children always get different breeds; the runner
+probes `${BUS_ROOT}/*.sock` so a second `peer-chatter` launched in
+another terminal won't pick a breed that's already bound. `--agent-name
+<override>` in passthrough still wins for both — useful when you want a
+stable peer name on the bus.
+
 - `sandbox` — blocks `bash` outright and rejects any path-bearing tool
   call whose `path` resolves outside the sandbox root. The set of
   path-bearing tools is discovered at session start from
@@ -18,15 +39,20 @@ agent gets six baseline extensions:
   keybinding cheatsheet, onboarding tips) since most of those keybindings
   reference features focused agents don't use.
 - `agent-header` — replaces the (now-empty) header with a banner that
-  shows the agent name (bold accent), optionally suffixed dim with the
-  model tier (e.g. `deferred-writer · Task Rabbit`), and the recipe's
-  `description:` field on the next line (dim). Reads the `--agent-name`,
-  `--agent-description`, and `--agent-tier` flags; the runner sets all
-  three from the recipe filename, `description:`, and `model:` (the
-  tier suffix is skipped when `model:` is a literal model ID rather
-  than a tier var). Each flag can be passed on the `npm run agent --`
-  line to override the recipe (passthrough flags come after
-  recipe-derived ones, so the CLI value wins).
+  shows the agent's full display name (bold accent) — the breed from
+  the `<breed>-<shortName>` slug joined with the prettified recipe
+  filename, e.g. `Cottontail Deferred Writer` — optionally suffixed
+  dim with the model tier (e.g. `· Task Rabbit`), and the recipe's
+  `description:` field on the next line (dim). Reads `--agent-name`,
+  `--agent-description`, `--agent-tier`, and `--agent-type`; the
+  runner sets them from the generated `<breed>-<shortName>` slug,
+  `description:`, `model:` (tier suffix skipped for literal model
+  IDs), and the recipe filename respectively. Slug segments are
+  rendered via the shared `prettify` helper in
+  `pi-sandbox/.pi/extensions/_lib/agent-naming.ts` (title-case each
+  hyphen-segment, join with spaces). Each flag can be passed on the
+  `npm run agent --` line to override the recipe (passthrough flags
+  come after recipe-derived ones, so the CLI value wins).
 - `agent-footer` — replaces pi's default footer. Line 1 shows the
   sandbox root on the left and the comma-separated active tools (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
@@ -107,6 +133,7 @@ npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthro
 ```yaml
 # pi-sandbox/agents/<name>.yaml
 model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal model ID
+shortName: writer                 # optional; used in the generated <breed>-<shortName> instance slug. Falls back to the filename stem.
 description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # the agent's role, prepended with extension fragments
   You are a careful drafter...
@@ -461,12 +488,16 @@ Registers three tools and one CLI flag:
   `--agent-bus <dir>` (parallel to `--sandbox <dir>`) to override.
 
 Each agent listens on `${BUS_ROOT}/${name}.sock` (name comes from
-`--agent-name`, which the runner sets from the recipe filename or a
-passthrough override). Incoming messages buffer in an in-memory inbox
-and, between turns, are pushed into the agent's next turn via
-`pi.sendUserMessage("[from <peer>] <body>")`. Mid-turn arrivals are
-held in a `pendingDuringTurn` queue and drained at `turn_end` so the
-live LLM call is never interrupted.
+`--agent-name`, which the runner sets to a generated
+`<breed>-<shortName>` slug — unique per instance — unless the
+`-- --agent-name <override>` passthrough wins). The runner probes the
+bus root before generating so two roots launched in different terminals
+won't collide; explicit overrides are needed when peers want to address
+each other by a stable role name (e.g. `planner`, `worker-a`). Incoming
+messages buffer in an in-memory inbox and, between turns, are pushed
+into the agent's next turn via `pi.sendUserMessage("[from <peer>]
+<body>")`. Mid-turn arrivals are held in a `pendingDuringTurn` queue
+and drained at `turn_end` so the live LLM call is never interrupted.
 
 The bus root deliberately lives **outside** `--sandbox-root` so the
 `sandbox` extension's path-rejection doesn't trip on socket paths. The
@@ -497,7 +528,12 @@ extensions lets recipes mix exactly the relationship they need.
 
 ### Verifying the multi-agent rails under tmux
 
-Same pattern as the rails-debug section above. Two panes:
+Same pattern as the rails-debug section above. Two panes — note the
+explicit `-- --agent-name <override>` on each, which is what lets the
+two peers find each other by a stable role name. Without the override
+each instance would get a unique generated slug (`<breed>-chatter`),
+fine for distinguishing instances in logs but useless for `agent_send`
+targeting:
 
 ```sh
 set -a; source models.env; set +a

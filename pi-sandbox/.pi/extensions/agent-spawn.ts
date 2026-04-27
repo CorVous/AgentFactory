@@ -60,6 +60,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { parse as parseYaml } from "yaml";
+import { generateInstanceName } from "./_lib/agent-naming";
 import { requestHumanApproval, type ApprovalRequest } from "./deferred-confirm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +95,10 @@ interface DelegationStatus {
 interface PendingDelegation {
   id: string;
   recipe: string;
+  /** Pre-generated `<breed>-<shortName>` slug. Mirrored on the
+   *  delegation-boxes PendingEntry so the box title shows the unique
+   *  name from delegate-time, before any status envelope arrives. */
+  agentName: string;
   child: ChildProcess;
   startedAt: number;
   timeoutMs: number;
@@ -146,6 +152,27 @@ function getState(): SpawnState {
 function parseFlagList(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/** Read the child recipe's `shortName:` and `model:` so the parent can
+ *  pre-generate a unique `<breed>-<shortName>` slug for the child.
+ *  Tier (`LEAD_HARE_MODEL` etc.) drives the rabbit-vs-hare branch in
+ *  `generateInstanceName`. Best-effort: malformed YAML falls back to
+ *  the recipe filename and rabbit pool. */
+function readChildRecipeMeta(recipeName: string): { shortName?: string; tier?: string } {
+  try {
+    const file = path.join(AGENTS_DIR, `${recipeName}.yaml`);
+    const recipe = parseYaml(fs.readFileSync(file, "utf8")) as {
+      shortName?: unknown;
+      model?: unknown;
+    };
+    return {
+      shortName: typeof recipe.shortName === "string" ? recipe.shortName : undefined,
+      tier: typeof recipe.model === "string" ? recipe.model : undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 function appendBuffer(buf: { value: string; truncated?: boolean }, chunk: Buffer, max: number): void {
@@ -408,6 +435,24 @@ export default function (pi: ExtensionAPI) {
         });
       });
 
+      // Pre-generate the child's instance name so we know it before the
+      // child has booted and sent its first status envelope. The runner
+      // already treats `--agent-name` in passthrough as a manual override
+      // (see scripts/run-agent.mjs around the agentName branch), so the
+      // value we pass here wins over the runner's own generation path.
+      const meta = readChildRecipeMeta(params.recipe);
+      const childShort = meta.shortName ?? params.recipe;
+      const taken = new Set<string>();
+      for (const e of state.pending.values()) {
+        if (e.agentName) taken.add(e.agentName);
+        if (e.lastStatus?.agentName) taken.add(e.lastStatus.agentName);
+      }
+      const childName = generateInstanceName({
+        tier: meta.tier,
+        shortName: childShort,
+        taken,
+      });
+
       const args = [
         RUNNER_PATH,
         params.recipe,
@@ -418,6 +463,8 @@ export default function (pi: ExtensionAPI) {
         "--",
         "--rpc-sock",
         sockPath,
+        "--agent-name",
+        childName,
       ];
 
       const child = spawn(process.execPath, args, {
@@ -463,6 +510,7 @@ export default function (pi: ExtensionAPI) {
       const entry: PendingDelegation = {
         id,
         recipe: params.recipe,
+        agentName: childName,
         child,
         startedAt: Date.now(),
         timeoutMs,

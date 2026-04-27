@@ -22,6 +22,12 @@ npm run pi                                  # raw pi session for exploration
   `RABBIT_SAGE_MODEL` (planner), `LEAD_HARE_MODEL` (overseer),
   `TASK_RABBIT_MODEL` (worker). Full reference:
   [`docs/model-tiers.md`](./docs/model-tiers.md).
+- Every instance — root or delegated — gets a unique
+  `<breed>-<shortName>` name (a hare breed for `LEAD_HARE_MODEL`,
+  rabbit otherwise) generated at launch. The slug is the canonical
+  `--agent-name`, the bus socket identity, and (prettified) the title
+  in the header / delegation boxes. Override with `-- --agent-name
+  <name>` when peers need a stable role name.
 
 ## More docs
 
