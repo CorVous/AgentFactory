@@ -175,7 +175,7 @@ function pushToModel(state: BusState, envs: Envelope[]) {
   for (const env of envs) {
     const text = `[from ${env.from}${env.in_reply_to ? ` re:${env.in_reply_to.slice(0, 8)}` : ""}] ${env.body}`;
     try {
-      state.pi.sendUserMessage(text);
+      state.pi.sendUserMessage(text, { deliverAs: "followUp" });
     } catch {
       // best-effort; the message is still in inbox for pull
     }
