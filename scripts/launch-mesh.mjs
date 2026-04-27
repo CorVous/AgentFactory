@@ -25,6 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
@@ -54,17 +55,38 @@ if (!topology || !Array.isArray(topology.nodes) || topology.nodes.length < 2) {
   die("topology must have at least 2 nodes");
 }
 
-// Validate unique names
-const names = topology.nodes.map((n) => n.name);
-const dupes = names.filter((n, i) => names.indexOf(n) !== i);
-if (dupes.length > 0) die(`duplicate node names: ${dupes.join(", ")}`);
-
 // Resolve bus root
 const busRoot = topology.bus_root
   ? path.resolve(topology.bus_root)
   : path.join(os.homedir(), ".pi-agent-bus", `mesh-${path.basename(meshPath, ".yaml")}`);
 
 mkdirSync(busRoot, { recursive: true });
+
+// Assign names: explicit `name:` wins; missing name auto-generates <breed>-<shortName>
+const taken = await probeBusRoot(busRoot);
+for (const node of topology.nodes) {
+  if (node.name) {
+    taken.add(node.name);
+    continue;
+  }
+  if (node.type === "relay") die("relay node must have an explicit name");
+  if (!node.recipe) die(`unnamed node is missing 'recipe'`);
+  const recipeFile = path.join(REPO_ROOT, "pi-sandbox", "agents", `${node.recipe}.yaml`);
+  let shortName = node.recipe;
+  let tier;
+  try {
+    const recipe = parseYaml(readFileSync(recipeFile, "utf8"));
+    if (typeof recipe.shortName === "string" && recipe.shortName) shortName = recipe.shortName;
+    if (typeof recipe.model === "string") tier = recipe.model;
+  } catch { /* fall back to recipe filename */ }
+  node.name = generateInstanceName({ tier, shortName, taken });
+  taken.add(node.name);
+}
+
+// Validate unique names after assignment
+const names = topology.nodes.map((n) => n.name);
+const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+if (dupes.length > 0) die(`duplicate node names: ${dupes.join(", ")}`);
 
 // ── ANSI colors per node ──────────────────────────────────────────────────────
 
@@ -106,7 +128,6 @@ const children = [];
 for (let i = 0; i < topology.nodes.length; i++) {
   const node = topology.nodes[i];
   const { name, type, recipe, task } = node;
-  if (!name) die(`node ${i} missing name`);
 
   const prefix = makePrefix(name, i);
 

@@ -20,11 +20,15 @@ import path from "node:path";
 import os from "node:os";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { generateInstanceName } from "./_lib/agent-naming.js";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
 const RUNNER_PATH = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
+
+const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 
 interface SpawnedNode {
   name: string;
@@ -32,6 +36,22 @@ interface SpawnedNode {
   child: ChildProcess;
   sandbox: string;
   startedAt: number;
+}
+
+function readRecipeMeta(recipeName: string): { shortName?: string; tier?: string } {
+  try {
+    const file = path.join(AGENTS_DIR, `${recipeName}.yaml`);
+    const recipe = parseYaml(fs.readFileSync(file, "utf8")) as {
+      shortName?: unknown;
+      model?: unknown;
+    };
+    return {
+      shortName: typeof recipe.shortName === "string" ? recipe.shortName : undefined,
+      tier: typeof recipe.model === "string" ? recipe.model : undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 function getRegistry(): Map<string, SpawnedNode> {
@@ -87,14 +107,23 @@ export default function (pi: ExtensionAPI) {
       "template (e.g. 'mesh-node'); name is the unique instance identity on the bus.",
     parameters: Type.Object({
       recipe: Type.String({ description: "Recipe YAML name in pi-sandbox/agents/ (without .yaml)." }),
-      name: Type.String({ description: "Unique instance name for this node on the bus." }),
+      name: Type.Optional(Type.String({ description: "Unique instance name for this node on the bus. Auto-generated as <breed>-<shortName> if omitted." })),
       sandbox: Type.Optional(Type.String({ description: "Working directory for the node. Auto-created if absent." })),
       task: Type.Optional(Type.String({ description: "If set, passed as -p <task> (non-interactive). Omit for interactive mode." })),
     }),
     async execute(_id, params) {
-      if (registry.has(params.name)) {
+      // Resolve instance name: explicit override or auto-generated slug
+      let instanceName = params.name;
+      if (!instanceName) {
+        const meta = readRecipeMeta(params.recipe);
+        const shortName = meta.shortName ?? params.recipe;
+        const taken = new Set<string>(registry.keys());
+        instanceName = generateInstanceName({ tier: meta.tier, shortName, taken });
+      }
+
+      if (registry.has(instanceName)) {
         return {
-          content: [{ type: "text", text: `mesh_spawn: instance "${params.name}" already running.` }],
+          content: [{ type: "text", text: `mesh_spawn: instance "${instanceName}" already running.` }],
           details: { spawned: false, reason: "name collision" },
         };
       }
@@ -116,7 +145,7 @@ export default function (pi: ExtensionAPI) {
 
       const sandbox = params.sandbox
         ? path.resolve(params.sandbox)
-        : path.join(os.tmpdir(), `pi-mesh-${params.name}`);
+        : path.join(os.tmpdir(), `pi-mesh-${instanceName}`);
       mkdirSync(sandbox, { recursive: true });
 
       const busRoot = process.env.PI_AGENT_BUS_ROOT;
@@ -129,7 +158,7 @@ export default function (pi: ExtensionAPI) {
         ...(busRoot ? ["--agent-bus", busRoot] : []),
         "--",
         "--agent-name",
-        params.name,
+        instanceName,
         ...(params.task ? ["-p", params.task] : []),
       ];
 
@@ -138,30 +167,30 @@ export default function (pi: ExtensionAPI) {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          PI_AGENT_NAME: params.name,
+          PI_AGENT_NAME: instanceName,
           ...(busRoot ? { PI_AGENT_BUS_ROOT: busRoot } : {}),
         },
       });
 
       const node: SpawnedNode = {
-        name: params.name,
+        name: instanceName,
         recipe: params.recipe,
         child,
         sandbox,
         startedAt: Date.now(),
       };
-      registry.set(params.name, node);
+      registry.set(instanceName, node);
 
       child.once("exit", (code, sig) => {
-        registry.delete(params.name);
+        registry.delete(instanceName);
         if (process.env.AGENT_DEBUG === "1") {
-          process.stderr.write(`[mesh-authority] node "${params.name}" exited (code=${code} signal=${sig})\n`);
+          process.stderr.write(`[mesh-authority] node "${instanceName}" exited (code=${code} signal=${sig})\n`);
         }
       });
 
       return {
-        content: [{ type: "text", text: `Spawned node "${params.name}" (recipe: ${params.recipe}, sandbox: ${sandbox}).` }],
-        details: { spawned: true, name: params.name, recipe: params.recipe, sandbox },
+        content: [{ type: "text", text: `Spawned node "${instanceName}" (recipe: ${params.recipe}, sandbox: ${sandbox}).` }],
+        details: { spawned: true, name: instanceName, recipe: params.recipe, sandbox },
       };
     },
   });

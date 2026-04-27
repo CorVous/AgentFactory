@@ -14,6 +14,7 @@
 #   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
 
 model: LEAD_HARE_MODEL
+shortName: authority
 
 description: Mesh orchestrator — bus peer and lifecycle manager for other nodes.
 
