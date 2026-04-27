@@ -159,16 +159,18 @@ export default function (pi: ExtensionAPI) {
         "--",
         "--agent-name",
         instanceName,
-        ...(params.task ? ["-p", params.task] : []),
+        "--mode",
+        "rpc",
       ];
 
       const child = spawn(process.execPath, args, {
         cwd: REPO_ROOT,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         env: {
           ...process.env,
           PI_AGENT_NAME: instanceName,
           ...(busRoot ? { PI_AGENT_BUS_ROOT: busRoot } : {}),
+          ...(params.task ? { PI_MESH_INITIAL_TASK: params.task } : {}),
         },
       });
 
