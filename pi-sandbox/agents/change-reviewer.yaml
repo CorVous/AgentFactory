@@ -4,6 +4,7 @@
 # to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
 model: LEAD_HARE_MODEL
+shortName: reviewer
 
 description: Reviews verbatim edit and write proposals pasted into the prompt.
 

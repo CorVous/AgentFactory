@@ -14,6 +14,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
+import { prettify } from "./_lib/agent-naming";
 
 // TASK_RABBIT_MODEL → "Task Rabbit"; LEAD_HARE_MODEL → "Lead Hare"; etc.
 function formatTier(tier: string): string {
@@ -38,19 +39,36 @@ export default function (pi: ExtensionAPI) {
     description: "Model tier var name (e.g. TASK_RABBIT_MODEL) appended dim after the agent name",
     type: "string",
   });
+  pi.registerFlag("agent-type", {
+    description: "Recipe filename (e.g. deferred-author); prettified into a type label before the description",
+    type: "string",
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     const name = (pi.getFlag("agent-name") as string | undefined)?.trim();
     const description = (pi.getFlag("agent-description") as string | undefined)?.trim();
     const tier = (pi.getFlag("agent-tier") as string | undefined)?.trim();
-    if (!name && !description) return;
+    const type = (pi.getFlag("agent-type") as string | undefined)?.trim();
+    if (!name && !description && !type) return;
 
     const tierLabel = tier ? formatTier(tier) : "";
+    const typeLabel = type ? prettify(type) : "";
 
     ctx.ui.setHeader((_tui, theme) => {
       const container = new Container();
       if (name) {
-        const head = theme.bold(theme.fg("accent", name));
+        // Display form combines the breed (first segment of the
+        // <breed>-<shortName> slug) with the prettified recipe
+        // filename, giving "Cinnamon Deferred Author" rather than the
+        // compact slug-prettify "Cinnamon Author". Falls back to plain
+        // prettify(name) when the runner didn't pass --agent-type or
+        // when --agent-name was manually overridden to a no-hyphen
+        // value (e.g. `-- --agent-name planner`).
+        const breed = name.includes("-") ? name.split("-")[0] : "";
+        const displayName = typeLabel && breed
+          ? `${prettify(breed)} ${typeLabel}`
+          : prettify(name);
+        const head = theme.bold(theme.fg("accent", displayName));
         const tail = tierLabel ? theme.fg("dim", ` · ${tierLabel}`) : "";
         container.addChild(new Text(head + tail, 1, 0));
       }

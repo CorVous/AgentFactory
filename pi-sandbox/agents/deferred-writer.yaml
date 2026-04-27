@@ -3,6 +3,7 @@
 # `npm run agent` from (or --sandbox <dir>).
 
 model: TASK_RABBIT_MODEL
+shortName: writer
 
 description: Drafts files in memory; the user reviews and approves at end of turn.
 
