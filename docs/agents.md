@@ -108,7 +108,7 @@ npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthro
 # pi-sandbox/agents/<name>.yaml
 model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal model ID
 description: Drafts files...      # optional; shown by agent-header in the TUI
-prompt: |                         # replaces pi's default system prompt
+prompt: |                         # the agent's role, prepended with extension fragments
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
 extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm] baseline
@@ -118,6 +118,32 @@ noEditAdd: [my_writer]            # optional; force-include in no-edit rail
 noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 agents: [deferred-writer]         # optional; recipes this agent may delegate to
 ```
+
+### `prompt:` and extension fragments
+
+Tool-usage rules live next to the extensions that register the tools, not
+in each recipe's `prompt:`. For each loaded extension `<name>`, the runner
+looks for a sibling `pi-sandbox/.pi/extensions/<name>.prompt.md` and, if
+present, prepends it to the system prompt that pi receives. Recipes only
+need to describe the agent's role; the standard rules for `deferred_write`,
+`deferred_edit`, `delegate`, etc. come from the fragments.
+
+Two conditional fragments are gated by the runner so they don't appear
+when irrelevant:
+
+- `deferred-confirm.prompt.md` (apply order, atomic batch semantics) is
+  loaded only when at least one `deferred-*` tool extension is active —
+  baseline `deferred-confirm` itself is a no-op without one.
+- `agent-spawn.approval.prompt.md` (the draft-approval workflow) is loaded
+  only when at least one recipe in `agents:` declares a `deferred-*`
+  extension. A delegator whose children never queue drafts gets the basic
+  `delegate` / `approve_delegation` mechanics from `agent-spawn.prompt.md`
+  but no approval-flow guidance.
+
+Final order seen by the model: baseline-extension fragments → recipe-
+extension fragments → `agent-spawn` fragments (when implicit) → recipe
+`prompt:`. Edit a fragment to change behaviour for every recipe that
+loads its extension; edit a recipe's `prompt:` for that one agent only.
 
 The runner always passes `--no-extensions --no-skills --no-context-files`
 to pi, so only what the recipe declares is loaded. Tool names go through

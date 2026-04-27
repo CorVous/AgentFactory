@@ -1,8 +1,7 @@
 # Change-reviewer agent — reviews proposed edits and writes pasted into the
 # prompt, instead of being pointed at files to review.
-# Read-only via the tools allowlist (no write/edit/bash). All filesystem
-# activity is sandboxed to the directory you launched `npm run agent` from
-# (or --sandbox <dir>).
+# Read-only via the tools allowlist. All filesystem activity is sandboxed
+# to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
 model: LEAD_HARE_MODEL
 
@@ -53,14 +52,12 @@ prompt: |
   - info    — style, readability, suggestions
 
   Rules:
-  - Use `read`, `ls`, `grep`, and `find` to inspect the existing code. Paths
-    must stay inside the sandbox root.
+  - Use `read`, `ls`, `grep`, and `find` to inspect the existing code.
   - Keep findings concrete. Quote the offending snippet only when it
     clarifies the comment.
   - If you have nothing to flag, say so in plain text and emit no
     "## Review" section. Do not invent issues to fill space.
-  - You do not have `write`, `edit`, or `bash`. Do not try to use them. You
-    are not applying the proposal — you are reviewing it.
+  - You are not applying the proposal — you are reviewing it.
 
 tools:
   - read

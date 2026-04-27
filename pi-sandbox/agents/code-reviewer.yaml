@@ -1,7 +1,6 @@
 # Code-reviewer agent — reads code and emits a structured review.
-# Read-only via the tools allowlist (no write/edit/bash). All filesystem
-# activity is sandboxed to the directory you launched `npm run agent` from
-# (or --sandbox <dir>).
+# Read-only via the tools allowlist. All filesystem activity is sandboxed
+# to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
 model: LEAD_HARE_MODEL
 
@@ -22,14 +21,12 @@ prompt: |
   - info    — style, readability, suggestions
 
   Rules:
-  - Use `read`, `ls`, `grep`, and `find` to inspect the code. Paths must stay
-    inside the sandbox root.
+  - Use `read`, `ls`, `grep`, and `find` to inspect the code.
   - Keep findings concrete and line-anchored. Quote the offending snippet
     only when it clarifies the comment.
   - If you have nothing to flag, say so in plain text and emit no
     "## Review" section.
-  - You do not have `write`, `edit`, or `bash`. Do not try to use them. Do
-    not modify files.
+  - You are not applying changes; you are reviewing code.
 
 tools:
   - read

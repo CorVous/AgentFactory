@@ -189,6 +189,53 @@ function resolveSkillPaths(names) {
   });
 }
 
+// Each loaded extension may ship a sibling `<name>.prompt.md` in
+// EXTENSIONS_DIR that documents its tools. The runner concatenates those
+// fragments ahead of the recipe's own `prompt:` so each YAML only needs
+// to describe the agent's role, not the standard tool rules.
+//
+// Two conditional rules avoid showing fragments that would mislead the
+// model:
+//   - `deferred-confirm` is a baseline extension and always loaded, but
+//     its fragment (apply order, atomic batch semantics) is only
+//     relevant when at least one `deferred-*` tool extension is loaded.
+//   - `agent-spawn` ships two fragments. The base one explains the
+//     `delegate` / `approve_delegation` mechanics. The companion
+//     `agent-spawn.approval.prompt.md` describes the draft-approval
+//     workflow and is only included when at least one allowed child
+//     recipe loads a `deferred-*` extension (i.e. can actually produce
+//     drafts that need approving). A delegator whose children never
+//     queue drafts does not need approval-flow guidance.
+function loadPromptFragments(extensionNames, allowedAgents) {
+  const hasDeferredTool = extensionNames.some(
+    (n) => n.startsWith("deferred-") && n !== "deferred-confirm",
+  );
+  const fragments = [];
+  for (const name of extensionNames) {
+    if (name === "deferred-confirm" && !hasDeferredTool) continue;
+    const p = path.join(EXTENSIONS_DIR, `${name}.prompt.md`);
+    if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
+  }
+  if (extensionNames.includes("agent-spawn") && allowedAgents.length > 0) {
+    const anyApprovable = allowedAgents.some((child) => {
+      const f = path.join(AGENTS_DIR, `${child}.yaml`);
+      if (!existsSync(f)) return false;
+      try {
+        const r = parseYaml(readFileSync(f, "utf8"));
+        const exts = Array.isArray(r?.extensions) ? r.extensions : [];
+        return exts.some((e) => typeof e === "string" && e.startsWith("deferred-") && e !== "deferred-confirm");
+      } catch {
+        return false;
+      }
+    });
+    if (anyApprovable) {
+      const p = path.join(EXTENSIONS_DIR, "agent-spawn.approval.prompt.md");
+      if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
+    }
+  }
+  return fragments;
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (!args.name) {
   listAgents();
@@ -205,6 +252,15 @@ const wired = applyAgentsField(recipe, args.name);
 const extensionPaths = resolveExtensionPaths(wired.extensions);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
+// Build the effective system prompt: tool/extension fragments first
+// (in load order), then the recipe's own role-specific prompt.
+const mergedExtensions = [
+  ...BASELINE_EXTENSIONS,
+  ...wired.extensions.filter((n) => !BASELINE_EXTENSIONS.includes(n)),
+];
+const promptFragments = loadPromptFragments(mergedExtensions, wired.allowed);
+const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
+
 const piArgs = [
   "--no-context-files",
   "--no-extensions",
@@ -216,7 +272,7 @@ const piArgs = [
   "--tools",
   wired.tools.join(","),
   "--system-prompt",
-  recipe.prompt,
+  systemPrompt,
 ];
 for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
