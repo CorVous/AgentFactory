@@ -3,7 +3,7 @@
 # Read-only via the tools allowlist. All filesystem activity is sandboxed
 # to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
-model: LEAD_HARE_MODEL
+model: HARE_LEAD_MODEL
 
 description: Reviews verbatim edit and write proposals pasted into the prompt.
 

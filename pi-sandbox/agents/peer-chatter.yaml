@@ -11,7 +11,7 @@
 #
 # Then prompt pane A: "call agent_list, then agent_send to worker-a with body 'ping'"
 
-model: TASK_RABBIT_MODEL
+model: RABBIT_TASK_MODEL
 
 description: Demo peer that talks to other agents over the agent-bus.
 

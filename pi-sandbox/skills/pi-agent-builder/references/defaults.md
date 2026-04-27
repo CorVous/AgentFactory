@@ -44,7 +44,7 @@ absence caused a real failure in a real session.
   `content`. For larger outputs, write the full transcript to a tempfile
   and return the path.
 - Set `--model` to a tier-appropriate value read from `process.env` at
-  handler entry: `TASK_RABBIT_MODEL` for workers, `LEAD_HARE_MODEL` for reviewers,
+  handler entry: `RABBIT_TASK_MODEL` for workers, `HARE_LEAD_MODEL` for reviewers,
   `RABBIT_SAGE_MODEL` for orchestration. Notify an error and return if the env
   var is unset — *do not* silently fall back to a hardcoded model that
   the user didn't pick.

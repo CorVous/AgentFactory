@@ -25,7 +25,7 @@ const BASELINE_EXTENSIONS = [
   // top-level runs.
   "agent-status-reporter",
 ];
-const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
+const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "HARE_LEAD_MODEL", "RABBIT_TASK_MODEL"]);
 
 function die(msg) {
   process.stderr.write(`run-agent: ${msg}\n`);
@@ -156,7 +156,7 @@ function applyAgentsField(recipe, name) {
 }
 
 function resolveModel(tierOrId) {
-  const requested = tierOrId || "TASK_RABBIT_MODEL";
+  const requested = tierOrId || "RABBIT_TASK_MODEL";
   if (TIER_VARS.has(requested)) {
     const v = process.env[requested];
     if (!v) die(`tier ${requested} is not set; source models.env first`);
@@ -246,7 +246,7 @@ const recipe = loadRecipe(args.name);
 const sandboxRoot = path.resolve(args.sandbox || process.env.INIT_CWD || process.cwd());
 if (!existsSync(sandboxRoot)) die(`sandbox dir does not exist: ${sandboxRoot}`);
 
-const recipeModel = recipe.model || "TASK_RABBIT_MODEL";
+const recipeModel = recipe.model || "RABBIT_TASK_MODEL";
 const model = resolveModel(recipeModel);
 const wired = applyAgentsField(recipe, args.name);
 const extensionPaths = resolveExtensionPaths(wired.extensions);

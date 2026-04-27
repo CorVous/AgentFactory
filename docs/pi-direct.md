@@ -32,7 +32,7 @@ on demand and generates extensions that follow its recipes.
 
 ```sh
 set -a; source models.env; set +a
-npm run pi -- --provider openrouter --model "$LEAD_HARE_MODEL" \
+npm run pi -- --provider openrouter --model "$HARE_LEAD_MODEL" \
   --skill skills/pi-agent-builder \
   -p "Use the pi-agent-builder skill to <describe the agent>."
 ```
@@ -64,7 +64,7 @@ Recommended scripted pattern:
 
 ```sh
 npm run pi -- --mode json --no-tools \
-  --provider openrouter --model "$TASK_RABBIT_MODEL" \
+  --provider openrouter --model "$RABBIT_TASK_MODEL" \
   --no-session --no-skills --no-extensions \
   -p "$prompt" \
   | jq -c 'select(.type | IN("tool_execution_start","turn_end","agent_end"))'

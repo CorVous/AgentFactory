@@ -10,7 +10,7 @@
 # Or spawned by the authority agent via mesh_spawn:
 #   mesh_spawn({recipe: "mesh-node", name: "analyst", task: "wait for requests"})
 
-model: TASK_RABBIT_MODEL
+model: RABBIT_TASK_MODEL
 
 description: Generic mesh peer — handles requests via agent_call and agent_send.
 

@@ -19,7 +19,7 @@ agent gets six baseline extensions:
   reference features focused agents don't use.
 - `agent-header` — replaces the (now-empty) header with a banner that
   shows the agent name (bold accent), optionally suffixed dim with the
-  model tier (e.g. `deferred-writer · Task Rabbit`), and the recipe's
+  model tier (e.g. `deferred-writer · Rabbit Task`), and the recipe's
   `description:` field on the next line (dim). Reads the `--agent-name`,
   `--agent-description`, and `--agent-tier` flags; the runner sets all
   three from the recipe filename, `description:`, and `model:` (the
@@ -106,7 +106,7 @@ npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthro
 
 ```yaml
 # pi-sandbox/agents/<name>.yaml
-model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal model ID
+model: RABBIT_TASK_MODEL          # tier name from models.env, or a literal model ID
 description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # the agent's role, prepended with extension fragments
   You are a careful drafter...
@@ -372,8 +372,8 @@ When an extension delegates to a child `pi` process:
 - Pass `--no-extensions` to the child — prevents recursive sub-agents.
 - Whitelist the child's tools (`--tools read,grep,...`) to match its role.
 - Forward the parent's `AbortSignal` and truncate captured stdout (~20 KB).
-- Match the tier to the child's role: `$TASK_RABBIT_MODEL` for workers,
-  `$LEAD_HARE_MODEL` for reviewers, `$RABBIT_SAGE_MODEL` for orchestration.
+- Match the tier to the child's role: `$RABBIT_TASK_MODEL` for workers,
+  `$HARE_LEAD_MODEL` for reviewers, `$RABBIT_SAGE_MODEL` for orchestration.
 
 See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
 

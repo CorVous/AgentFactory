@@ -2,9 +2,9 @@
 #
 # Participants:
 #   human     — human REPL (type: relay); no LLM; type @peer to send messages
-#   authority — LLM orchestrator (LEAD_HARE_MODEL); can spawn/stop/delegate
-#   analyst   — LLM peer (TASK_RABBIT_MODEL); handles research requests
-#   writer    — LLM peer (TASK_RABBIT_MODEL); handles drafting requests
+#   authority — LLM orchestrator (HARE_LEAD_MODEL); can spawn/stop/delegate
+#   analyst   — LLM peer (RABBIT_TASK_MODEL); handles research requests
+#   writer    — LLM peer (RABBIT_TASK_MODEL); handles drafting requests
 #
 # All participants share the same bus root and discover each other by
 # instance name. Any participant can agent_call or agent_send any other.
