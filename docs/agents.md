@@ -120,6 +120,36 @@ stable peer name on the bus.
   (`writes applied: …`, `edits applied: …`, etc.) are routed to
   stdout as `[deferred] …` lines so the parent's `delegate` /
   `approve_delegation` tool result captures them.
+- `agent-status-reporter` — child-side. While `--rpc-sock` is set,
+  pushes `{context %, cost, turn, state}` snapshots over the per-call
+  RPC socket whenever the agent crosses a turn / tool / response
+  boundary (throttled to one write per 250 ms). Tagged with a
+  `{type:"hello", id}` envelope on first send so the parent can
+  reuse one conn per child. No-op for top-level runs.
+- `agent-receive` — child-side. Opens a SECOND connection to the
+  parent's RPC socket (separate from the status conn), tagged
+  `{type:"hello", id, role:"control"}`. Listens for control
+  envelopes from the parent's `/view`: `{type:"user-message",body}`
+  is queued as the child's next user turn via `pi.sendUserMessage`;
+  `{type:"start-takeover"}` flips an internal `released` flag so
+  `agent_end` parks on a never-resolving Promise (keeping the child
+  alive while a human watches it); `{type:"release"}` flips the flag
+  back so the next `agent_end` exits cleanly. No-op for top-level
+  runs (no `PI_RPC_SOCK`). Failure (parent died, EPIPE) flips
+  `released` back to `true` so the child doesn't park forever.
+- `agent-view` — parent-side. Registers `/view <agent>` and
+  `/back` (alias `/unview`) commands, the viewer widget at
+  `aboveEditor`, and the approval interceptor on
+  `globalThis.__pi_view_interceptor__`. The interceptor is consulted
+  by `agent-spawn`'s RPC `request-approval` handler: while a child
+  is being viewed, the parent's `ctx.ui.confirm` runs locally and
+  the result is written back over the same conn — bypassing the
+  foreman LLM entirely. While viewing, the `input` event handler
+  returns `{action: "handled"}` and forwards the typed text over
+  the child's control conn (via `globalThis.__pi_delegate_send__`)
+  instead of triggering a parent-LLM turn. Dormant when no
+  delegations exist — safe in the baseline for non-delegating
+  recipes.
 
 ```sh
 set -a; source models.env; set +a
@@ -138,7 +168,7 @@ description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # the agent's role, prepended with extension fragments
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm] baseline
+extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm, agent-status-reporter, agent-receive, agent-view] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail
@@ -361,6 +391,111 @@ A foreman that is itself launched as a child — e.g.
 `delegator → writer-foreman → deferred-writer` — works the same way:
 its own `requestHumanApproval` reads its own `--rpc-sock` and forwards
 escalations one more hop up. The chain bottoms out at the human.
+
+## Viewing a delegated child: `/view <agent>`
+
+While a foreman is running children in the background you can switch
+the parent's TUI into a live view of any one of them with `/view
+<name-or-prefix>`. The match runs against the child's
+`<breed>-<shortName>` slug (an exact match wins; otherwise unique
+case-insensitive prefix; otherwise unique substring). The viewer
+widget renders above the input editor and shows:
+
+- A header with the prettified name, current state
+  (running / paused / settled), context %, cumulative cost, and turn
+  count — all read from the existing status snapshots that
+  `agent-status-reporter` already pushes.
+- The child's live transcript (last N lines of its `pi -p` stdout,
+  sized to the visible terminal). The viewer subscribes to the
+  per-delegation `streamSubscribers` set on `agent-spawn`'s registry
+  entry, so chunks arrive as the child emits them.
+- A footer hint summarising the controls.
+
+Three things happen the moment view-mode is entered:
+
+1. The parent sends `{type: "start-takeover"}` over the child's
+   control conn. `agent-receive` flips `released = false`, so the
+   child's next `agent_end` parks on a Promise instead of exiting at
+   natural turn-end.
+2. `globalThis.__pi_view_interceptor__` is consulted by
+   `agent-spawn`'s RPC handler. While the viewed child is paused for
+   approval, the request is rendered as `ctx.ui.confirm` in the
+   parent's terminal and the result is written back over the same
+   conn — bypassing the foreman LLM. (If the child paused *before*
+   the user typed `/view`, `agent-view` finds the buffered request
+   on `entry.pendingApprovalReq` and pops the dialog immediately.)
+3. The `input` event handler returns `{action: "handled"}` for any
+   non-slash text typed into the editor and forwards it as
+   `{type: "user-message", body}` over the control conn —
+   `agent-receive` queues it via `pi.sendUserMessage` for the
+   child's next turn. The forwarded text is echoed into the viewer
+   transcript so the user sees their own messages.
+
+`/back` (or `/unview`) sends `{type: "release"}` to the child,
+unsubscribes the transcript, hides the viewer, and returns control
+to the parent. The child exits at its next `agent_end`. The
+foreman's `approve_delegation` call (which has been parked the whole
+time on `entry.settled`) sees the child as exited-without-pending,
+returns the captured stdout, and the foreman LLM resumes. **The
+foreman is parked for the whole duration of the takeover** — that's
+the intended semantics.
+
+End-to-end under tmux:
+
+```sh
+set -a; source models.env; set +a
+mkdir -p /tmp/view-test
+tmux new-session -d -s view -x 200 -y 50 \
+  'AGENT_DEBUG=1 npm run agent -- writer-foreman --sandbox /tmp/view-test'
+sleep 5
+tmux send-keys -t view 'draft three files in parallel: hello.txt, world.txt, foo.txt' Enter
+sleep 30
+tmux capture-pane -t view -p | grep -E 'Cottontail|Rex|Holland|Dutch'
+                                                  # confirm boxes show breeds
+tmux send-keys -t view '/view cottontail-writer' Enter   # or whichever rolled
+sleep 2
+tmux capture-pane -t view -p                      # expect viewer panel
+
+# Send a follow-up user message into the child mid-flight (takeover):
+tmux send-keys -t view 'also append a footer line saying "fin."' Enter
+sleep 30                                          # child receives
+                                                  # user-message envelope
+
+# Approval prompt comes up locally (interceptor in action):
+tmux capture-pane -t view -p | grep -i 'approve'
+tmux send-keys -t view 'y' Enter                  # human handles approval
+sleep 5
+tmux send-keys -t view '/back' Enter              # release the child
+sleep 5
+ls /tmp/view-test/                                # hello.txt present
+                                                  # world.txt and foo.txt
+                                                  # also present (foreman
+                                                  # auto-approved them)
+tmux send-keys -t view '/quit' Enter
+```
+
+Negative cases worth probing:
+
+- `/view nonexistent` → `view: no delegation matches 'nonexistent'.
+  pending: …` notification, no state change.
+- `/view writer` (when 3 writers are pending) → `view: ambiguous: …`
+  with the matching agent names.
+- `/view` while no children are running → `view: no pending
+  delegations`.
+- `/view <name>` while already viewing another → switches: tears
+  down the old subscription, sends `release` to the old child, then
+  `start-takeover` to the new one.
+- `/back` with no active view → `view: not currently viewing
+  anything`.
+- Child errors out / times out while viewed → the registry entry
+  disappears, the viewer's render auto-detects the missing entry
+  and renders a `── settled · /back to dismiss ──` line.
+- Recursive setup (`delegator → writer-foreman → deferred-writer`):
+  `/view` only resolves at the level with a real UI. The inner
+  foreman has `--rpc-sock` instead of `ctx.hasUI`, so its
+  interceptor's `ctx.ui.confirm` falls through `requestHumanApproval`
+  to the parent chain — the prompt walks up one more hop
+  automatically.
 
 ### Debugging the rails
 

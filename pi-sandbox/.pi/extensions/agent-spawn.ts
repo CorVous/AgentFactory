@@ -36,9 +36,12 @@
 // implicitly wires agent-spawn for you.
 //
 // RPC protocol (newline-delimited JSON, multi-message on a single conn):
-//   client → server : {type: "hello", id: <delegation_id>}
+//   client → server : {type: "hello", id: <delegation_id>, role?: "control"}
 //                     // Optional. Tags the conn so subsequent status
-//                     // envelopes can omit `delegation_id`.
+//                     // envelopes can omit `delegation_id`. role:"control"
+//                     // marks the conn agent-receive opens for
+//                     // bidirectional control envelopes; the parent
+//                     // remembers it on entry.controlConn for /view.
 //   client → server : {type: "request-approval", title, summary, preview}
 //                     // End-of-turn approval forwarding (pre-existing).
 //   server → client : {type: "approval-result", approved: boolean}
@@ -49,6 +52,16 @@
 //                     // turn / tool / response boundaries; cached on
 //                     // the entry's `lastStatus` for the
 //                     // delegation-boxes widget.
+//   server → client : {type: "user-message", body: string}
+//                     // Forwarded by /view: the human typed something
+//                     // into the parent's input editor while watching
+//                     // this child. agent-receive turns it into
+//                     // pi.sendUserMessage on the child side.
+//   server → client : {type: "start-takeover"} / {type: "release"}
+//                     // /view sends "start-takeover" so the child
+//                     // doesn't exit at natural turn-end while a
+//                     // human is watching; /back sends "release" so
+//                     // the next agent_end exits cleanly.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -125,6 +138,19 @@ interface PendingDelegation {
    * the settled promise inside a sync callback.
    */
   resolvedConn?: net.Socket;
+  /** Mirror of the request that came in on resolvedConn — used by
+   *  /view when the child paused before the user opened the viewer. */
+  pendingApprovalReq?: ApprovalRequest;
+  /** Long-lived conn opened by the child's agent-receive extension
+   *  (hello.role === "control"). The parent writes user-message /
+   *  start-takeover / release envelopes on this conn. Optional
+   *  because it's only opened when agent-receive is loaded; legacy
+   *  children without it still work, just can't be /view'd
+   *  interactively. */
+  controlConn?: net.Socket;
+  /** Per-delegation fan-out for live stdout/stderr — /view subscribes
+   *  to render the child's transcript in the viewer widget. */
+  streamSubscribers: Set<(chunk: string, kind: "stdout" | "stderr") => void>;
   /** Latest snapshot from the child's status reporter, if any. */
   lastStatus?: DelegationStatus;
 }
@@ -136,6 +162,28 @@ function notifyWidget(): void {
     /* noop */
   }
 }
+
+/** Write a control envelope to a child's `controlConn` if one is open.
+ *  Used by /view to forward user-message / start-takeover / release.
+ *  Returns true on best-effort write, false when no conn is available
+ *  or the write throws. The parent does NOT await the child's
+ *  acknowledgement — these envelopes are fire-and-forget. */
+function sendToChild(id: string, envelope: Record<string, unknown>): boolean {
+  const g = globalThis as { __pi_delegate_pending__?: SpawnState };
+  const entry = g.__pi_delegate_pending__?.pending.get(id);
+  if (!entry?.controlConn || entry.controlConn.destroyed) return false;
+  try {
+    entry.controlConn.write(JSON.stringify(envelope) + "\n");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Publish the helper on globalThis so agent-view (loaded in a separate
+// jiti graph) can reach it without a sibling import. Same pattern as
+// __pi_delegate_invalidate__.
+(globalThis as { __pi_delegate_send__?: typeof sendToChild }).__pi_delegate_send__ = sendToChild;
 
 interface SpawnState {
   pending: Map<string, PendingDelegation>;
@@ -364,6 +412,7 @@ export default function (pi: ExtensionAPI) {
                 summary?: string;
                 preview?: string;
                 id?: string;
+                role?: string;
                 delegation_id?: string;
                 agent_name?: string;
                 model_id?: string;
@@ -380,10 +429,24 @@ export default function (pi: ExtensionAPI) {
                 typeof msg.summary === "string" &&
                 typeof msg.preview === "string"
               ) {
-                resolveConnection({
-                  conn,
-                  req: { title: msg.title, summary: msg.summary, preview: msg.preview },
-                });
+                const req: ApprovalRequest = { title: msg.title, summary: msg.summary, preview: msg.preview };
+                // Give /view a chance to handle the approval inline instead
+                // of routing it back to the foreman LLM via approve_delegation.
+                // Interceptor returns true if it wrote {approval-result, ...}
+                // back over `conn` itself.
+                const interceptor = (
+                  globalThis as { __pi_view_interceptor__?: (id: string, conn: net.Socket, req: ApprovalRequest) => Promise<boolean> }
+                ).__pi_view_interceptor__;
+                if (interceptor) {
+                  Promise.resolve()
+                    .then(() => interceptor(id, conn, req))
+                    .then((handled) => {
+                      if (!handled) resolveConnection({ conn, req });
+                    })
+                    .catch(() => resolveConnection({ conn, req }));
+                  continue;
+                }
+                resolveConnection({ conn, req });
                 continue;
               }
               if (msg.type === "hello" && typeof msg.id === "string") {
@@ -391,6 +454,12 @@ export default function (pi: ExtensionAPI) {
                 // every status envelope. Status messages may omit it once
                 // the conn is tagged.
                 (conn as unknown as { __delegationId?: string }).__delegationId = msg.id;
+                if (msg.role === "control") {
+                  // agent-receive opened this conn — remember it so /view
+                  // can write user-message / takeover / release envelopes.
+                  const targetEntry = state.pending.get(msg.id);
+                  if (targetEntry) targetEntry.controlConn = conn;
+                }
                 continue;
               }
               if (msg.type === "status") {
@@ -473,8 +542,29 @@ export default function (pi: ExtensionAPI) {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
-      child.stdout?.on("data", (c: Buffer) => appendBuffer(stdoutBuf, c, MAX_OUTPUT_BYTES));
-      child.stderr?.on("data", (c: Buffer) => appendBuffer(stderrBuf, c, MAX_OUTPUT_BYTES));
+      // Live fan-out for /view's transcript widget. The Set is shared by
+      // reference with the entry's `streamSubscribers` field constructed
+      // below, so subscribers added later still see future chunks.
+      const streamSubscribers = new Set<(chunk: string, kind: "stdout" | "stderr") => void>();
+      const fanout = (kind: "stdout" | "stderr", chunk: Buffer) => {
+        if (streamSubscribers.size === 0) return;
+        const text = chunk.toString("utf8");
+        for (const sub of streamSubscribers) {
+          try {
+            sub(text, kind);
+          } catch {
+            /* don't let one bad subscriber take the rest down */
+          }
+        }
+      };
+      child.stdout?.on("data", (c: Buffer) => {
+        appendBuffer(stdoutBuf, c, MAX_OUTPUT_BYTES);
+        fanout("stdout", c);
+      });
+      child.stderr?.on("data", (c: Buffer) => {
+        appendBuffer(stderrBuf, c, MAX_OUTPUT_BYTES);
+        fanout("stderr", c);
+      });
 
       const onAbort = () => killSafe(child);
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -521,15 +611,19 @@ export default function (pi: ExtensionAPI) {
         server,
         sockPath,
         settled,
+        streamSubscribers,
       };
       state.pending.set(id, entry);
       notifyWidget();
 
       // Cache the conn synchronously once the child pauses so the cleanup
-      // walker and watchdog can use it from synchronous callbacks.
+      // walker and watchdog can use it from synchronous callbacks. Also
+      // stash the request body so /view can find it if the user opens
+      // the viewer after the child has already paused.
       settled.then((outcome) => {
         if (outcome.kind === "rpc") {
           entry.resolvedConn = outcome.conn;
+          entry.pendingApprovalReq = outcome.req;
           if (entry.lastStatus) entry.lastStatus.state = "paused";
           notifyWidget();
         }

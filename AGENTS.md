@@ -28,6 +28,15 @@ npm run pi                                  # raw pi session for exploration
   `--agent-name`, the bus socket identity, and (prettified) the title
   in the header / delegation boxes. Override with `-- --agent-name
   <name>` when peers need a stable role name.
+- `/view <agent-name-or-prefix>` switches the parent's TUI into a
+  live view of one delegated child (matched against its
+  `<breed>-<shortName>` slug). While viewing, end-of-turn approval
+  prompts route to you — not the foreman LLM — and anything you
+  type into the input editor is forwarded to the child as a new user
+  turn (the foreman parks on `approve_delegation` for the duration).
+  `/back` (or `/unview`) releases the child so it exits at its next
+  turn boundary. Full reference under "Viewing a delegated child" in
+  [`docs/agents.md`](./docs/agents.md).
 
 ## More docs
 

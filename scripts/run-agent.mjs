@@ -25,6 +25,15 @@ const BASELINE_EXTENSIONS = [
   // delegated child. Self-gates on the flag, so it no-ops for
   // top-level runs.
   "agent-status-reporter",
+  // Receives user-message / takeover / release envelopes from the
+  // parent's /view command. Self-gates on --rpc-sock + delegation_id
+  // so it no-ops for top-level runs. Loaded in the baseline so any
+  // recipe is /view-able when run as a child.
+  "agent-receive",
+  // Registers /view + /back commands and the viewer widget. Dormant
+  // when there are no pending delegations to view, so safe in the
+  // baseline for non-delegating recipes too.
+  "agent-view",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
