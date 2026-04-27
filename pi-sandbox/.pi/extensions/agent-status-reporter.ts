@@ -100,7 +100,22 @@ function send(rt: ReporterRuntime, ctx: ExtensionContext) {
     writeLine(rt.sock, { type: "hello", id: rt.delegationId });
     rt.helloSent = true;
   }
-  writeLine(rt.sock, buildSnapshot(rt, ctx, ctx.model?.id ?? ""));
+  // buildSnapshot reads ctx.model / ctx.sessionManager / ctx.getContextUsage.
+  // If a throttled timer fires after the session has been torn down (the
+  // child applied drafts, agent_end completed, pi started cleaning up
+  // before the next 250 ms tick), pi throws "extension ctx is stale" and
+  // crashes the child with exit code 1. Status pushes are best-effort,
+  // so swallow stale-ctx errors and give up — the parent already cached
+  // the latest snapshot it cares about.
+  try {
+    writeLine(rt.sock, buildSnapshot(rt, ctx, ctx.model?.id ?? ""));
+  } catch {
+    rt.giveUp = true;
+    if (rt.pendingTimer) {
+      clearTimeout(rt.pendingTimer);
+      rt.pendingTimer = null;
+    }
+  }
 }
 
 function attachSocket(rt: ReporterRuntime, sockPath: string, ctx: ExtensionContext): void {
@@ -182,6 +197,22 @@ export default function (pi: ExtensionAPI) {
       // line transition before the approval round-trip completes.
       rt.state = "paused";
       tick();
+    });
+    // Stop pushing once pi starts tearing down the session — otherwise
+    // a pending throttled timer fires after ctx becomes stale and
+    // crashes the child.
+    pi.on("session_shutdown", async () => {
+      rt.giveUp = true;
+      if (rt.pendingTimer) {
+        clearTimeout(rt.pendingTimer);
+        rt.pendingTimer = null;
+      }
+      try {
+        rt.sock?.destroy();
+      } catch {
+        /* noop */
+      }
+      rt.sock = null;
     });
   });
 }
