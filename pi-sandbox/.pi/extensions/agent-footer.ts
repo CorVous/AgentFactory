@@ -23,21 +23,7 @@ import path from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-
-// Eighths-block horizontal bar. 5 cells × 8 eighths = 40 buckets, so each
-// bucket covers ~2.5% of context. Empty cells render `░` so the track is
-// visible even at 0%; partial cells use the standard left-fill set.
-const BAR_BLOCKS = ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
-function renderBar(percent: number, width: number): string {
-  const max = width * 8;
-  const totalEighths = Math.max(0, Math.min(max, Math.round((percent / 100) * max)));
-  let out = "";
-  for (let i = 0; i < width; i++) {
-    const cellEighths = Math.max(0, Math.min(8, totalEighths - i * 8));
-    out += BAR_BLOCKS[cellEighths];
-  }
-  return out;
-}
+import { renderBar } from "./_lib/context-bar";
 
 function homeReplace(p: string): string {
   const home = os.homedir();

@@ -34,6 +34,21 @@
 // A recipe that wants both delegation and peer messaging loads both
 // extensions independently — though typically `agents:` in the recipe
 // implicitly wires agent-spawn for you.
+//
+// RPC protocol (newline-delimited JSON, multi-message on a single conn):
+//   client → server : {type: "hello", id: <delegation_id>}
+//                     // Optional. Tags the conn so subsequent status
+//                     // envelopes can omit `delegation_id`.
+//   client → server : {type: "request-approval", title, summary, preview}
+//                     // End-of-turn approval forwarding (pre-existing).
+//   server → client : {type: "approval-result", approved: boolean}
+//   client → server : {type: "status", delegation_id?, agent_name,
+//                      model_id, context_pct, context_tokens,
+//                      context_window, cost_usd, turn_count, state}
+//                     // Pushed by the child's agent-status-reporter on
+//                     // turn / tool / response boundaries; cached on
+//                     // the entry's `lastStatus` for the
+//                     // delegation-boxes widget.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -59,6 +74,21 @@ const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 type SpawnOutcome =
   | { kind: "exit"; exit: { code: number | null; signal: NodeJS.Signals | null } }
   | { kind: "rpc"; conn: net.Socket; req: ApprovalRequest };
+
+/** Latest status snapshot pushed by the child's agent-status-reporter
+ *  over the RPC socket. Read by the delegation-boxes widget to render
+ *  per-delegation context-fill / cost / state above the input editor. */
+interface DelegationStatus {
+  receivedAt: number;
+  agentName: string;
+  modelId: string;
+  contextPct: number;
+  contextTokens: number;
+  contextWindow: number;
+  costUsd: number;
+  turnCount: number;
+  state: "running" | "paused" | "settled";
+}
 
 interface PendingDelegation {
   id: string;
@@ -89,6 +119,16 @@ interface PendingDelegation {
    * the settled promise inside a sync callback.
    */
   resolvedConn?: net.Socket;
+  /** Latest snapshot from the child's status reporter, if any. */
+  lastStatus?: DelegationStatus;
+}
+
+function notifyWidget(): void {
+  try {
+    (globalThis as { __pi_delegate_invalidate__?: () => void }).__pi_delegate_invalidate__?.();
+  } catch {
+    /* noop */
+  }
 }
 
 interface SpawnState {
@@ -283,26 +323,78 @@ export default function (pi: ExtensionAPI) {
         conn.setEncoding("utf8");
         conn.on("data", (chunk: string) => {
           buf += chunk;
-          const nl = buf.indexOf("\n");
-          if (nl === -1) return;
-          const line = buf.slice(0, nl);
-          buf = buf.slice(nl + 1);
-          try {
-            const msg = JSON.parse(line) as { type?: string; title?: string; summary?: string; preview?: string };
-            if (
-              msg.type === "request-approval" &&
-              typeof msg.title === "string" &&
-              typeof msg.summary === "string" &&
-              typeof msg.preview === "string"
-            ) {
-              resolveConnection({
-                conn,
-                req: { title: msg.title, summary: msg.summary, preview: msg.preview },
-              });
-              return;
+          // The status reporter holds a long-lived conn and may emit many
+          // newline-delimited envelopes; drain every complete line.
+          while (true) {
+            const nl = buf.indexOf("\n");
+            if (nl === -1) return;
+            const line = buf.slice(0, nl);
+            buf = buf.slice(nl + 1);
+            try {
+              const msg = JSON.parse(line) as {
+                type?: string;
+                title?: string;
+                summary?: string;
+                preview?: string;
+                id?: string;
+                delegation_id?: string;
+                agent_name?: string;
+                model_id?: string;
+                context_pct?: number;
+                context_tokens?: number;
+                context_window?: number;
+                cost_usd?: number;
+                turn_count?: number;
+                state?: string;
+              };
+              if (
+                msg.type === "request-approval" &&
+                typeof msg.title === "string" &&
+                typeof msg.summary === "string" &&
+                typeof msg.preview === "string"
+              ) {
+                resolveConnection({
+                  conn,
+                  req: { title: msg.title, summary: msg.summary, preview: msg.preview },
+                });
+                continue;
+              }
+              if (msg.type === "hello" && typeof msg.id === "string") {
+                // Tag the conn so we don't have to re-parse delegation_id on
+                // every status envelope. Status messages may omit it once
+                // the conn is tagged.
+                (conn as unknown as { __delegationId?: string }).__delegationId = msg.id;
+                continue;
+              }
+              if (msg.type === "status") {
+                const targetId =
+                  (typeof msg.delegation_id === "string" && msg.delegation_id) ||
+                  (conn as unknown as { __delegationId?: string }).__delegationId ||
+                  "";
+                if (!targetId) continue;
+                const targetEntry = state.pending.get(targetId);
+                if (!targetEntry) continue;
+                const newState =
+                  msg.state === "paused" || msg.state === "settled" || msg.state === "running"
+                    ? msg.state
+                    : "running";
+                targetEntry.lastStatus = {
+                  receivedAt: Date.now(),
+                  agentName: typeof msg.agent_name === "string" ? msg.agent_name : "",
+                  modelId: typeof msg.model_id === "string" ? msg.model_id : "",
+                  contextPct: typeof msg.context_pct === "number" ? msg.context_pct : 0,
+                  contextTokens: typeof msg.context_tokens === "number" ? msg.context_tokens : 0,
+                  contextWindow: typeof msg.context_window === "number" ? msg.context_window : 0,
+                  costUsd: typeof msg.cost_usd === "number" ? msg.cost_usd : 0,
+                  turnCount: typeof msg.turn_count === "number" ? msg.turn_count : 0,
+                  state: newState,
+                };
+                notifyWidget();
+                continue;
+              }
+            } catch {
+              /* malformed; ignore — child will time out */
             }
-          } catch {
-            /* malformed; ignore — child will time out */
           }
         });
         conn.on("error", () => conn.destroy());
@@ -330,7 +422,7 @@ export default function (pi: ExtensionAPI) {
 
       const child = spawn(process.execPath, args, {
         cwd: REPO_ROOT,
-        env: process.env,
+        env: { ...process.env, PI_AGENT_DELEGATION_ID: id },
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -365,6 +457,7 @@ export default function (pi: ExtensionAPI) {
         }
         killSafe(e.child);
         state.pending.delete(id);
+        notifyWidget();
       }, timeoutMs);
 
       const entry: PendingDelegation = {
@@ -382,12 +475,15 @@ export default function (pi: ExtensionAPI) {
         settled,
       };
       state.pending.set(id, entry);
+      notifyWidget();
 
       // Cache the conn synchronously once the child pauses so the cleanup
       // walker and watchdog can use it from synchronous callbacks.
       settled.then((outcome) => {
         if (outcome.kind === "rpc") {
           entry.resolvedConn = outcome.conn;
+          if (entry.lastStatus) entry.lastStatus.state = "paused";
+          notifyWidget();
         }
       });
 
@@ -395,6 +491,8 @@ export default function (pi: ExtensionAPI) {
       exited.then(() => {
         clearTimeout(watchdog);
         signal?.removeEventListener("abort", onAbort);
+        if (entry.lastStatus) entry.lastStatus.state = "settled";
+        notifyWidget();
         try {
           entry.resolvedConn?.destroy();
         } catch {
@@ -479,6 +577,7 @@ export default function (pi: ExtensionAPI) {
         // Child completed without queuing any drafts — no approval needed.
         clearTimeout(entry.timer);
         state.pending.delete(params.id);
+        notifyWidget();
         const text = finalText(entry, outcome.exit);
         return {
           content: [{ type: "text", text }],
@@ -552,6 +651,7 @@ export default function (pi: ExtensionAPI) {
       // Drain registry; final cleanup of socket/server happens in the exited
       // handler attached at delegate time.
       state.pending.delete(params.id);
+      notifyWidget();
 
       // Include the preview in the result so the parent LLM has an audit trail
       // even when it passed approved=true without a prior preview-only call.
