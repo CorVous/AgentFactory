@@ -63,6 +63,38 @@ describe("createSupervisorInbox", () => {
 });
 
 // ---------------------------------------------------------------------------
+// dispatchEnvelope — synchronous dispatch (item 6 regression guard)
+// ---------------------------------------------------------------------------
+
+describe("dispatchEnvelope — synchronous sendMessage invocation", () => {
+  it("invokes sendMessage synchronously (not deferred to a later microtask)", () => {
+    // This guards against the old turn_end-queue pattern where messages were
+    // stored in a globalThis array and only flushed at the next turn boundary.
+    // The sendMessage callback must be called before dispatchEnvelope returns.
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "Sync test",
+      summary: "s",
+      preview: "p",
+    });
+
+    let calledSynchronously = false;
+    let callCount = 0;
+    inbox.dispatchEnvelope(env, (_msgId, _text) => {
+      calledSynchronously = true;
+      callCount++;
+    });
+    // If the old globalThis-queue pattern was used, calledSynchronously would
+    // be false here (the callback only fires at turn_end). It must be true.
+    expect(calledSynchronously).toBe(true);
+    expect(callCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // dispatchEnvelope — acceptedFrom enforcement
 // ---------------------------------------------------------------------------
 
