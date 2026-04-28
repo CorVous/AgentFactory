@@ -23,6 +23,12 @@ const BASELINE_EXTENSIONS = [
   "agent-footer",
   "hide-extensions-list",
   "deferred-confirm",
+  // Bus binding is a baseline now: atomic-delegate, supervisor rail,
+  // and the deferred-* submission flow all need a bound bus socket.
+  // The agent_send / agent_inbox / agent_list / agent_call tools stay
+  // gated by the recipe's `tools:` allowlist, so loading the extension
+  // by default does not change the tool surface seen by the model.
+  "agent-bus",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
