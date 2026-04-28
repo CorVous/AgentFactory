@@ -59,8 +59,6 @@ export default function (pi: ExtensionAPI) {
       agents: [],
       noEditAdd: [],
       noEditSkip: [],
-      rpcSock: process.env.PI_RPC_SOCK || undefined,
-      delegationId: process.env.PI_AGENT_DELEGATION_ID || undefined,
       acceptedFrom: [],
       peers: [],
     };
