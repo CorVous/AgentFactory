@@ -5,3 +5,7 @@ npm-debug.log*
 .DS_Store
 dist/
 pi-sandbox/.pi/scratch/
+
+# Claude Code's Agent tool creates isolated git worktrees here when
+# sub-agents run with `isolation: "worktree"`. Not part of the repo.
+.claude/worktrees/
