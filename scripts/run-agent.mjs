@@ -23,10 +23,6 @@ const BASELINE_EXTENSIONS = [
   "agent-footer",
   "hide-extensions-list",
   "deferred-confirm",
-  // Reports {context %, cost, state} over --rpc-sock when run as a
-  // delegated child. Self-gates on the flag, so it no-ops for
-  // top-level runs.
-  "agent-status-reporter",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
@@ -114,28 +110,26 @@ function loadRecipe(name) {
   return recipe;
 }
 
-// Implicit-wire the agent-spawn extension and its tools when a recipe
-// declares `agents: [...]`. Mirrors the conditional `usesBus` push for
-// --agent-bus-root: only push --allowed-agents when agent-spawn actually
-// runs, otherwise pi rejects the flag as unknown.
+// Implicit-wire the atomic-delegate extension and its tool when a recipe
+// declares `agents: [...]`.
 //
-// Inverse rejection: if a recipe loads agent-spawn or its tools without
+// Inverse rejection: if a recipe loads atomic-delegate or its tool without
 // declaring `agents:`, that's a misconfiguration — fail loudly so the
 // allowlist is never accidentally empty.
 function applyAgentsField(recipe, name) {
   const declared = Array.isArray(recipe.agents) ? recipe.agents.filter((a) => typeof a === "string") : [];
   const explicitExts = Array.isArray(recipe.extensions) ? recipe.extensions.slice() : [];
   const explicitTools = Array.isArray(recipe.tools) ? recipe.tools.slice() : [];
-  const SPAWN_TOOLS = ["delegate", "approve_delegation"];
+  const DELEGATE_TOOLS = ["delegate"];
 
   if (declared.length === 0) {
-    if (explicitExts.includes("agent-spawn")) {
+    if (explicitExts.includes("atomic-delegate")) {
       die(
-        `recipe ${name} loads extension 'agent-spawn' but has no 'agents:' list — ` +
+        `recipe ${name} loads extension 'atomic-delegate' but has no 'agents:' list — ` +
           `declare which child recipes are allowed (or drop the extension)`,
       );
     }
-    for (const t of SPAWN_TOOLS) {
+    for (const t of DELEGATE_TOOLS) {
       if (explicitTools.includes(t)) {
         die(
           `recipe ${name} declares tool '${t}' but has no 'agents:' list — ` +
@@ -152,14 +146,11 @@ function applyAgentsField(recipe, name) {
     }
   }
 
-  let extensions = explicitExts.includes("agent-spawn") ? explicitExts : [...explicitExts, "agent-spawn"];
-  // Pair the spawn extension with the per-delegation widget so the parent's
-  // TUI shows live status boxes above the input. delegation-boxes reads
-  // agent-spawn's globalThis registry; loading one without the other would
-  // leave the boxes wired but empty (or the registry rendered nowhere).
-  if (!extensions.includes("delegation-boxes")) extensions = [...extensions, "delegation-boxes"];
+  const extensions = explicitExts.includes("atomic-delegate")
+    ? explicitExts
+    : [...explicitExts, "atomic-delegate"];
   const tools = explicitTools.slice();
-  for (const t of SPAWN_TOOLS) if (!tools.includes(t)) tools.push(t);
+  for (const t of DELEGATE_TOOLS) if (!tools.includes(t)) tools.push(t);
   return { allowed: declared, extensions, tools };
 }
 
@@ -239,19 +230,11 @@ function resolveSkillPaths(names) {
 // fragments ahead of the recipe's own `prompt:` so each YAML only needs
 // to describe the agent's role, not the standard tool rules.
 //
-// Two conditional rules avoid showing fragments that would mislead the
-// model:
-//   - `deferred-confirm` is a baseline extension and always loaded, but
-//     its fragment (apply order, atomic batch semantics) is only
-//     relevant when at least one `deferred-*` tool extension is loaded.
-//   - `agent-spawn` ships two fragments. The base one explains the
-//     `delegate` / `approve_delegation` mechanics. The companion
-//     `agent-spawn.approval.prompt.md` describes the draft-approval
-//     workflow and is only included when at least one allowed child
-//     recipe loads a `deferred-*` extension (i.e. can actually produce
-//     drafts that need approving). A delegator whose children never
-//     queue drafts does not need approval-flow guidance.
-function loadPromptFragments(extensionNames, allowedAgents) {
+// Conditional rule: `deferred-confirm` is a baseline extension and
+// always loaded, but its fragment (apply order, atomic batch semantics)
+// is only relevant when at least one `deferred-*` tool extension is
+// loaded.
+function loadPromptFragments(extensionNames) {
   const hasDeferredTool = extensionNames.some(
     (n) => n.startsWith("deferred-") && n !== "deferred-confirm",
   );
@@ -260,23 +243,6 @@ function loadPromptFragments(extensionNames, allowedAgents) {
     if (name === "deferred-confirm" && !hasDeferredTool) continue;
     const p = path.join(EXTENSIONS_DIR, `${name}.prompt.md`);
     if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
-  }
-  if (extensionNames.includes("agent-spawn") && allowedAgents.length > 0) {
-    const anyApprovable = allowedAgents.some((child) => {
-      const f = path.join(AGENTS_DIR, `${child}.yaml`);
-      if (!existsSync(f)) return false;
-      try {
-        const r = parseYaml(readFileSync(f, "utf8"));
-        const exts = Array.isArray(r?.extensions) ? r.extensions : [];
-        return exts.some((e) => typeof e === "string" && e.startsWith("deferred-") && e !== "deferred-confirm");
-      } catch {
-        return false;
-      }
-    });
-    if (anyApprovable) {
-      const p = path.join(EXTENSIONS_DIR, "agent-spawn.approval.prompt.md");
-      if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
-    }
   }
   return fragments;
 }
@@ -305,7 +271,7 @@ const mergedExtensions = [
   ...BASELINE_EXTENSIONS,
   ...wired.extensions.filter((n) => !BASELINE_EXTENSIONS.includes(n)),
 ];
-const promptFragments = loadPromptFragments(mergedExtensions, wired.allowed);
+const promptFragments = loadPromptFragments(mergedExtensions);
 const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
 
 const piArgs = [
@@ -325,20 +291,15 @@ for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
 
 // --agent-name passthrough is parsed only to capture the value into the
-// Habitat spec; pi receives it solely via --habitat-spec. Same for
-// --rpc-sock since deferred-confirm now reads getHabitat().rpcSock.
-// --topology-overlay is set by launch-mesh; it carries the resolved peer
-// fields from the topology YAML and is merged into habitatSpec below.
+// Habitat spec; pi receives it solely via --habitat-spec.
+// --topology-overlay is set by launch-mesh and atomic-delegate; it carries
+// the resolved peer fields and is merged into habitatSpec below.
 let agentName = null;                                     // null → generate
-let rpcSock = "";
 let topologyOverlayJson = "";
 const passthrough = [];
 for (let i = 0; i < args.passthrough.length; i++) {
   if (args.passthrough[i] === "--agent-name" && i + 1 < args.passthrough.length) {
     agentName = args.passthrough[++i];                    // manual override wins
-  } else if (args.passthrough[i] === "--rpc-sock" && i + 1 < args.passthrough.length) {
-    rpcSock = args.passthrough[++i];
-    // do not push --rpc-sock into passthrough; pi no longer registers this flag
   } else if (args.passthrough[i] === "--topology-overlay" && i + 1 < args.passthrough.length) {
     topologyOverlayJson = args.passthrough[++i];
     // do not push --topology-overlay into passthrough; pi doesn't know this flag
@@ -393,11 +354,6 @@ const recipePeers = Array.isArray(recipe.peers)
 // many individual flags + env-var mirrors. The habitat.ts baseline
 // extension materialises this at session_start; all other rails read
 // their axis from getHabitat() rather than re-parsing flags/env.
-// PI_AGENT_DELEGATION_ID is set by agent-spawn in the child's env before
-// calling the runner. Include it in the spec so agent-status-reporter
-// can read it from getHabitat() rather than from env.
-const delegationId = process.env.PI_AGENT_DELEGATION_ID || "";
-
 const habitatSpec = {
   agentName,
   scratchRoot: sandboxRoot,
@@ -411,17 +367,18 @@ const habitatSpec = {
     : {}),
   ...(TIER_VARS.has(recipeModel) ? { tier: recipeModel } : {}),
   type: args.name,
-  ...(rpcSock ? { rpcSock } : {}),
-  ...(delegationId ? { delegationId } : {}),
   ...(typeof recipe.supervisor === "string" && recipe.supervisor ? { supervisor: recipe.supervisor } : {}),
   ...(typeof recipe.submitTo === "string" && recipe.submitTo ? { submitTo: recipe.submitTo } : {}),
   ...(recipeAcceptedFrom.length > 0 ? { acceptedFrom: recipeAcceptedFrom } : {}),
   ...(recipePeers.length > 0 ? { peers: recipePeers } : {}),
 };
-// Apply topology overlay — fields from the topology YAML take precedence
-// over recipe-derived values. Fields absent or empty in the overlay leave
-// the recipe value intact (so existing topologies without peer fields
-// continue to launch unchanged).
+// Apply topology overlay — fields from the topology YAML or atomic-delegate
+// take precedence over recipe-derived values. Fields absent in the overlay
+// leave the recipe value intact (so existing topologies without peer
+// fields continue to launch unchanged).
+//
+// `agents` is also overridable so atomic-delegate can lock a spawned
+// worker to agents:[] regardless of what the recipe declares.
 if (topologyOverlayJson) {
   let overlay;
   try { overlay = JSON.parse(topologyOverlayJson); } catch (e) {
@@ -435,6 +392,9 @@ if (topologyOverlayJson) {
   if (Array.isArray(overlay.peers) && overlay.peers.length > 0) {
     habitatSpec.peers = overlay.peers;
   }
+  if (Array.isArray(overlay.agents)) {
+    habitatSpec.agents = overlay.agents.filter((s) => typeof s === "string");
+  }
 }
 
 piArgs.push("--habitat-spec", JSON.stringify(habitatSpec));
@@ -445,8 +405,6 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
-  // PI_AGENT_DELEGATION_ID is set by agent-spawn when it spawns a child,
-  // not by the runner. It stays as an env var until Phase 5.
   env: { ...process.env },
 });
 
