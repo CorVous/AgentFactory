@@ -13,15 +13,14 @@
 //   pi.getAllTools(); the static fallback covers pi 0.70's built-in
 //   `write` plus our `deferred_write`.
 //
-// Recipe overrides (forwarded by scripts/run-agent.mjs):
-//   noEditAdd:  [tool, ...]   →  --no-edit-add  <a,b,...>   (force-include)
-//   noEditSkip: [tool, ...]   →  --no-edit-skip <a,b,...>   (force-exclude)
-// The sandbox-root path used to compare resolved targets is read from
-// the `--sandbox-root` flag (registered by the sandbox extension).
+// Recipe overrides via Habitat (getHabitat().noEditAdd / noEditSkip),
+// forwarded by scripts/run-agent.mjs from the recipe's noEditAdd /
+// noEditSkip fields.
 
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { getHabitat } from "./_lib/habitat";
 
 const STATIC_CREATE_ONLY_TOOLS = ["write", "deferred_write"];
 const CONTENT_KEYS = ["content", "text", "body"];
@@ -36,21 +35,7 @@ function declaresWriteShape(parameters: unknown): boolean {
   }
 }
 
-function parseFlagList(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-}
-
 export default function (pi: ExtensionAPI) {
-  pi.registerFlag("no-edit-add", {
-    description: "Comma-separated extra tools to force-include in the no-edit (create-only) rail",
-    type: "string",
-  });
-  pi.registerFlag("no-edit-skip", {
-    description: "Comma-separated tools to exempt from the no-edit (create-only) rail",
-    type: "string",
-  });
-
   const createOnlyTools = new Set<string>(STATIC_CREATE_ONLY_TOOLS);
 
   pi.on("session_start", async (_event, ctx) => {
@@ -65,8 +50,17 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    for (const t of parseFlagList(pi.getFlag("no-edit-add") as string | undefined)) createOnlyTools.add(t);
-    for (const t of parseFlagList(pi.getFlag("no-edit-skip") as string | undefined)) createOnlyTools.delete(t);
+    let noEditAdd: string[] = [];
+    let noEditSkip: string[] = [];
+    try {
+      const h = getHabitat();
+      noEditAdd = h.noEditAdd;
+      noEditSkip = h.noEditSkip;
+    } catch {
+      // Habitat not yet set; use empty lists (no recipe overrides).
+    }
+    for (const t of noEditAdd) createOnlyTools.add(t);
+    for (const t of noEditSkip) createOnlyTools.delete(t);
 
     if (process.env.AGENT_DEBUG === "1") {
       const dump = `no-edit createOnlyTools = [${[...createOnlyTools].sort().join(", ")}]`;
@@ -85,7 +79,12 @@ export default function (pi: ExtensionAPI) {
     const raw = (event.input as Record<string, unknown>).path;
     if (typeof raw !== "string" || raw.length === 0) return undefined;
 
-    const root = path.resolve((pi.getFlag("sandbox-root") as string | undefined) || process.cwd());
+    let root: string;
+    try {
+      root = path.resolve(getHabitat().scratchRoot);
+    } catch {
+      root = path.resolve(process.cwd());
+    }
     const abs = path.isAbsolute(raw) ? raw : path.resolve(root, raw);
 
     if (fs.existsSync(abs)) {
