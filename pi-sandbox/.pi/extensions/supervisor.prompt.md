@@ -37,7 +37,7 @@ Use respond_to_request({msg_id: "<id>", action: "approve"|"reject"|"revise"|"esc
 - Revision cycles are capped at 3 per thread. After the cap, you must `approve` or `reject`.
 - `escalate` is only available when this agent has a configured `supervisor` peer. If not configured, the action will error.
 - After `approve` or `reject`, the thread is closed — the `msg_id` is no longer valid.
-- After `revise`, the thread remains open — the worker may re-submit, and the new submission will arrive as a fresh inbound message.
+- After `revise`, the thread remains open — the worker may re-submit, and the resubmission arrives tagged with `[revision N]` in the user prompt. Use the same revision flow on the new `msg_id`. The revision count is already enforced (cap 3); on the third revision, your only options are `approve` or `reject` — a fourth `revise` will return an error.
 
 ### Example: approving a submission
 

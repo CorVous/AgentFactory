@@ -9,18 +9,24 @@ import {
   getPendingSubmissions,
   shipSubmission,
   dispatchSubmissionReply,
+  storeLastSubmissionMsgId,
+  takeLastSubmissionMsgId,
+  composeRevisionPrompt,
+  handleSubmissionReply,
   type ShipContext,
   type PendingSubmission,
 } from "./submission-emit";
 
 const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 
-// Reset global pending-submissions map between tests.
+// Reset global pending-submissions map and last-msg-id store between tests.
 beforeEach(() => {
   (globalThis as { __pi_pending_submissions__?: unknown }).__pi_pending_submissions__ = undefined;
+  (globalThis as { __pi_last_submission_msgid__?: unknown }).__pi_last_submission_msgid__ = undefined;
 });
 afterEach(() => {
   (globalThis as { __pi_pending_submissions__?: unknown }).__pi_pending_submissions__ = undefined;
+  (globalThis as { __pi_last_submission_msgid__?: unknown }).__pi_last_submission_msgid__ = undefined;
 });
 
 // ---------------------------------------------------------------------------
@@ -131,7 +137,7 @@ describe("shipSubmission — basic send and pending registration", () => {
     const pending = [...getPendingSubmissions().values()][0];
     if (pending) {
       clearTimeout(pending.timer);
-      pending.resolve({ approved: false });
+      pending.resolve({ approved: false, originalMsgId: "cleanup" });
     }
     await p.catch(() => {});
   });
@@ -157,7 +163,7 @@ describe("shipSubmission — basic send and pending registration", () => {
     // cleanup
     const pending = getPendingSubmissions().get(capturedMsgId)!;
     clearTimeout(pending.timer);
-    pending.resolve({ approved: false });
+    pending.resolve({ approved: false, originalMsgId: capturedMsgId });
     await p.catch(() => {});
   });
 
@@ -177,7 +183,7 @@ describe("shipSubmission — basic send and pending registration", () => {
       expect(env.payload.summary).toBeUndefined();
     }
     const pending = [...getPendingSubmissions().values()][0];
-    if (pending) { clearTimeout(pending.timer); pending.resolve({ approved: false }); }
+    if (pending) { clearTimeout(pending.timer); pending.resolve({ approved: false, originalMsgId: "cleanup" }); }
     await p.catch(() => {});
   });
 });
@@ -266,7 +272,7 @@ describe("dispatchSubmissionReply", () => {
 
   it("resolves pending with {approved:true} on approval-result approved:true", async () => {
     // Manually plant a pending entry
-    const result = await new Promise<{ approved: boolean; note?: string; revisionNote?: string }>((resolve) => {
+    const result = await new Promise<{ approved: boolean; note?: string; revisionNote?: string; originalMsgId: string }>((resolve) => {
       const timer = setTimeout(() => {}, 60_000);
       getPendingSubmissions().set("msg-1", {
         resolve,
@@ -287,11 +293,12 @@ describe("dispatchSubmissionReply", () => {
     });
     expect(result.approved).toBe(true);
     expect(result.note).toBeUndefined();
+    expect(result.originalMsgId).toBe("msg-1");
     expect(getPendingSubmissions().has("msg-1")).toBe(false);
   });
 
   it("resolves pending with {approved:false, note} on approval-result approved:false with note", async () => {
-    const result = await new Promise<{ approved: boolean; note?: string; revisionNote?: string }>((resolve) => {
+    const result = await new Promise<{ approved: boolean; note?: string; revisionNote?: string; originalMsgId: string }>((resolve) => {
       const timer = setTimeout(() => {}, 60_000);
       getPendingSubmissions().set("msg-2", { resolve, reject: () => {}, timer });
 
@@ -312,7 +319,7 @@ describe("dispatchSubmissionReply", () => {
   });
 
   it("resolves pending with {approved:false, revisionNote} on revision-requested", async () => {
-    const result = await new Promise<{ approved: boolean; note?: string; revisionNote?: string }>((resolve) => {
+    const result = await new Promise<{ approved: boolean; note?: string; revisionNote?: string; originalMsgId: string }>((resolve) => {
       const timer = setTimeout(() => {}, 60_000);
       getPendingSubmissions().set("msg-3", { resolve, reject: () => {}, timer });
 
@@ -330,6 +337,7 @@ describe("dispatchSubmissionReply", () => {
     expect(result.approved).toBe(false);
     expect(result.revisionNote).toBe("please fix indentation");
     expect(result.note).toBeUndefined();
+    expect(result.originalMsgId).toBe("msg-3");
   });
 
   it("clears the timer when resolving", () => {
@@ -368,6 +376,236 @@ describe("dispatchSubmissionReply", () => {
       payload: { kind: "approval-result", approved: true },
     });
     expect(result).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// storeLastSubmissionMsgId / takeLastSubmissionMsgId
+// ---------------------------------------------------------------------------
+
+describe("storeLastSubmissionMsgId / takeLastSubmissionMsgId", () => {
+  it("returns undefined when nothing has been stored", () => {
+    expect(takeLastSubmissionMsgId()).toBeUndefined();
+  });
+
+  it("stores and returns the msg_id once, then clears it", () => {
+    storeLastSubmissionMsgId("abc-123");
+    expect(takeLastSubmissionMsgId()).toBe("abc-123");
+    // Consumed: subsequent calls return undefined
+    expect(takeLastSubmissionMsgId()).toBeUndefined();
+  });
+
+  it("overwrites a previously-stored id", () => {
+    storeLastSubmissionMsgId("first");
+    storeLastSubmissionMsgId("second");
+    expect(takeLastSubmissionMsgId()).toBe("second");
+    expect(takeLastSubmissionMsgId()).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// composeRevisionPrompt — formats the worker-side re-prompt message
+// ---------------------------------------------------------------------------
+
+describe("composeRevisionPrompt", () => {
+  it("includes the supervisor's note verbatim", () => {
+    const text = composeRevisionPrompt("12345678-aaaa-bbbb-cccc-deadbeef0000", "Please indent");
+    expect(text).toContain("Please indent");
+  });
+
+  it("includes the original msg_id prefix (8 chars) so the model can correlate", () => {
+    const text = composeRevisionPrompt("12345678-aaaa-bbbb-cccc-deadbeef0000", "fix it");
+    expect(text).toContain("12345678");
+  });
+
+  it("starts with a clear supervisor-revise tag", () => {
+    const text = composeRevisionPrompt("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "x");
+    expect(text).toMatch(/\[supervisor revise/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shipSubmission — in_reply_to threading and originalMsgId in resolve
+// ---------------------------------------------------------------------------
+
+describe("shipSubmission — in_reply_to threading", () => {
+  it("threads in_reply_to from ctx onto the outbound envelope", async () => {
+    const mockSender = vi.fn().mockResolvedValue({ delivered: true });
+    const ctx: ShipContext = {
+      busRoot: "/tmp/bus",
+      agentName: "worker",
+      submitTo: "supervisor",
+      sendEnvelope: mockSender,
+      timeoutMs: 60_000,
+      in_reply_to: "original-msg-id-xyz",
+    };
+    const p = shipSubmission(ctx, [], "summary");
+    await new Promise<void>((r) => setImmediate(r));
+    const env = mockSender.mock.calls[0][0] as Envelope;
+    expect(env.in_reply_to).toBe("original-msg-id-xyz");
+    // cleanup
+    const pending = [...getPendingSubmissions().values()][0];
+    if (pending) { clearTimeout(pending.timer); pending.resolve({ approved: false, originalMsgId: env.msg_id }); }
+    await p.catch(() => {});
+  });
+
+  it("omits in_reply_to from envelope when not in ctx", async () => {
+    const mockSender = vi.fn().mockResolvedValue({ delivered: true });
+    const ctx: ShipContext = {
+      busRoot: "/tmp/bus",
+      agentName: "worker",
+      submitTo: "supervisor",
+      sendEnvelope: mockSender,
+      timeoutMs: 60_000,
+    };
+    const p = shipSubmission(ctx, []);
+    await new Promise<void>((r) => setImmediate(r));
+    const env = mockSender.mock.calls[0][0] as Envelope;
+    expect(env.in_reply_to).toBeUndefined();
+    const pending = [...getPendingSubmissions().values()][0];
+    if (pending) { clearTimeout(pending.timer); pending.resolve({ approved: false, originalMsgId: env.msg_id }); }
+    await p.catch(() => {});
+  });
+});
+
+describe("shipSubmission — resolves with originalMsgId", () => {
+  it("returns the outbound envelope's msg_id as originalMsgId on success", async () => {
+    let capturedMsgId = "";
+    const mockSender = vi.fn().mockImplementation(async (env: Envelope) => {
+      capturedMsgId = env.msg_id;
+      return { delivered: true };
+    });
+    const ctx: ShipContext = {
+      busRoot: "/tmp",
+      agentName: "worker",
+      submitTo: "sup",
+      sendEnvelope: mockSender,
+      timeoutMs: 60_000,
+    };
+    const promise = shipSubmission(ctx, [], "x");
+    await new Promise<void>((r) => setImmediate(r));
+
+    dispatchSubmissionReply({
+      v: 2,
+      msg_id: "reply-x",
+      from: "sup",
+      to: "worker",
+      ts: Date.now(),
+      in_reply_to: capturedMsgId,
+      payload: { kind: "approval-result", approved: true },
+    });
+
+    const result = await promise;
+    expect(result.originalMsgId).toBe(capturedMsgId);
+  });
+
+  it("returns originalMsgId on revision-requested as well", async () => {
+    let capturedMsgId = "";
+    const mockSender = vi.fn().mockImplementation(async (env: Envelope) => {
+      capturedMsgId = env.msg_id;
+      return { delivered: true };
+    });
+    const ctx: ShipContext = {
+      busRoot: "/tmp",
+      agentName: "worker",
+      submitTo: "sup",
+      sendEnvelope: mockSender,
+      timeoutMs: 60_000,
+    };
+    const promise = shipSubmission(ctx, [], "x");
+    await new Promise<void>((r) => setImmediate(r));
+
+    dispatchSubmissionReply({
+      v: 2,
+      msg_id: "reply-x",
+      from: "sup",
+      to: "worker",
+      ts: Date.now(),
+      in_reply_to: capturedMsgId,
+      payload: { kind: "revision-requested", note: "fix x" },
+    });
+
+    const result = await promise;
+    expect(result.approved).toBe(false);
+    expect(result.revisionNote).toBe("fix x");
+    expect(result.originalMsgId).toBe(capturedMsgId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleSubmissionReply — worker-side reply routing (used by deferred-confirm)
+// ---------------------------------------------------------------------------
+
+describe("handleSubmissionReply — approved branch", () => {
+  it("calls notify with 'submission applied by supervisor'; does not store msg_id; does not send user message", () => {
+    const sendUserMessage = vi.fn();
+    const notify = vi.fn();
+    handleSubmissionReply(
+      { approved: true, originalMsgId: "orig-abc" },
+      { sendUserMessage, notify },
+    );
+    expect(notify).toHaveBeenCalledWith("info", expect.stringMatching(/applied/i));
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(takeLastSubmissionMsgId()).toBeUndefined();
+  });
+});
+
+describe("handleSubmissionReply — rejected branch", () => {
+  it("calls notify with rejection note; does not store msg_id; does not send user message", () => {
+    const sendUserMessage = vi.fn();
+    const notify = vi.fn();
+    handleSubmissionReply(
+      { approved: false, note: "out of scope", originalMsgId: "orig-abc" },
+      { sendUserMessage, notify },
+    );
+    expect(notify).toHaveBeenCalledWith("info", expect.stringMatching(/rejected.*out of scope/i));
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(takeLastSubmissionMsgId()).toBeUndefined();
+  });
+
+  it("falls back to '(no reason)' when note is undefined", () => {
+    const notify = vi.fn();
+    handleSubmissionReply(
+      { approved: false, originalMsgId: "orig-abc" },
+      { sendUserMessage: vi.fn(), notify },
+    );
+    expect(notify).toHaveBeenCalledWith("info", expect.stringMatching(/no reason/i));
+  });
+});
+
+describe("handleSubmissionReply — revisionNote branch", () => {
+  it("stores the original msg_id, sends a user message containing the note + msg_id prefix, and notifies", () => {
+    const sendUserMessage = vi.fn();
+    const notify = vi.fn();
+    const originalMsgId = "12345678-deadbeef-cafe-babe";
+    handleSubmissionReply(
+      { approved: false, revisionNote: "Add error handling", originalMsgId },
+      { sendUserMessage, notify },
+    );
+
+    // Stored for the next submission to thread via in_reply_to
+    expect(takeLastSubmissionMsgId()).toBe(originalMsgId);
+
+    // sendUserMessage called with a string containing the note and the msg_id prefix
+    expect(sendUserMessage).toHaveBeenCalledOnce();
+    const [text, opts] = sendUserMessage.mock.calls[0] as [string, { deliverAs: string }];
+    expect(text).toContain("Add error handling");
+    expect(text).toContain("12345678");
+    expect(opts?.deliverAs).toBe("followUp");
+
+    // notify called with revision info
+    expect(notify).toHaveBeenCalledWith("info", expect.stringMatching(/revision requested.*Add error handling/i));
+  });
+
+  it("revisionNote takes precedence over note when both are present", () => {
+    const sendUserMessage = vi.fn();
+    const notify = vi.fn();
+    handleSubmissionReply(
+      { approved: false, revisionNote: "redo", note: "ignored", originalMsgId: "abcd1234" },
+      { sendUserMessage, notify },
+    );
+    expect(sendUserMessage).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith("info", expect.stringMatching(/revision requested/i));
   });
 });
 

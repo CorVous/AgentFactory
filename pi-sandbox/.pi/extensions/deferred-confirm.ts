@@ -20,7 +20,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { requestHumanApproval } from "./_lib/escalation";
 import { getHabitat } from "./_lib/habitat";
-import { shipSubmission, makeBusSender } from "./_lib/submission-emit";
+import {
+  shipSubmission,
+  makeBusSender,
+  takeLastSubmissionMsgId,
+  handleSubmissionReply,
+  type SubmissionReply,
+} from "./_lib/submission-emit";
 import type { Artifact } from "./_lib/bus-envelope";
 export type { ApprovalRequest } from "./_lib/escalation";
 
@@ -128,31 +134,26 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      let reply: { approved: boolean; note?: string; revisionNote?: string };
+      const inReplyTo = takeLastSubmissionMsgId();
+      let reply: SubmissionReply;
       try {
-        reply = await shipSubmission(
-          {
-            busRoot,
-            agentName,
-            submitTo,
-            sendEnvelope: makeBusSender(busRoot),
-          },
-          allArtifacts,
-          summaryLine,
-        );
+        const shipCtx: Parameters<typeof shipSubmission>[0] = {
+          busRoot,
+          agentName,
+          submitTo,
+          sendEnvelope: makeBusSender(busRoot),
+        };
+        if (inReplyTo !== undefined) shipCtx.in_reply_to = inReplyTo;
+        reply = await shipSubmission(shipCtx, allArtifacts, summaryLine);
       } catch (e) {
         tell(ctx, "error", `submission failed: ${(e as Error).message}`);
         return;
       }
 
-      if (reply.approved) {
-        tell(ctx, "info", "submission applied by supervisor");
-      } else if (reply.revisionNote !== undefined) {
-        // Phase 4a: revision-requested treated as reject + log.
-        tell(ctx, "info", `submission revision requested (treating as reject): ${reply.revisionNote}`);
-      } else {
-        tell(ctx, "info", `submission rejected: ${reply.note ?? "(no reason)"}`);
-      }
+      handleSubmissionReply(reply, {
+        sendUserMessage: (text, opts) => pi.sendUserMessage(text, opts),
+        notify: (level, message) => tell(ctx, level, message),
+      });
       return; // no local apply
     }
 
