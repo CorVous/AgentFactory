@@ -22,6 +22,12 @@ export interface Habitat {
   // Delegation-only context (still in use until Phase 5)
   rpcSock?: string;
   delegationId?: string;
+
+  // Phase 3b: peer relationships
+  supervisor?: string;
+  submitTo?: string;
+  acceptedFrom: string[];
+  peers: string[];
 }
 
 function requireString(obj: Record<string, unknown>, key: string): string {
@@ -70,6 +76,10 @@ export function materialiseHabitat(rawJson: string): Habitat {
     agents: stringList(obj, "agents"),
     noEditAdd: stringList(obj, "noEditAdd"),
     noEditSkip: stringList(obj, "noEditSkip"),
+    supervisor: optionalString(obj, "supervisor"),
+    submitTo: optionalString(obj, "submitTo"),
+    acceptedFrom: stringList(obj, "acceptedFrom"),
+    peers: stringList(obj, "peers"),
   };
 }
 

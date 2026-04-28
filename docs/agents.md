@@ -144,7 +144,13 @@ provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail
 noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 agents: [deferred-writer]         # optional; recipes this agent may delegate to
+supervisor: lead-hare             # optional; peer name to escalate approvals to
+submitTo: collector               # optional; peer name to ship submissions to
+acceptedFrom: [worker-a, worker-b] # optional; peers allowed to send to this one
+peers: [planner, reviewer]        # optional; peers this one may address
 ```
+
+> **Phase 3b note:** `supervisor`, `submitTo`, `acceptedFrom`, and `peers` are declarable and materialised into the `Habitat` but no rail enforces them yet. They become active in Phase 3c when the supervisor inbound rail and peer allowlist are wired.
 
 ### `prompt:` and extension fragments
 

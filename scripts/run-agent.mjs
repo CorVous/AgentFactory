@@ -324,6 +324,26 @@ if (agentName === null) {
 
 const recipeSkills = Array.isArray(recipe.skills) ? recipe.skills.filter((s) => typeof s === "string") : [];
 
+// Phase 3b: peer relationship fields — validate types and extract values.
+if (recipe.supervisor !== undefined && typeof recipe.supervisor !== "string") {
+  die(`recipe ${args.name} 'supervisor' must be a string`);
+}
+if (recipe.submitTo !== undefined && typeof recipe.submitTo !== "string") {
+  die(`recipe ${args.name} 'submitTo' must be a string`);
+}
+if (recipe.acceptedFrom !== undefined && !Array.isArray(recipe.acceptedFrom)) {
+  die(`recipe ${args.name} 'acceptedFrom' must be an array of strings`);
+}
+if (recipe.peers !== undefined && !Array.isArray(recipe.peers)) {
+  die(`recipe ${args.name} 'peers' must be an array of strings`);
+}
+const recipeAcceptedFrom = Array.isArray(recipe.acceptedFrom)
+  ? recipe.acceptedFrom.filter((s) => typeof s === "string")
+  : [];
+const recipePeers = Array.isArray(recipe.peers)
+  ? recipe.peers.filter((s) => typeof s === "string")
+  : [];
+
 // Serialise the resolved Habitat into one --habitat-spec flag instead of
 // many individual flags + env-var mirrors. The habitat.ts baseline
 // extension materialises this at session_start; all other rails read
@@ -348,6 +368,10 @@ const habitatSpec = {
   type: args.name,
   ...(rpcSock ? { rpcSock } : {}),
   ...(delegationId ? { delegationId } : {}),
+  ...(typeof recipe.supervisor === "string" && recipe.supervisor ? { supervisor: recipe.supervisor } : {}),
+  ...(typeof recipe.submitTo === "string" && recipe.submitTo ? { submitTo: recipe.submitTo } : {}),
+  ...(recipeAcceptedFrom.length > 0 ? { acceptedFrom: recipeAcceptedFrom } : {}),
+  ...(recipePeers.length > 0 ? { peers: recipePeers } : {}),
 };
 piArgs.push("--habitat-spec", JSON.stringify(habitatSpec));
 piArgs.push(...args.passthrough);
