@@ -402,6 +402,8 @@ tmux integration pattern above, not in `npm test`. Run `npm run
 test:watch` for a red-green-refactor loop while iterating on a pure
 library module.
 
+Unit tests run automatically in CI on every push and PR; tmux integration tests stay local.
+
 ## Mandatory safety rails for sub-agents
 
 When an extension delegates to a child `pi` process:
