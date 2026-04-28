@@ -16,6 +16,7 @@ import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
+import { buildEditArtifact } from "./_lib/submission-emit";
 
 const PREVIEW_LINES_PER_BLOCK = 20;
 
@@ -179,11 +180,20 @@ export default function (pi: ExtensionAPI) {
         return { wrote, failed };
       };
 
+      const artifacts = plans.map((p) =>
+        buildEditArtifact({
+          relPath: p.relPath,
+          originalContent: p.original,
+          edits: p.edits.map((e) => ({ oldString: e.oldString, newString: e.newString })),
+        }),
+      );
+
       return {
         status: "ok",
         summary: `${totalEdits} edit(s) across ${plans.length} file(s)`,
         preview,
         apply,
+        artifacts,
       };
     },
   });

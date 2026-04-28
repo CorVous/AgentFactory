@@ -17,6 +17,7 @@ import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
+import { buildMoveArtifact } from "./_lib/submission-emit";
 
 type Move = { srcRel: string; srcAbs: string; dstRel: string; dstAbs: string };
 
@@ -158,11 +159,20 @@ export default function (pi: ExtensionAPI) {
         return { wrote, failed };
       };
 
+      const artifacts = plans.map((p) =>
+        buildMoveArtifact({
+          src: p.srcRel,
+          dst: p.dstRel,
+          sourceContent: fs.readFileSync(p.srcAbs, "utf8"),
+        }),
+      );
+
       return {
         status: "ok",
         summary: `${plans.length} file(s)`,
         preview,
         apply,
+        artifacts,
       };
     },
   });
