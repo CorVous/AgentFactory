@@ -1,4 +1,4 @@
-// atomic-delegate extension — single-tool replacement for agent-spawn.
+// atomic-delegate extension — single-tool delegation primitive.
 //
 // Registers `delegate({recipe, task, workspace?, timeout_ms?})`. Each
 // call:

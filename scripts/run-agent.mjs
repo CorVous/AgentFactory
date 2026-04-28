@@ -317,8 +317,8 @@ const busRoot =
 // If no manual --agent-name was provided in passthrough, generate one
 // of the form `<breed>-<shortName>`. The bus-root scan catches live
 // peers from other terminals so two `peer-chatter` runs never collide
-// on the bus socket. agent-spawn does its own pre-generation for
-// delegated children (it knows the full sibling set), so this branch
+// on the bus socket. atomic-delegate does its own pre-generation for
+// delegated workers (it knows the full sibling set), so this branch
 // usually only runs for user-launched roots.
 if (agentName === null) {
   const shortName =
