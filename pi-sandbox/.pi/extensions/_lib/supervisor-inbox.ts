@@ -11,6 +11,7 @@ import {
   type Envelope,
   type Payload,
 } from "./bus-envelope";
+import { applyArtifacts } from "./submission-apply";
 
 export type InboundEnvelope = Envelope;
 
@@ -116,6 +117,29 @@ export function createSupervisorInbox(): SupervisorInbox {
 
       switch (opts.action) {
         case "approve": {
+          if (payload.kind === "submission") {
+            // Apply artifacts to the canonical filesystem before replying.
+            let canonicalRoot: string;
+            try {
+              canonicalRoot = getHabitat().scratchRoot;
+            } catch {
+              return { ok: false, error: "approve (submission): Habitat not available — cannot resolve canonical root" };
+            }
+            const applyResult = await applyArtifacts(canonicalRoot, payload.artifacts);
+            if (!applyResult.ok) {
+              const errNote = `apply failed: ${applyResult.errors.join("; ")}`;
+              const reply = makeApprovalResultEnvelope({
+                from: opts.agentName,
+                to: env.from,
+                in_reply_to: env.msg_id,
+                approved: false,
+                note: errNote,
+              });
+              await opts.sendEnvelope(reply);
+              pending.delete(opts.msg_id);
+              return { ok: true };
+            }
+          }
           const reply = makeApprovalResultEnvelope({
             from: opts.agentName,
             to: env.from,

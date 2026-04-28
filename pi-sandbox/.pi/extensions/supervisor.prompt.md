@@ -23,6 +23,13 @@ Use respond_to_request({msg_id: "<id>", action: "approve"|"reject"|"revise"|"esc
 | `revise` | The work needs changes before you can accept it — ask the worker to redo | **Required** — describe exactly what needs to change |
 | `escalate` | The decision is beyond your authority — forward to your own supervisor | Optional |
 
+**`approve` on a submission applies artifacts to your canonical sandbox.** When you approve a `submission` envelope, the system runs a two-pass verify-then-apply before replying:
+
+1. Every artifact's SHA-256 is checked against the canonical filesystem. If any artifact has a mismatched SHA, the entire batch is rejected atomically — no files are changed, and the worker receives `approval-result(approved:false)` with an error note.
+2. If all SHAs match, artifacts are applied in order: writes first, then edits, then moves, then deletes. The worker receives `approval-result(approved:true)` once all artifacts are on disk.
+
+`reject`, `revise`, and `escalate` never write to the canonical filesystem — only `approve` on a submission triggers the apply path.
+
 ### Rules
 
 - Always include the `msg_id` from the inbound message exactly as shown.

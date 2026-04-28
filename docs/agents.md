@@ -662,10 +662,20 @@ respond_to_request({msg_id, action, note?})
 
 | Action | Effect |
 |--------|--------|
-| `approve` | Sends `approval-result(approved:true)` to original sender; closes thread |
-| `reject` | Sends `approval-result(approved:false)` to original sender; closes thread |
-| `revise` | Sends `revision-requested(note)` to original sender; thread stays open (note **required**) |
+| `approve` on `approval-request` | Sends `approval-result(approved:true)` to original sender; closes thread |
+| `approve` on `submission` | Applies artifacts to canonical filesystem (`getHabitat().scratchRoot`), then sends `approval-result(approved:true)` on success or `approval-result(approved:false, note:"apply failed: …")` on SHA-mismatch or apply error; closes thread either way |
+| `reject` | Sends `approval-result(approved:false)` to original sender; closes thread. Does **not** touch the filesystem. |
+| `revise` | Sends `revision-requested(note)` to original sender; thread stays open (note **required**). Does **not** touch the filesystem. |
 | `escalate` | Forwards to `getHabitat().supervisor` via bus; relays result back to sender; closes thread |
+
+**Submission apply semantics (Phase 4b):** `approve` on a `submission` envelope runs a two-pass verify-then-apply:
+
+1. **Verify pass** — all artifact SHAs are checked against the current canonical filesystem without touching any files. A SHA mismatch on any artifact in the batch aborts the entire batch (atomic).
+   - `write`: no SHA verification (content is new; the SHA field is informational).
+   - `edit`: current file content must hash to `sha256OfOriginal`.
+   - `move`: source file must hash to `sha256OfSource`; destination must not exist.
+   - `delete`: current file content must hash to `sha256`.
+2. **Apply pass** — artifacts are applied in fixed priority order (writes → edits → moves → deletes), regardless of the order they appear in the envelope. This matches `deferred-confirm`'s priority order so compositions like "edit X then move it to Y" work deterministically.
 
 Revision cycles are **capped at 3 per thread** (keyed by the root `msg_id`). After
 the cap, only `approve` or `reject` are accepted; a further `revise` returns an
