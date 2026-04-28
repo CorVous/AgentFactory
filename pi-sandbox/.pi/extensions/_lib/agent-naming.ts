@@ -1,10 +1,10 @@
 // TS twin of scripts/agent-naming.mjs, sharing the same breed-names.json
-// data file. Used by agent-spawn to pre-generate child names so the
-// parent populates the delegation box with the unique slug from
-// dispatch-time rather than waiting on the first status envelope.
+// data file. Used by atomic-delegate to pre-generate child worker names
+// before the worker boots, and by mesh-authority's mesh_spawn to pick
+// unique slugs for long-running peer nodes.
 //
-// `prettify` is the slug-to-display helper used by agent-header and
-// delegation-boxes — kept here so all naming logic lives in one place.
+// `prettify` is the slug-to-display helper used by agent-header — kept
+// here so all naming logic lives in one place.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";

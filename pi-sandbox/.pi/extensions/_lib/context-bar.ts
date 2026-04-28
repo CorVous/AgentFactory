@@ -1,7 +1,6 @@
-// Eighths-block horizontal context-usage bar shared by agent-footer and
-// delegation-boxes so the two never drift. Each cell covers 8 eighths,
-// so a 5-cell bar has 40 buckets (~2.5%/bucket); a 3-cell bar has 24
-// buckets (~4%/bucket).
+// Eighths-block horizontal context-usage bar used by agent-footer.
+// Each cell covers 8 eighths, so a 5-cell bar has 40 buckets
+// (~2.5%/bucket).
 
 export const BAR_BLOCKS = ["░", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"];
 
