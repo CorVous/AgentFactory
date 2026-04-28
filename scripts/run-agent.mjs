@@ -327,8 +327,11 @@ for (const p of skillPaths) piArgs.push("--skill", p);
 // --agent-name passthrough is parsed only to capture the value into the
 // Habitat spec; pi receives it solely via --habitat-spec. Same for
 // --rpc-sock since deferred-confirm now reads getHabitat().rpcSock.
+// --topology-overlay is set by launch-mesh; it carries the resolved peer
+// fields from the topology YAML and is merged into habitatSpec below.
 let agentName = null;                                     // null → generate
 let rpcSock = "";
+let topologyOverlayJson = "";
 const passthrough = [];
 for (let i = 0; i < args.passthrough.length; i++) {
   if (args.passthrough[i] === "--agent-name" && i + 1 < args.passthrough.length) {
@@ -336,6 +339,9 @@ for (let i = 0; i < args.passthrough.length; i++) {
   } else if (args.passthrough[i] === "--rpc-sock" && i + 1 < args.passthrough.length) {
     rpcSock = args.passthrough[++i];
     // do not push --rpc-sock into passthrough; pi no longer registers this flag
+  } else if (args.passthrough[i] === "--topology-overlay" && i + 1 < args.passthrough.length) {
+    topologyOverlayJson = args.passthrough[++i];
+    // do not push --topology-overlay into passthrough; pi doesn't know this flag
   } else {
     passthrough.push(args.passthrough[i]);
   }
@@ -412,6 +418,25 @@ const habitatSpec = {
   ...(recipeAcceptedFrom.length > 0 ? { acceptedFrom: recipeAcceptedFrom } : {}),
   ...(recipePeers.length > 0 ? { peers: recipePeers } : {}),
 };
+// Apply topology overlay — fields from the topology YAML take precedence
+// over recipe-derived values. Fields absent or empty in the overlay leave
+// the recipe value intact (so existing topologies without peer fields
+// continue to launch unchanged).
+if (topologyOverlayJson) {
+  let overlay;
+  try { overlay = JSON.parse(topologyOverlayJson); } catch (e) {
+    die(`--topology-overlay: invalid JSON: ${e.message}`);
+  }
+  if (typeof overlay.supervisor === "string") habitatSpec.supervisor = overlay.supervisor;
+  if (typeof overlay.submitTo === "string") habitatSpec.submitTo = overlay.submitTo;
+  if (Array.isArray(overlay.acceptedFrom) && overlay.acceptedFrom.length > 0) {
+    habitatSpec.acceptedFrom = overlay.acceptedFrom;
+  }
+  if (Array.isArray(overlay.peers) && overlay.peers.length > 0) {
+    habitatSpec.peers = overlay.peers;
+  }
+}
+
 piArgs.push("--habitat-spec", JSON.stringify(habitatSpec));
 piArgs.push(...args.passthrough);
 

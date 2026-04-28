@@ -1,0 +1,77 @@
+# grouped-mesh.yaml — example topology exercising groups, group_bindings,
+# and per-node overrides (Phase 6a).
+#
+# Participants:
+#   human      — human REPL (type: relay)
+#   authority  — Lead-tier orchestrator; accepts requests from all workers
+#   analyst    — Task-tier worker in the "workers" group
+#   writer     — Task-tier worker in the "workers" group
+#   reviewer   — Task-tier worker in the "reviewers" group; writer submits to it
+#
+# Group bindings:
+#   workers.supervisor  = authority  (both analyst and writer report up to authority)
+#   workers.peers       = @reviewers (workers can talk to reviewers)
+#   reviewers.peers     = @workers   (reviewers can reply to workers)
+#
+# Per-node override:
+#   writer.submitTo     = reviewer   (writer submits drafts to the reviewer, not authority)
+#
+# Launch:
+#   set -a; source models.env; set +a
+#   npm run mesh -- pi-sandbox/meshes/grouped-mesh.yaml
+#
+# Set AGENT_DEBUG=1 to see each node's resolved Habitat fields at startup:
+#   AGENT_DEBUG=1 npm run mesh -- pi-sandbox/meshes/grouped-mesh.yaml
+
+bus_root: /tmp/pi-mesh-grouped
+
+groups:
+  workers: [analyst, writer]
+  reviewers: [reviewer]
+
+group_bindings:
+  workers:
+    supervisor: authority
+    peers: ["@reviewers"]
+  reviewers:
+    peers: ["@workers"]
+
+nodes:
+  - name: human
+    type: relay
+
+  - name: authority
+    recipe: mesh-authority
+    sandbox: /tmp/pi-mesh-grouped/authority
+    acceptedFrom: ["@workers"]
+    task: |
+      You are the authority in this mesh. Your peers are: analyst, writer, reviewer, human.
+      Start by calling agent_list to see who is online. Then wait for messages from workers.
+      When a worker sends you a request, coordinate with your peers and reply.
+
+  - name: analyst
+    recipe: mesh-node
+    sandbox: /tmp/pi-mesh-grouped/analyst
+    task: |
+      You are the analyst worker in a mesh. Your name is "analyst".
+      Wait for research requests. When a request arrives as [from <peer>] <body>,
+      research it using your tools and reply with agent_send.
+
+  - name: writer
+    recipe: mesh-writer
+    sandbox: /tmp/pi-mesh-grouped/writer
+    # Per-node override: writer submits drafts to reviewer, not authority.
+    submitTo: reviewer
+    task: |
+      You are the writer worker in a mesh. Your name is "writer".
+      Wait for drafting requests. When a request arrives, draft the content,
+      save it to a file, then reply with the file path and a summary.
+
+  - name: reviewer
+    recipe: mesh-node
+    sandbox: /tmp/pi-mesh-grouped/reviewer
+    acceptedFrom: [writer]
+    task: |
+      You are the reviewer in a mesh. Your name is "reviewer".
+      Wait for submissions from the writer. When a submission arrives, review it
+      for quality and completeness, then send feedback back to the writer.

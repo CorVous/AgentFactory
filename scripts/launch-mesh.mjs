@@ -25,6 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { createJiti } from "../node_modules/@mariozechner/jiti/lib/jiti.mjs";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,13 +46,18 @@ if (!existsSync(meshPath)) die(`mesh file not found: ${meshPath}`);
 
 // ── Load topology ─────────────────────────────────────────────────────────────
 
+const jiti = createJiti(import.meta.url);
+const { parseTopology, resolveNode } = await jiti.import(
+  path.join(REPO_ROOT, "pi-sandbox", ".pi", "extensions", "_lib", "topology.ts"),
+);
+
 let topology;
 try {
-  topology = parseYaml(readFileSync(meshPath, "utf8"));
+  topology = parseTopology(readFileSync(meshPath, "utf8"));
 } catch (e) {
   die(`failed to parse ${meshPath}: ${e.message}`);
 }
-if (!topology || !Array.isArray(topology.nodes) || topology.nodes.length < 2) {
+if (topology.nodes.length < 2) {
   die("topology must have at least 2 nodes");
 }
 
@@ -87,6 +93,16 @@ for (const node of topology.nodes) {
 const names = topology.nodes.map((n) => n.name);
 const dupes = names.filter((n, i) => names.indexOf(n) !== i);
 if (dupes.length > 0) die(`duplicate node names: ${dupes.join(", ")}`);
+
+// Pre-compute per-node overlays (validates @group refs and peer references early).
+const nodeOverlays = new Map();
+for (const node of topology.nodes) {
+  try {
+    nodeOverlays.set(node.name, resolveNode(topology, node.name));
+  } catch (e) {
+    die(`topology overlay error for node '${node.name}': ${e.message}`);
+  }
+}
 
 // ── ANSI colors per node ──────────────────────────────────────────────────────
 
@@ -182,6 +198,7 @@ for (let i = 0; i < topology.nodes.length; i++) {
     : path.join(os.tmpdir(), `pi-mesh-${path.basename(meshPath, ".yaml")}-${name}`);
   mkdirSync(sandbox, { recursive: true });
 
+  const overlay = nodeOverlays.get(name);
   const args = [
     RUNNER,
     recipe,
@@ -190,6 +207,7 @@ for (let i = 0; i < topology.nodes.length; i++) {
     "--",
     "--agent-name", name,
     "--mode", "rpc",
+    "--topology-overlay", JSON.stringify(overlay),
   ];
 
   const child = spawn(process.execPath, args, {
