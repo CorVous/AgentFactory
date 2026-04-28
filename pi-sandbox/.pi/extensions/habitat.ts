@@ -29,7 +29,11 @@ export default function (pi: ExtensionAPI) {
         const h = materialiseHabitat(raw);
         setHabitat(h);
         if (process.env.AGENT_DEBUG === "1") {
-          const dump = `habitat: agentName=${h.agentName} scratchRoot=${h.scratchRoot} busRoot=${h.busRoot}`;
+          const dump = `habitat: agentName=${h.agentName} scratchRoot=${h.scratchRoot} busRoot=${h.busRoot}` +
+            (h.supervisor ? ` supervisor=${h.supervisor}` : "") +
+            (h.submitTo ? ` submitTo=${h.submitTo}` : "") +
+            (h.acceptedFrom.length ? ` acceptedFrom=[${h.acceptedFrom.join(",")}]` : "") +
+            (h.peers.length ? ` peers=[${h.peers.join(",")}]` : "");
           ctx.ui.notify(dump, "info");
           process.stderr.write(`[AGENT_DEBUG] ${dump}\n`);
         }
@@ -57,6 +61,8 @@ export default function (pi: ExtensionAPI) {
       noEditSkip: [],
       rpcSock: process.env.PI_RPC_SOCK || undefined,
       delegationId: process.env.PI_AGENT_DELEGATION_ID || undefined,
+      acceptedFrom: [],
+      peers: [],
     };
     setHabitat(fallback);
 
