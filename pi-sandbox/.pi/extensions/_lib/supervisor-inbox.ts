@@ -83,6 +83,29 @@ export function createSupervisorInbox(): SupervisorInbox {
         return;
       }
 
+      // Revision continuation: a `submission` whose in_reply_to matches an
+      // already-pending entry rebinds that entry to the new msg_id. The
+      // revisionCount (incremented at revise-time) carries forward so the
+      // cap is enforced across the whole thread, not just one msg_id.
+      if (kind === "submission" && env.in_reply_to) {
+        const existing = pending.get(env.in_reply_to);
+        if (existing) {
+          const updated: PendingEntry = {
+            env,
+            revisionCount: existing.revisionCount,
+            rootMsgId: existing.rootMsgId,
+          };
+          pending.delete(env.in_reply_to);
+          pending.set(env.msg_id, updated);
+          const rendered = renderInboundForUser(env);
+          const hint =
+            `\n[revision ${existing.revisionCount}] respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?}) to respond.`;
+          sendMessage(env.msg_id, rendered + hint);
+          return;
+        }
+        // in_reply_to points at no live entry — fall through to fresh-thread path.
+      }
+
       pending.set(env.msg_id, {
         env,
         revisionCount: 0,

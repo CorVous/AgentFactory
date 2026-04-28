@@ -208,6 +208,188 @@ describe("dispatchEnvelope — user message rendering", () => {
 });
 
 // ---------------------------------------------------------------------------
+// dispatchEnvelope — revision continuations (in_reply_to → existing entry)
+// ---------------------------------------------------------------------------
+
+describe("dispatchEnvelope — revision continuations", () => {
+  it("a submission whose in_reply_to matches a pending entry updates rather than creates", async () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    // 1. Original submission lands.
+    const original = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+      summary: "first try",
+    });
+    inbox.dispatchEnvelope(original, vi.fn());
+    expect(inbox.pendingCount()).toBe(1);
+
+    // 2. Supervisor calls revise — bumps revisionCount on the entry.
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+    await inbox.respondToRequest({
+      msg_id: original.msg_id,
+      action: "revise",
+      note: "tighten it up",
+      sendEnvelope,
+      agentName: "supervisor",
+    });
+    expect(inbox.pendingCount()).toBe(1); // revise keeps the entry open
+
+    // 3. Worker re-submits, threading via in_reply_to to the original.
+    const resubmit = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+      summary: "second try",
+      in_reply_to: original.msg_id,
+    });
+    const sendMessage = vi.fn();
+    inbox.dispatchEnvelope(resubmit, sendMessage);
+
+    // The pending entry has been re-keyed: original is gone, resubmit is in.
+    expect(inbox.pendingCount()).toBe(1);
+
+    // 4. The sent message references the new msg_id and a revision marker.
+    const [msgId, rendered] = sendMessage.mock.calls[0] as [string, string];
+    expect(msgId).toBe(resubmit.msg_id);
+    expect(rendered).toMatch(/revision\s*1/i);
+
+    // 5. respondToRequest on the OLD msg_id no longer works.
+    const oldRes = await inbox.respondToRequest({
+      msg_id: original.msg_id,
+      action: "approve",
+      sendEnvelope,
+      agentName: "supervisor",
+    });
+    expect(oldRes.ok).toBe(false);
+    expect(oldRes.error).toMatch(/not found/i);
+  });
+
+  it("preserves revisionCount across the msg_id swap so the cap is enforced over the whole thread", async () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    // Open thread.
+    let thread = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+    });
+    inbox.dispatchEnvelope(thread, vi.fn());
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+
+    // Three revise rounds, each followed by a resubmission threading back.
+    for (let i = 0; i < 3; i++) {
+      const r = await inbox.respondToRequest({
+        msg_id: thread.msg_id,
+        action: "revise",
+        note: `round ${i + 1}`,
+        sendEnvelope,
+        agentName: "supervisor",
+      });
+      expect(r.ok).toBe(true);
+
+      const resubmit = makeSubmissionEnvelope({
+        from: "worker-a",
+        to: "supervisor",
+        artifacts: [WRITE_ARTIFACT],
+        in_reply_to: thread.msg_id,
+      });
+      inbox.dispatchEnvelope(resubmit, vi.fn());
+      thread = resubmit;
+    }
+
+    // 4th revise should be rejected — the cap follows the chain through dispatchEnvelope.
+    const r4 = await inbox.respondToRequest({
+      msg_id: thread.msg_id,
+      action: "revise",
+      note: "round 4",
+      sendEnvelope,
+      agentName: "supervisor",
+    });
+    expect(r4.ok).toBe(false);
+    expect(r4.error).toMatch(/revision.*cap/i);
+  });
+
+  it("a submission with in_reply_to pointing at a non-existent entry is treated as a fresh submission", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    const env = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+      in_reply_to: "no-such-pending-id",
+    });
+    const sendMessage = vi.fn();
+    inbox.dispatchEnvelope(env, sendMessage);
+
+    // Opens a fresh thread under env.msg_id.
+    expect(inbox.pendingCount()).toBe(1);
+    const [msgId, rendered] = sendMessage.mock.calls[0] as [string, string];
+    expect(msgId).toBe(env.msg_id);
+    // Standard tool-hint, NOT the revision marker.
+    expect(rendered).not.toMatch(/revision\s*\d+/i);
+    expect(rendered).toMatch(/respond_to_request/);
+  });
+
+  it("an approval-request with in_reply_to does NOT update an existing submission entry", () => {
+    // Revision continuations are only for `submission` envelopes; threading
+    // an approval-request to an open submission would conflate two protocols.
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    const original = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+    });
+    inbox.dispatchEnvelope(original, vi.fn());
+    expect(inbox.pendingCount()).toBe(1);
+
+    const followup = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "T",
+      summary: "S",
+      preview: "P",
+      in_reply_to: original.msg_id,
+    });
+    inbox.dispatchEnvelope(followup, vi.fn());
+    // Both entries co-exist (the approval-request opens a new one).
+    expect(inbox.pendingCount()).toBe(2);
+  });
+
+  it("revision continuation still enforces acceptedFrom (drops resubmission from unknown peer)", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    const original = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+    });
+    inbox.dispatchEnvelope(original, vi.fn());
+
+    const resubmit = makeSubmissionEnvelope({
+      from: "rogue-agent",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+      in_reply_to: original.msg_id,
+    });
+    const sendMessage = vi.fn();
+    inbox.dispatchEnvelope(resubmit, sendMessage);
+
+    // The original entry survives untouched; the rogue resubmission was dropped.
+    expect(inbox.pendingCount()).toBe(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // respondToRequest — approve action
 // ---------------------------------------------------------------------------
 
