@@ -25,7 +25,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { createJiti } from "../node_modules/@mariozechner/jiti/lib/jiti.mjs";
+import { parseTopology, resolveNode } from "../pi-sandbox/.pi/extensions/_lib/topology.mjs";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -45,11 +45,6 @@ const meshPath = path.resolve(meshFile);
 if (!existsSync(meshPath)) die(`mesh file not found: ${meshPath}`);
 
 // ── Load topology ─────────────────────────────────────────────────────────────
-
-const jiti = createJiti(import.meta.url);
-const { parseTopology, resolveNode } = await jiti.import(
-  path.join(REPO_ROOT, "pi-sandbox", ".pi", "extensions", "_lib", "topology.ts"),
-);
 
 let topology;
 try {

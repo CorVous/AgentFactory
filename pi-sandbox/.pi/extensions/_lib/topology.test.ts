@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseTopology, resolveNode } from "./topology.js";
+import { parseTopology, resolveNode } from "./topology.mjs";
 
 // ── parseTopology ────────────────────────────────────────────────────────────
 
