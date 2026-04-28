@@ -620,3 +620,72 @@ Negative cases worth probing manually:
 - **Schema rejection**: scratch recipe with `extensions: [agent-spawn]`
   and no `agents:` → runner exits with `loads extension 'agent-spawn'
   but has no 'agents:' list`.
+
+## Supervisor inbound rail — Phase 3c
+
+The **supervisor** extension (`pi-sandbox/.pi/extensions/supervisor.ts`) implements
+the inbound review loop described in [ADR-0003](../docs/adr/0003-supervisor-llm-in-review-loop.md).
+It is auto-wired by the runner when a recipe declares any of the supervisory
+peer fields (`acceptedFrom`, `supervisor`, or `submitTo`). The extension registers
+the `respond_to_request` tool and a globalThis dispatch hook that `agent-bus` calls
+when a typed non-message envelope arrives.
+
+### Automatic wiring
+
+```yaml
+# Any of these triggers auto-load of the supervisor extension +
+# respond_to_request tool:
+acceptedFrom: [worker-a, worker-b]
+supervisor: lead-hare
+submitTo: canonical-store
+```
+
+Explicitly declaring `extensions: [supervisor]` or `tools: [respond_to_request]`
+**without** any of those fields causes the runner to `die()` with a clear error.
+
+### Inbound envelope kinds handled
+
+| Kind | Source | Rail action |
+|------|--------|-------------|
+| `approval-request` | peer in `acceptedFrom` | Queued; model prompted |
+| `submission` | peer in `acceptedFrom` | Queued; model prompted |
+| Either kind from unknown peer | anyone not in `acceptedFrom` | Dropped silently (stderr under `AGENT_DEBUG=1`) |
+| `message` | any peer | Free-flow (unrestricted, existing behaviour) |
+
+### Four-action flow via `respond_to_request`
+
+When the model receives an inbound prompt it uses:
+
+```
+respond_to_request({msg_id, action, note?})
+```
+
+| Action | Effect |
+|--------|--------|
+| `approve` | Sends `approval-result(approved:true)` to original sender; closes thread |
+| `reject` | Sends `approval-result(approved:false)` to original sender; closes thread |
+| `revise` | Sends `revision-requested(note)` to original sender; thread stays open (note **required**) |
+| `escalate` | Forwards to `getHabitat().supervisor` via bus; relays result back to sender; closes thread |
+
+Revision cycles are **capped at 3 per thread** (keyed by the root `msg_id`). After
+the cap, only `approve` or `reject` are accepted; a further `revise` returns an
+error without sending anything.
+
+The model-facing prompt fragment (`supervisor.prompt.md`) is loaded automatically
+when the supervisor extension is active; it contains action descriptions and usage
+examples.
+
+### Testable core
+
+The action routing, acceptedFrom enforcement, and revision cap all live in
+`pi-sandbox/.pi/extensions/_lib/supervisor-inbox.ts` with a matching
+`_lib/supervisor-inbox.test.ts`. The `supervisor.ts` extension is a thin pi
+wrapper; tests can exercise the full action graph without a live model.
+
+### Escalation and the `_lib/escalation.ts` primitive
+
+`requestHumanApproval` (the recursive RPC escalation primitive previously owned
+by `deferred-confirm.ts`) was extracted into `_lib/escalation.ts` in Phase 3c.
+`deferred-confirm.ts` now imports from there. The supervisor's `escalate` action
+uses the same module when falling back to the rpc-sock path (legacy delegation)
+or the direct bus path when a `supervisor:` peer is named.
