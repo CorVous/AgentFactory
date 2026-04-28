@@ -145,17 +145,58 @@ async function bindServer(state: BusState, ctx: { ui: { notify: (m: string, l?: 
 }
 
 function handleIncoming(state: BusState, env: Envelope) {
-  // If this is a reply to a pending agent_call, resolve the blocked tool
+  // If this is a reply to a pending agent_call, resolve or reject it
   // directly — don't route to inbox, the caller is already waiting for it.
   if (env.in_reply_to) {
     const pending = state.pendingCalls.get(env.in_reply_to);
     if (pending) {
       clearTimeout(pending.timer);
       state.pendingCalls.delete(env.in_reply_to);
-      pending.resolve(env.payload.kind === "message" ? env.payload.text : "");
+      if (env.payload.kind === "message") {
+        pending.resolve(env.payload.text);
+      } else {
+        // agent_call is a message-only convenience; a non-message reply is
+        // a programming error — reject loudly so the caller sees it.
+        pending.reject(
+          new Error(
+            `agent_call expected a message-kind reply, got '${env.payload.kind}' (msg_id ${env.msg_id.slice(0, 8)})`,
+          ),
+        );
+      }
       return;
     }
   }
+
+  // Typed dispatch: non-message envelopes go to the supervisor rail when it
+  // is loaded; message-kind envelopes always flow through the general inbox.
+  const kind = env.payload.kind;
+
+  if (kind !== "message") {
+    // acceptedFrom enforcement for typed (non-message) inbound envelopes.
+    // Message-kind envelopes are unrestricted for v1 peer chat.
+    let acceptedFrom: string[] = [];
+    try {
+      acceptedFrom = getHabitat().acceptedFrom;
+    } catch { /* Habitat not yet available — default to empty (drop) */ }
+    if (!acceptedFrom.includes(env.from)) {
+      if (process.env.AGENT_DEBUG === "1") {
+        process.stderr.write(
+          `[agent-bus] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
+        );
+      }
+      return;
+    }
+
+    // Forward to supervisor rail when loaded.
+    const dispatch = (
+      globalThis as { __pi_supervisor_dispatch__?: (env: Envelope) => boolean }
+    ).__pi_supervisor_dispatch__;
+    if (dispatch && dispatch(env)) return;
+
+    // No supervisor rail loaded — fall through to general inbox so the
+    // message is still accessible via agent_inbox.
+  }
+
   state.inbox.push(env);
   if (state.inTurn) {
     state.pendingDuringTurn.push(env);
@@ -431,6 +472,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       let timedOut = false;
+      let typeMismatchError: string | undefined;
       const replyBody = await new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {
           timedOut = true;
@@ -438,12 +480,21 @@ export default function (pi: ExtensionAPI) {
           reject(new Error("timeout"));
         }, timeoutMs);
         state.pendingCalls.set(env.msg_id, { resolve, reject, timer });
-      }).catch(() => "");
+      }).catch((err: Error) => {
+        if (!timedOut) typeMismatchError = err.message;
+        return "";
+      });
 
       if (timedOut) {
         return {
           content: [{ type: "text", text: `agent_call to ${params.to} timed out after ${timeoutMs}ms.` }],
           details: { msg_id: env.msg_id, delivered: true, reply: null, reason: "timeout" },
+        };
+      }
+      if (typeMismatchError) {
+        return {
+          content: [{ type: "text", text: `agent_call to ${params.to} failed: ${typeMismatchError}` }],
+          details: { msg_id: env.msg_id, delivered: true, reply: null, reason: typeMismatchError },
         };
       }
       return {
