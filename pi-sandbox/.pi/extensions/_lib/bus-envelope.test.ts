@@ -5,6 +5,7 @@ import {
   makeApprovalResultEnvelope,
   makeMessageEnvelope,
   makeRevisionRequestedEnvelope,
+  makeStatusEnvelope,
   makeSubmissionEnvelope,
   renderInboundForUser,
   tryDecodeEnvelope,
@@ -496,5 +497,142 @@ describe("renderInboundForUser", () => {
       in_reply_to: "abc12345-0000-0000-0000-000000000000",
     };
     expect(renderInboundForUser(env)).toBe("[from worker-a re:abc12345] pong");
+  });
+});
+
+describe("makeStatusEnvelope", () => {
+  it("produces a v:2 status envelope with all required fields populated", () => {
+    const before = Date.now();
+    const env = makeStatusEnvelope({
+      from: "dutch-writer",
+      to: "foreman",
+      agentName: "dutch-writer",
+      modelId: "deepseek/deepseek-v3",
+      contextPct: 42.5,
+      contextTokens: 12000,
+      contextWindow: 32000,
+      costUsd: 0.0012,
+      turnCount: 3,
+      state: "running",
+    });
+    const after = Date.now();
+
+    expect(env.v).toBe(2);
+    expect(env.from).toBe("dutch-writer");
+    expect(env.to).toBe("foreman");
+    expect(env.ts).toBeGreaterThanOrEqual(before);
+    expect(env.ts).toBeLessThanOrEqual(after);
+    expect(env.payload.kind).toBe("status");
+    expect(env.payload).toMatchObject({
+      kind: "status",
+      agentName: "dutch-writer",
+      modelId: "deepseek/deepseek-v3",
+      contextPct: 42.5,
+      contextTokens: 12000,
+      contextWindow: 32000,
+      costUsd: 0.0012,
+      turnCount: 3,
+      state: "running",
+    });
+    expect(env.in_reply_to).toBeUndefined();
+  });
+
+  it("accepts paused and settled states", () => {
+    const base = {
+      from: "w", to: "s", agentName: "w", modelId: "m",
+      contextPct: 0, contextTokens: 0, contextWindow: 0, costUsd: 0, turnCount: 0,
+    };
+    const paused = makeStatusEnvelope({ ...base, state: "paused" });
+    const settled = makeStatusEnvelope({ ...base, state: "settled" });
+    expect(paused.payload.kind === "status" && paused.payload.state).toBe("paused");
+    expect(settled.payload.kind === "status" && settled.payload.state).toBe("settled");
+  });
+});
+
+describe("tryDecodeEnvelope — status kind", () => {
+  const validStatus: Envelope = {
+    v: 2,
+    msg_id: "abc12345-0000-0000-0000-000000000000",
+    from: "dutch-writer",
+    to: "foreman",
+    ts: 1700000000000,
+    payload: {
+      kind: "status",
+      agentName: "dutch-writer",
+      modelId: "deepseek/deepseek-v3",
+      contextPct: 42.5,
+      contextTokens: 12000,
+      contextWindow: 32000,
+      costUsd: 0.0012,
+      turnCount: 3,
+      state: "running",
+    },
+  };
+
+  it("accepts a well-formed status envelope", () => {
+    expect(tryDecodeEnvelope(JSON.stringify(validStatus))).toEqual(validStatus);
+  });
+
+  it("returns null when status agentName is missing", () => {
+    const { agentName: _, ...rest } = validStatus.payload as Record<string, unknown>;
+    expect(tryDecodeEnvelope(JSON.stringify({ ...validStatus, payload: { kind: "status", ...rest } }))).toBeNull();
+  });
+
+  it("returns null when status modelId is not a string", () => {
+    expect(
+      tryDecodeEnvelope(JSON.stringify({ ...validStatus, payload: { ...validStatus.payload, modelId: 42 } })),
+    ).toBeNull();
+  });
+
+  it("returns null when status contextPct is not a number", () => {
+    expect(
+      tryDecodeEnvelope(JSON.stringify({ ...validStatus, payload: { ...validStatus.payload, contextPct: "high" } })),
+    ).toBeNull();
+  });
+
+  it("returns null when status state is an invalid value", () => {
+    expect(
+      tryDecodeEnvelope(JSON.stringify({ ...validStatus, payload: { ...validStatus.payload, state: "idle" } })),
+    ).toBeNull();
+  });
+
+  it("returns null when status turnCount is missing", () => {
+    const { turnCount: _, ...rest } = validStatus.payload as Record<string, unknown>;
+    expect(tryDecodeEnvelope(JSON.stringify({ ...validStatus, payload: { kind: "status", ...rest } }))).toBeNull();
+  });
+
+  it("round-trips through encodeEnvelope", () => {
+    const env = makeStatusEnvelope({
+      from: "a", to: "b", agentName: "a", modelId: "m",
+      contextPct: 10, contextTokens: 1000, contextWindow: 8000,
+      costUsd: 0.001, turnCount: 2, state: "settled",
+    });
+    expect(tryDecodeEnvelope(encodeEnvelope(env))).toEqual(env);
+  });
+});
+
+describe("renderInboundForUser — status kind", () => {
+  it("renders status as [status from <peer>] <agentName> · turn N · $X.XXXX · <state>", () => {
+    const env: Envelope = {
+      v: 2,
+      msg_id: "abc12345-0000-0000-0000-000000000000",
+      from: "dutch-writer",
+      to: "foreman",
+      ts: 0,
+      payload: {
+        kind: "status",
+        agentName: "dutch-writer",
+        modelId: "deepseek/deepseek-v3",
+        contextPct: 42.5,
+        contextTokens: 12000,
+        contextWindow: 32000,
+        costUsd: 0.0012,
+        turnCount: 3,
+        state: "running",
+      },
+    };
+    expect(renderInboundForUser(env)).toBe(
+      "[status from dutch-writer] dutch-writer · turn 3 · $0.0012 · running",
+    );
   });
 });

@@ -20,7 +20,16 @@ export type Payload =
   | { kind: "approval-request"; title: string; summary: string; preview: string }
   | { kind: "approval-result"; approved: boolean; note?: string }
   | { kind: "revision-requested"; note: string }
-  | { kind: "submission"; artifacts: Artifact[]; summary?: string };
+  | { kind: "submission"; artifacts: Artifact[]; summary?: string }
+  | { kind: "status";
+      agentName: string;
+      modelId: string;
+      contextPct: number;
+      contextTokens: number;
+      contextWindow: number;
+      costUsd: number;
+      turnCount: number;
+      state: "running" | "paused" | "settled" };
 
 export interface Envelope {
   v: 2;
@@ -131,6 +140,38 @@ export function makeSubmissionEnvelope(args: {
   return env;
 }
 
+export function makeStatusEnvelope(args: {
+  from: string;
+  to: string;
+  agentName: string;
+  modelId: string;
+  contextPct: number;
+  contextTokens: number;
+  contextWindow: number;
+  costUsd: number;
+  turnCount: number;
+  state: "running" | "paused" | "settled";
+}): Envelope {
+  return {
+    v: 2,
+    msg_id: randomUUID(),
+    from: args.from,
+    to: args.to,
+    ts: Date.now(),
+    payload: {
+      kind: "status",
+      agentName: args.agentName,
+      modelId: args.modelId,
+      contextPct: args.contextPct,
+      contextTokens: args.contextTokens,
+      contextWindow: args.contextWindow,
+      costUsd: args.costUsd,
+      turnCount: args.turnCount,
+      state: args.state,
+    },
+  };
+}
+
 export function encodeEnvelope(env: Envelope): string {
   return `${JSON.stringify(env)}\n`;
 }
@@ -175,6 +216,17 @@ function isValidPayload(payload: Record<string, unknown>): boolean {
       if (!Array.isArray(payload.artifacts)) return false;
       if (!(payload.artifacts as unknown[]).every(isValidArtifact)) return false;
       if (payload.summary !== undefined && typeof payload.summary !== "string") return false;
+      return true;
+    }
+    case "status": {
+      if (typeof payload.agentName !== "string") return false;
+      if (typeof payload.modelId !== "string") return false;
+      if (typeof payload.contextPct !== "number") return false;
+      if (typeof payload.contextTokens !== "number") return false;
+      if (typeof payload.contextWindow !== "number") return false;
+      if (typeof payload.costUsd !== "number") return false;
+      if (typeof payload.turnCount !== "number") return false;
+      if (payload.state !== "running" && payload.state !== "paused" && payload.state !== "settled") return false;
       return true;
     }
     default:
@@ -223,5 +275,7 @@ export function renderInboundForUser(env: Envelope): string {
         ? `[submission from ${env.from}] ${label}: ${p.summary}`
         : `[submission from ${env.from}] ${label}`;
     }
+    case "status":
+      return `[status from ${env.from}] ${p.agentName} · turn ${p.turnCount} · $${p.costUsd.toFixed(4)} · ${p.state}`;
   }
 }
