@@ -21,6 +21,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { getHabitat } from "./_lib/habitat";
 
 interface Envelope {
   v: 1;
@@ -65,14 +66,8 @@ function getState(): BusState {
   });
 }
 
-function resolveBusRoot(pi: ExtensionAPI, sandboxRoot: string): string {
-  const flag = pi.getFlag("agent-bus-root") as string | undefined;
-  if (flag) return path.resolve(flag);
-  // PI_AGENT_BUS_ROOT is also honored by the runner; reading it here
-  // covers the case where pi was launched directly without the runner.
-  if (process.env.PI_AGENT_BUS_ROOT) return path.resolve(process.env.PI_AGENT_BUS_ROOT);
-  return path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
-}
+// busRoot and agentName are resolved from the Habitat materialised by
+// the habitat baseline extension before this session_start runs.
 
 function probeSocketLive(sockPath: string, timeoutMs = 200): Promise<boolean> {
   return new Promise((resolve) => {
@@ -244,23 +239,24 @@ async function listLivePeers(state: BusState): Promise<{ name: string; addr: str
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerFlag("agent-bus-root", {
-    description: "Rendezvous directory for inter-agent Unix sockets (one .sock per agent name)",
-    type: "string",
-  });
-
   const state = getState();
   state.pi = pi;
 
   pi.on("session_start", async (_event, ctx) => {
-    // pi.getFlag is scoped to the calling extension, so reading flags
-    // owned by sandbox/agent-header doesn't work cross-extension. The
-    // runner mirrors agent-name into PI_AGENT_NAME for us; sandbox-root
-    // equals ctx.cwd because the runner spawns pi with cwd=sandboxRoot.
-    const name = (process.env.PI_AGENT_NAME || "anonymous").trim() || "anonymous";
-    const sandboxRoot = path.resolve(ctx.cwd);
+    let name = "anonymous";
+    let busRoot: string;
+    try {
+      const h = getHabitat();
+      name = (h.agentName || "anonymous").trim() || "anonymous";
+      busRoot = path.resolve(h.busRoot);
+    } catch {
+      // Habitat not available (direct pi invocation); fall back to ctx.cwd-derived defaults.
+      name = (process.env.PI_AGENT_NAME || "anonymous").trim() || "anonymous";
+      const sandboxRoot = path.resolve(ctx.cwd);
+      busRoot = path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
+    }
     state.name = name;
-    state.busRoot = resolveBusRoot(pi, sandboxRoot);
+    state.busRoot = busRoot;
 
     try {
       await bindServer(state, ctx);
