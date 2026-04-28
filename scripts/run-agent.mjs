@@ -15,6 +15,8 @@ const SKILLS_DIR = path.join(SANDBOX_ROOT, "skills");
 const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
 
 const BASELINE_EXTENSIONS = [
+  // Must be first — materialises the Habitat before any rail reads it.
+  "habitat",
   "sandbox",
   "no-startup-help",
   "agent-header",
@@ -282,14 +284,11 @@ const piArgs = [
 ];
 for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
-piArgs.push("--sandbox-root", sandboxRoot);
 
-// Pull --agent-name and --rpc-sock out of passthrough so we can mirror
-// them to env vars. pi.getFlag is scoped to the extension that
-// registered the flag, so cross-extension reads need to bounce through
-// the env (already the case for --agent-name read by agent-bus, and
-// now --rpc-sock read by agent-status-reporter while deferred-confirm
-// owns the flag registration).
+// Pull --agent-name and --rpc-sock out of passthrough.
+// --rpc-sock is kept in passthrough so deferred-confirm still sees it
+// via its own flag registration; it is also carried in the Habitat spec
+// so agent-status-reporter can read it from getHabitat() instead of env.
 let agentName = null;                                     // null → generate
 let rpcSock = "";
 const passthrough = [];
@@ -298,7 +297,6 @@ for (let i = 0; i < args.passthrough.length; i++) {
     agentName = args.passthrough[++i];                    // manual override wins
   } else if (args.passthrough[i] === "--rpc-sock" && i + 1 < args.passthrough.length) {
     rpcSock = args.passthrough[++i];
-    // Keep --rpc-sock in passthrough too so deferred-confirm still sees it.
     passthrough.push("--rpc-sock", rpcSock);
   } else {
     passthrough.push(args.passthrough[i]);
@@ -324,50 +322,45 @@ if (agentName === null) {
   const taken = await probeBusRoot(busRoot);
   agentName = generateInstanceName({ tier, shortName, taken });
 }
-piArgs.push("--agent-name", agentName);
 
-// Only push extension-owned flags when their owning extension is
-// actually loaded; otherwise pi rejects the flag as unknown.
-const usesBus = wired.extensions.includes("agent-bus");
-if (usesBus) piArgs.push("--agent-bus-root", busRoot);
-if (wired.allowed.length > 0) piArgs.push("--allowed-agents", wired.allowed.join(","));
-if (typeof recipe.description === "string" && recipe.description.trim()) {
-  piArgs.push("--agent-description", recipe.description.trim());
-}
-// Recipe filename, prettified by the header into a "type" label rendered
-// before the description on line 2 (e.g. "Deferred Author · Drafts …").
-piArgs.push("--agent-type", args.name);
-if (TIER_VARS.has(recipeModel)) {
-  piArgs.push("--agent-tier", recipeModel);
-}
-if (Array.isArray(recipe.noEditAdd) && recipe.noEditAdd.length > 0) {
-  piArgs.push("--no-edit-add", recipe.noEditAdd.join(","));
-}
-if (Array.isArray(recipe.noEditSkip) && recipe.noEditSkip.length > 0) {
-  piArgs.push("--no-edit-skip", recipe.noEditSkip.join(","));
-}
+const recipeSkills = Array.isArray(recipe.skills) ? recipe.skills.filter((s) => typeof s === "string") : [];
+
+// Serialise the resolved Habitat into one --habitat-spec flag instead of
+// many individual flags + env-var mirrors. The habitat.ts baseline
+// extension materialises this at session_start; all other rails read
+// their axis from getHabitat() rather than re-parsing flags/env.
+// PI_AGENT_DELEGATION_ID is set by agent-spawn in the child's env before
+// calling the runner. Include it in the spec so agent-status-reporter
+// can read it from getHabitat() rather than from env.
+const delegationId = process.env.PI_AGENT_DELEGATION_ID || "";
+
+const habitatSpec = {
+  agentName,
+  scratchRoot: sandboxRoot,
+  busRoot,
+  skills: recipeSkills,
+  agents: wired.allowed,
+  noEditAdd: Array.isArray(recipe.noEditAdd) ? recipe.noEditAdd.filter((s) => typeof s === "string") : [],
+  noEditSkip: Array.isArray(recipe.noEditSkip) ? recipe.noEditSkip.filter((s) => typeof s === "string") : [],
+  ...(typeof recipe.description === "string" && recipe.description.trim()
+    ? { description: recipe.description.trim() }
+    : {}),
+  ...(TIER_VARS.has(recipeModel) ? { tier: recipeModel } : {}),
+  type: args.name,
+  ...(rpcSock ? { rpcSock } : {}),
+  ...(delegationId ? { delegationId } : {}),
+};
+piArgs.push("--habitat-spec", JSON.stringify(habitatSpec));
 piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 
-const recipeSkills = Array.isArray(recipe.skills) ? recipe.skills.filter((s) => typeof s === "string") : [];
-
 const child = spawn(PI_BIN, piArgs, {
   cwd: sandboxRoot,
   stdio: "inherit",
-  // Mirror the agent name + bus root + rpc sock into env vars so
-  // extensions that can't read the CLI flags via pi.getFlag (which is
-  // scoped per extension) still see them. Skills and allowed-agents
-  // are mirrored too so agent-footer can render them on its third
-  // line without duplicating flag registrations.
-  env: {
-    ...process.env,
-    PI_AGENT_NAME: agentName,
-    PI_AGENT_BUS_ROOT: busRoot,
-    PI_AGENT_SKILLS: recipeSkills.join(","),
-    PI_AGENT_AGENTS: wired.allowed.join(","),
-    ...(rpcSock ? { PI_RPC_SOCK: rpcSock } : {}),
-  },
+  // PI_AGENT_DELEGATION_ID is set by agent-spawn when it spawns a child,
+  // not by the runner. It stays as an env var until Phase 5.
+  env: { ...process.env },
 });
 
 child.on("exit", (code, signal) => {
