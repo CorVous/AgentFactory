@@ -37,6 +37,7 @@ import {
   type Envelope,
 } from "./_lib/bus-envelope";
 import { dispatchSubmissionReply } from "./_lib/submission-emit";
+import { sendOverBus } from "./_lib/bus-transport";
 
 interface PendingCall {
   resolve: (body: string) => void;
@@ -232,36 +233,14 @@ function pushToModel(state: BusState, envs: Envelope[]) {
 }
 
 async function sendEnvelope(state: BusState, env: Envelope): Promise<{ delivered: boolean; reason?: string }> {
-  const dest = path.join(state.busRoot, `${env.to}.sock`);
-  return new Promise((resolve) => {
-    const sock = net.connect(dest);
-    const done = (r: { delivered: boolean; reason?: string }) => {
-      sock.removeAllListeners();
-      sock.destroy();
-      resolve(r);
-    };
-    const timer = setTimeout(() => done({ delivered: false, reason: "timeout" }), 1000);
-    sock.once("connect", () => {
-      sock.write(encodeEnvelope(env), "utf8", () => {
-        clearTimeout(timer);
-        done({ delivered: true });
-      });
-    });
-    sock.once("error", (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      const reason =
-        e.code === "ENOENT" || e.code === "ECONNREFUSED" ? "peer offline" : `socket error: ${e.message}`;
-      if (e.code === "ECONNREFUSED") {
-        // dead sock left by a crashed peer; opportunistic cleanup
-        try {
-          fs.unlinkSync(dest);
-        } catch {
-          /* noop */
-        }
-      }
-      done({ delivered: false, reason });
-    });
-  });
+  const result = await sendOverBus(state.busRoot, env.to, encodeEnvelope(env));
+  // Opportunistic cleanup: if the peer's socket was left by a crashed process,
+  // unlink it so probeSocketLive and agent_list return an accurate picture.
+  if (!result.delivered && result.reason === "peer offline") {
+    const dest = path.join(state.busRoot, `${env.to}.sock`);
+    try { fs.unlinkSync(dest); } catch { /* noop */ }
+  }
+  return result;
 }
 
 async function listLivePeers(state: BusState): Promise<{ name: string; addr: string }[]> {

@@ -17,6 +17,7 @@ import {
   tryDecodeEnvelope,
   type Envelope,
 } from "./_lib/bus-envelope";
+import { sendOverBus } from "./_lib/bus-transport";
 import net from "node:net";
 import path from "node:path";
 
@@ -64,30 +65,7 @@ async function sendToPeer(
   busRoot: string,
   env: Envelope,
 ): Promise<{ delivered: boolean; reason?: string }> {
-  const dest = path.join(busRoot, `${env.to}.sock`);
-  return new Promise((resolve) => {
-    const sock = net.connect(dest);
-    const done = (r: { delivered: boolean; reason?: string }) => {
-      sock.removeAllListeners();
-      sock.destroy();
-      resolve(r);
-    };
-    const timer = setTimeout(() => done({ delivered: false, reason: "timeout" }), 1000);
-    sock.once("connect", () => {
-      sock.write(encodeEnvelope(env), "utf8", () => {
-        clearTimeout(timer);
-        done({ delivered: true });
-      });
-    });
-    sock.once("error", (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      const reason =
-        e.code === "ENOENT" || e.code === "ECONNREFUSED"
-          ? "peer offline"
-          : `socket error: ${e.message}`;
-      done({ delivered: false, reason });
-    });
-  });
+  return sendOverBus(busRoot, env.to, encodeEnvelope(env));
 }
 
 // Escalate to the supervisor via bus agent_call pattern:
