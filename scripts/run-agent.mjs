@@ -29,6 +29,13 @@ const BASELINE_EXTENSIONS = [
   // gated by the recipe's `tools:` allowlist, so loading the extension
   // by default does not change the tool surface seen by the model.
   "agent-bus",
+  // Status reporting baselines — both self-gate:
+  //   status-emitter: inert when getHabitat().submitTo is unset.
+  //   status-display: inert when ctx.hasUI is false (non-interactive).
+  // Adding them here means every agent participates in the status mesh
+  // when appropriate, with no recipe changes needed.
+  "status-emitter",
+  "status-display",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
