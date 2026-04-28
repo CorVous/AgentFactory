@@ -123,6 +123,93 @@ describe("materialiseHabitat", () => {
     const h = materialiseHabitat(spec);
     expect(h.skills).toEqual([]);
   });
+
+  // Phase 3b: peer relationship fields
+  it("defaults peer list fields to [] when absent", () => {
+    const h = materialiseHabitat(MINIMAL_VALID);
+    expect(h.acceptedFrom).toEqual([]);
+    expect(h.peers).toEqual([]);
+  });
+
+  it("defaults peer optional string fields to undefined when absent", () => {
+    const h = materialiseHabitat(MINIMAL_VALID);
+    expect(h.supervisor).toBeUndefined();
+    expect(h.submitTo).toBeUndefined();
+  });
+
+  it("preserves peer fields when present", () => {
+    const spec = JSON.stringify({
+      agentName: "x-writer",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      supervisor: "lead-hare",
+      submitTo: "collector",
+      acceptedFrom: ["worker-a", "worker-b"],
+      peers: ["planner", "reviewer"],
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.supervisor).toBe("lead-hare");
+    expect(h.submitTo).toBe("collector");
+    expect(h.acceptedFrom).toEqual(["worker-a", "worker-b"]);
+    expect(h.peers).toEqual(["planner", "reviewer"]);
+  });
+
+  it("treats non-string supervisor as undefined (type mismatch rejected)", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      supervisor: 42,
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.supervisor).toBeUndefined();
+  });
+
+  it("treats non-string submitTo as undefined (type mismatch rejected)", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      submitTo: { name: "collector" },
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.submitTo).toBeUndefined();
+  });
+
+  it("treats non-array acceptedFrom as [] (type mismatch rejected)", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      acceptedFrom: "worker-a",
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.acceptedFrom).toEqual([]);
+  });
+
+  it("treats non-array peers as [] (type mismatch rejected)", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      peers: 99,
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.peers).toEqual([]);
+  });
+
+  it("ignores non-string items in acceptedFrom and peers", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      acceptedFrom: ["worker-a", 42, null, "worker-b"],
+      peers: [true, "planner", 0],
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.acceptedFrom).toEqual(["worker-a", "worker-b"]);
+    expect(h.peers).toEqual(["planner"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
