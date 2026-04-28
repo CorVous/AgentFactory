@@ -8,10 +8,15 @@
     "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
     "agent": "bash -c 'set -a && source models.env && set +a && exec node scripts/run-agent.mjs \"$@\"' --",
     "mesh": "bash -c 'set -a && source models.env && set +a && exec node scripts/launch-mesh.mjs \"$@\"' --",
-    "mesh-human": "node scripts/human-relay.mjs"
+    "mesh-human": "node scripts/human-relay.mjs",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.70.2",
     "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.5"
   }
 }

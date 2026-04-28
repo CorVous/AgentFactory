@@ -392,6 +392,16 @@ Caveats: this hits the real model so each run costs a fraction of a
 cent, and `capture-pane -p` returns plain text — colors and bold from
 `agent-header` won't show up in the snapshot.
 
+### Unit tests (`npm test`)
+
+Unit tests live alongside source files as `*.test.ts` and run via
+`npm test` (vitest). They are **hermetic by contract**: no model API
+calls, no network, no env vars from `models.env`, no real filesystem
+outside the test's tmpdir. Tests that need a live model belong in the
+tmux integration pattern above, not in `npm test`. Run `npm run
+test:watch` for a red-green-refactor loop while iterating on a pure
+library module.
+
 ## Mandatory safety rails for sub-agents
 
 When an extension delegates to a child `pi` process:
