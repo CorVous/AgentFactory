@@ -163,6 +163,43 @@ function applyAgentsField(recipe, name) {
   return { allowed: declared, extensions, tools };
 }
 
+// Implicit-wire the supervisor extension and respond_to_request tool when a
+// recipe sets any of the supervisor-related peer fields (acceptedFrom,
+// supervisor, submitTo).
+//
+// Inverse rejection: if a recipe explicitly lists 'supervisor' in extensions
+// or 'respond_to_request' in tools without setting any supervisory field,
+// that's a misconfiguration — fail loudly.
+function applySupervisorField(recipe, name, extensions, tools) {
+  const supervisoryFields =
+    (Array.isArray(recipe.acceptedFrom) && recipe.acceptedFrom.length > 0) ||
+    (typeof recipe.supervisor === "string" && recipe.supervisor) ||
+    (typeof recipe.submitTo === "string" && recipe.submitTo);
+
+  const explicitExt = extensions.includes("supervisor");
+  const explicitTool = tools.includes("respond_to_request");
+
+  if (!supervisoryFields) {
+    if (explicitExt) {
+      die(
+        `recipe ${name} loads extension 'supervisor' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
+          `set at least one supervisory field (or drop the extension)`,
+      );
+    }
+    if (explicitTool) {
+      die(
+        `recipe ${name} declares tool 'respond_to_request' but has no supervisory fields — ` +
+          `set 'acceptedFrom', 'supervisor', or 'submitTo' (or drop the tool)`,
+      );
+    }
+    return { extensions, tools };
+  }
+
+  const newExtensions = explicitExt ? extensions : [...extensions, "supervisor"];
+  const newTools = explicitTool ? tools : [...tools, "respond_to_request"];
+  return { extensions: newExtensions, tools: newTools };
+}
+
 function resolveModel(tierOrId) {
   const requested = tierOrId || "TASK_RABBIT_MODEL";
   if (TIER_VARS.has(requested)) {
@@ -256,7 +293,9 @@ if (!existsSync(sandboxRoot)) die(`sandbox dir does not exist: ${sandboxRoot}`);
 
 const recipeModel = recipe.model || "TASK_RABBIT_MODEL";
 const model = resolveModel(recipeModel);
-const wired = applyAgentsField(recipe, args.name);
+const wiredAgents = applyAgentsField(recipe, args.name);
+const wiredSupervisor = applySupervisorField(recipe, args.name, wiredAgents.extensions, wiredAgents.tools);
+const wired = { ...wiredAgents, extensions: wiredSupervisor.extensions, tools: wiredSupervisor.tools };
 const extensionPaths = resolveExtensionPaths(wired.extensions);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
