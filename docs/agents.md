@@ -647,6 +647,78 @@ over the bus as an `approval-request` envelope handled by the supervisor
 rail (the `escalate` action sends to `getHabitat().supervisor` directly,
 no rpc-sock fallback).
 
+## Status reporting
+
+Every agent can emit real-time status to its `submitTo` peer. Two baseline
+extensions handle this transparently:
+
+- **`status-emitter`** — hooks `turn_start`, `turn_end`, `tool_execution_end`,
+  `after_provider_response`, and `agent_end`. On each hook it sends a `status`
+  bus envelope carrying `agentName`, `modelId`, `contextPct`, `contextTokens`,
+  `contextWindow`, `costUsd`, `turnCount`, and `state`. Emissions are throttled
+  to one per 250 ms; the final `settled` state on `agent_end` always sends
+  (bypasses throttle). **Self-gates on `getHabitat().submitTo`** — the extension
+  is fully inert when `submitTo` is unset, so top-level user-launched agents
+  (which have no `submitTo`) emit nothing.
+
+- **`status-display`** — registers `__pi_status_dispatch__` on `globalThis` so
+  `agent-bus.ts` routes incoming `status` envelopes into a `StatusCache`. The
+  cache drives a TUI widget rendered above the input editor: one rounded-border
+  box per active sender showing the agent name, model ID, cost, turn count,
+  context bar, and state (`running` / `paused` / `settled`). **Self-gates on
+  `ctx.hasUI`** — no widget is created in non-interactive (print) mode.
+
+Both extensions are added to `BASELINE_EXTENSIONS` in `scripts/run-agent.mjs`
+as of Phase 6c; no recipe changes are needed.
+
+### Status envelope
+
+```
+payload.kind === "status"
+payload.agentName       string   — instance name of the emitting peer
+payload.modelId         string   — model ID in use
+payload.contextPct      number   — context window usage (0–100)
+payload.contextTokens   number   — tokens used
+payload.contextWindow   number   — total window size
+payload.costUsd         number   — cumulative session cost
+payload.turnCount       number   — number of assistant turns so far
+payload.state           "running" | "paused" | "settled"
+```
+
+### Status display widget
+
+The widget renders one box per active sender:
+
+```
+╭ Agent Name ─── ▊▊░ ╮
+│ deepseek/deepseek-v3 │
+│ $0.0012 · turn 3 · running │
+╰──────────────────────╯
+```
+
+- 2 boxes per row by default; 3 on terminals ≥ 120 columns.
+- TTL eviction: entries older than 30 s are lazily removed on each render.
+  Settled entries persist for the same TTL so the user briefly sees the final
+  state before the box disappears.
+- The context bar uses the same eighths-block rendering as `agent-footer`.
+
+### Atomic delegate integration
+
+When `writer-foreman` delegates to a `deferred-writer` child, the child has
+`submitTo = <foreman-name>` (set by the topology overlay). The child's
+`status-emitter` fires on each event hook; the foreman's `status-display`
+shows a live box for the in-flight worker. No recipe changes are required in
+either the foreman or the worker recipes.
+
+### Dispatch hook position
+
+The `__pi_status_dispatch__` hook runs in `agent-bus.handleIncoming` BEFORE
+the `acceptedFrom` enforcement check, positioned after the
+`__pi_atomic_delegate_dispatch__` hook. This ensures that atomic-delegate
+workers (whose names are not in the caller's static `acceptedFrom` list) can
+still report status to their caller. The hook returns `true` for `status`
+envelopes (consuming them), preventing them from reaching the supervisor rail.
+
 ## Topology YAML
 
 A topology YAML describes the full set of nodes in a mesh and their peer
