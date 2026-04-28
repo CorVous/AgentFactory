@@ -1,0 +1,29 @@
+# CI runs unit tests only.
+#
+# The tmux-based integration tests documented in AGENTS.md are
+# intentionally NOT run here — they spawn real pi sessions that hit
+# the OpenRouter API and cost real money per run. Run them locally
+# before merging anything that touches the rails (see AGENTS.md for
+# the recipe).
+#
+# Unit tests must be hermetic: no network calls, no model API calls,
+# no real filesystem outside the test's tmpdir. If a test needs the
+# model, it doesn't belong in npm test — gate it behind a separate
+# script (e.g. npm run test:integration).
+
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm test
