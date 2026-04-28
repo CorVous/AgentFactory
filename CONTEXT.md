@@ -15,7 +15,7 @@ The reusable identity a **Recipe** defines.
 _Avoid_: agent type, kind
 
 **Peer**:
-A running pi process bound to a **Bus Root**, addressed by its **Instance Name**.
+A running pi process bound to a **Bus Root**, addressed by its **Instance Name**. Every peer binds a bus socket at `session_start`, even if its tool palette excludes peer-talk tools (`agent_send`, `agent_call`, etc.).
 _Avoid_: agent instance, child, worker (workers and supervisors are both peers)
 
 **Instance Name**:

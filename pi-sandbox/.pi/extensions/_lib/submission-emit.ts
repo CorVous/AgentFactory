@@ -6,9 +6,8 @@
 // the same pattern as deferred-confirm's handler registry.
 
 import { createHash } from "node:crypto";
-import net from "node:net";
-import path from "node:path";
 import { encodeEnvelope, makeSubmissionEnvelope, type Artifact, type Envelope } from "./bus-envelope";
+import { sendOverBus, type BusSendResult } from "./bus-transport";
 
 const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 
@@ -227,31 +226,6 @@ export function handleSubmissionReply(
 
 export function makeBusSender(
   busRoot: string,
-): (env: Envelope) => Promise<{ delivered: boolean; reason?: string }> {
-  return (env) => {
-    const dest = path.join(busRoot, `${env.to}.sock`);
-    return new Promise((resolve) => {
-      const sock = net.connect(dest);
-      const done = (r: { delivered: boolean; reason?: string }) => {
-        sock.removeAllListeners();
-        sock.destroy();
-        resolve(r);
-      };
-      const timer = setTimeout(() => done({ delivered: false, reason: "timeout" }), 1_000);
-      sock.once("connect", () => {
-        sock.write(encodeEnvelope(env), "utf8", () => {
-          clearTimeout(timer);
-          done({ delivered: true });
-        });
-      });
-      sock.once("error", (e: NodeJS.ErrnoException) => {
-        clearTimeout(timer);
-        const reason =
-          e.code === "ENOENT" || e.code === "ECONNREFUSED"
-            ? "peer offline"
-            : `socket error: ${e.message}`;
-        done({ delivered: false, reason });
-      });
-    });
-  };
+): (env: Envelope) => Promise<BusSendResult> {
+  return (env) => sendOverBus(busRoot, env.to, encodeEnvelope(env));
 }

@@ -14,8 +14,10 @@ import { createSupervisorInbox, type InboundEnvelope } from "./_lib/supervisor-i
 import {
   makeApprovalRequestEnvelope,
   encodeEnvelope,
+  tryDecodeEnvelope,
   type Envelope,
 } from "./_lib/bus-envelope";
+import { sendOverBus } from "./_lib/bus-transport";
 import net from "node:net";
 import path from "node:path";
 
@@ -23,6 +25,9 @@ interface SupervisorState {
   inbox: ReturnType<typeof createSupervisorInbox>;
   agentName: string;
   busRoot: string;
+  /** Captured from pi.sendUserMessage at session_start. Allows dispatchToSupervisor
+   *  to deliver messages directly without going through a turn_end queue. */
+  sendUserMessage?: (text: string, opts: { deliverAs: "followUp" }) => void;
 }
 
 function getState(): SupervisorState {
@@ -40,14 +45,14 @@ export function dispatchToSupervisor(env: Envelope): boolean {
   const kind = env.payload.kind;
   if (kind !== "approval-request" && kind !== "submission") return false;
   const state = getState();
-  state.inbox.dispatchEnvelope(env, (msgId, text) => {
-    // Delivered to the model via agent-bus's pi reference if available;
-    // agent-bus calls renderInboundForUser itself for the general path,
-    // so here we just need to make the message available. We store a
-    // pending sendUserMessage request on globalThis and let agent-bus
-    // drain it via the registered callback.
-    const g = globalThis as { __pi_supervisor_pending_msgs__?: Array<string> };
-    (g.__pi_supervisor_pending_msgs__ ??= []).push(text);
+  state.inbox.dispatchEnvelope(env, (_msgId, text) => {
+    // Deliver directly to the model via the pi.sendUserMessage reference
+    // captured at session_start — no turn_end queue needed.
+    if (state.sendUserMessage) {
+      try {
+        state.sendUserMessage(text, { deliverAs: "followUp" });
+      } catch { /* best-effort */ }
+    }
   });
   return true;
 }
@@ -63,30 +68,7 @@ async function sendToPeer(
   busRoot: string,
   env: Envelope,
 ): Promise<{ delivered: boolean; reason?: string }> {
-  const dest = path.join(busRoot, `${env.to}.sock`);
-  return new Promise((resolve) => {
-    const sock = net.connect(dest);
-    const done = (r: { delivered: boolean; reason?: string }) => {
-      sock.removeAllListeners();
-      sock.destroy();
-      resolve(r);
-    };
-    const timer = setTimeout(() => done({ delivered: false, reason: "timeout" }), 1000);
-    sock.once("connect", () => {
-      sock.write(encodeEnvelope(env), "utf8", () => {
-        clearTimeout(timer);
-        done({ delivered: true });
-      });
-    });
-    sock.once("error", (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      const reason =
-        e.code === "ENOENT" || e.code === "ECONNREFUSED"
-          ? "peer offline"
-          : `socket error: ${e.message}`;
-      done({ delivered: false, reason });
-    });
-  });
+  return sendOverBus(busRoot, env.to, encodeEnvelope(env));
 }
 
 // Escalate to the supervisor via bus agent_call pattern:
@@ -128,14 +110,13 @@ async function escalateViaBus(
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
-        try {
-          const raw = JSON.parse(line) as { payload?: { kind?: string; approved?: boolean; note?: string } };
-          if (raw?.payload?.kind === "approval-result" && typeof raw.payload.approved === "boolean") {
-            clearTimeout(timer);
-            settle({ approved: raw.payload.approved, note: raw.payload.note });
-            return;
-          }
-        } catch { /* ignore */ }
+        const decoded = tryDecodeEnvelope(line);
+        if (decoded?.payload?.kind === "approval-result") {
+          clearTimeout(timer);
+          const p = decoded.payload;
+          settle({ approved: p.approved, note: p.note });
+          return;
+        }
       }
     });
     sock.once("error", () => { clearTimeout(timer); settle({ approved: false, note: "connection error" }); });
@@ -158,23 +139,15 @@ export default function (pi: ExtensionAPI) {
       /* Habitat not available — leave defaults */
     }
 
+    // Capture pi.sendUserMessage so dispatchToSupervisor can deliver inbound
+    // envelopes immediately — no turn_end queue. An envelope arriving mid-turn
+    // while pi's loop is live goes through pi.sendUserMessage directly;
+    // agent-bus's own pendingDuringTurn queue handles the actual delivery
+    // ordering for the message kind; typed envelopes come here.
+    state.sendUserMessage = (text, opts) => pi.sendUserMessage(text, opts);
+
     if (process.env.AGENT_DEBUG === "1") {
       ctx.ui.notify("supervisor: inbound rail active", "info");
-    }
-  });
-
-  // Drain pending messages queued by dispatchToSupervisor before agent-bus
-  // had a pi reference. After session_start, agent-bus holds its own
-  // pi.sendUserMessage reference. We hook turn_end to push any queued msgs.
-  pi.on("turn_end", async (_event, _ctx) => {
-    const g = globalThis as { __pi_supervisor_pending_msgs__?: Array<string> };
-    const msgs = g.__pi_supervisor_pending_msgs__ ?? [];
-    if (msgs.length === 0) return;
-    const drained = msgs.splice(0);
-    for (const text of drained) {
-      try {
-        pi.sendUserMessage(text, { deliverAs: "followUp" });
-      } catch { /* best-effort */ }
     }
   });
 

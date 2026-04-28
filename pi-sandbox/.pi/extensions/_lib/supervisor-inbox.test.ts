@@ -63,6 +63,38 @@ describe("createSupervisorInbox", () => {
 });
 
 // ---------------------------------------------------------------------------
+// dispatchEnvelope — synchronous dispatch (item 6 regression guard)
+// ---------------------------------------------------------------------------
+
+describe("dispatchEnvelope — synchronous sendMessage invocation", () => {
+  it("invokes sendMessage synchronously (not deferred to a later microtask)", () => {
+    // This guards against the old turn_end-queue pattern where messages were
+    // stored in a globalThis array and only flushed at the next turn boundary.
+    // The sendMessage callback must be called before dispatchEnvelope returns.
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "Sync test",
+      summary: "s",
+      preview: "p",
+    });
+
+    let calledSynchronously = false;
+    let callCount = 0;
+    inbox.dispatchEnvelope(env, (_msgId, _text) => {
+      calledSynchronously = true;
+      callCount++;
+    });
+    // If the old globalThis-queue pattern was used, calledSynchronously would
+    // be false here (the callback only fires at turn_end). It must be true.
+    expect(calledSynchronously).toBe(true);
+    expect(callCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // dispatchEnvelope — acceptedFrom enforcement
 // ---------------------------------------------------------------------------
 
@@ -643,10 +675,12 @@ describe("respondToRequest — revise", () => {
     expect(sendEnvelope).not.toHaveBeenCalled();
   });
 
-  it("caps revisions at 3 per msg_id chain; on cap, revise is rejected", async () => {
+  it("caps revisions at 3 per msg_id chain; on cap, revise is rejected (approval-request without in_reply_to)", async () => {
+    // This variant keeps all revisions against the same pending entry
+    // (no re-keying). The cap accumulates on the single entry.
     setHabitat(BASE_HABITAT);
     const inbox = createSupervisorInbox();
-    let env = makeApprovalRequestEnvelope({
+    const env = makeApprovalRequestEnvelope({
       from: "worker-a",
       to: "supervisor",
       title: "T",
@@ -657,7 +691,7 @@ describe("respondToRequest — revise", () => {
 
     const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
 
-    // Three successful revisions
+    // Three successful revisions on the same entry
     for (let i = 0; i < 3; i++) {
       const r = await inbox.respondToRequest({
         msg_id: env.msg_id,
@@ -667,17 +701,6 @@ describe("respondToRequest — revise", () => {
         agentName: "supervisor",
       });
       expect(r.ok).toBe(true);
-      // Simulate worker re-submitting on the same thread
-      const resubmit = makeApprovalRequestEnvelope({
-        from: "worker-a",
-        to: "supervisor",
-        title: "T",
-        summary: "S",
-        preview: "P",
-      });
-      // Link re-submission to original thread (same root msg_id)
-      inbox.updatePendingMsgId(env.msg_id, resubmit.msg_id, resubmit);
-      env = resubmit;
     }
 
     // 4th revise should be rejected (cap exceeded)

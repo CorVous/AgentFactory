@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Artifact } from "./bus-envelope";
+import { applyUnique } from "./string-edit";
 
 export interface ApplyResult {
   ok: boolean;
@@ -27,19 +28,6 @@ const KIND_ORDER: Record<Artifact["kind"], number> = {
 
 function sha256(s: string): string {
   return createHash("sha256").update(s, "utf8").digest("hex");
-}
-
-function applyUnique(
-  content: string,
-  oldStr: string,
-  newStr: string,
-): { ok: true; out: string } | { ok: false; err: string } {
-  if (oldStr.length === 0) return { ok: false, err: "oldString is empty" };
-  const idx = content.indexOf(oldStr);
-  if (idx < 0) return { ok: false, err: "oldString not found in content" };
-  if (content.indexOf(oldStr, idx + 1) >= 0)
-    return { ok: false, err: "oldString matches multiple times; add surrounding context" };
-  return { ok: true, out: content.slice(0, idx) + newStr + content.slice(idx + oldStr.length) };
 }
 
 export async function applyArtifacts(

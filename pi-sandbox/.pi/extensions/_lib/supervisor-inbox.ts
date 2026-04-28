@@ -26,7 +26,6 @@ interface PendingEntry {
 export interface SupervisorInbox {
   pendingCount(): number;
   dispatchEnvelope(env: Envelope, sendMessage: (msgId: string, text: string) => void): void;
-  updatePendingMsgId(oldMsgId: string, newMsgId: string, newEnv: Envelope): void;
   respondToRequest(opts: RespondOpts): Promise<RespondResult>;
 }
 
@@ -45,11 +44,6 @@ export interface RespondOpts {
 export interface RespondResult {
   ok: boolean;
   error?: string;
-}
-
-function getPendingRegistry(): Map<string, PendingEntry> {
-  const g = globalThis as { __pi_supervisor_pending__?: Map<string, PendingEntry> };
-  return (g.__pi_supervisor_pending__ ??= new Map());
 }
 
 function isAllowed(from: string): boolean {
@@ -115,18 +109,6 @@ export function createSupervisorInbox(): SupervisorInbox {
       const rendered = renderInboundForUser(env);
       const toolHint = `\nUse respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?}) to respond.`;
       sendMessage(env.msg_id, rendered + toolHint);
-    },
-
-    updatePendingMsgId(oldMsgId: string, newMsgId: string, newEnv: Envelope) {
-      const entry = pending.get(oldMsgId);
-      if (!entry) return;
-      const updated: PendingEntry = {
-        env: newEnv,
-        revisionCount: entry.revisionCount,
-        rootMsgId: entry.rootMsgId,
-      };
-      pending.delete(oldMsgId);
-      pending.set(newMsgId, updated);
     },
 
     async respondToRequest(opts: RespondOpts): Promise<RespondResult> {

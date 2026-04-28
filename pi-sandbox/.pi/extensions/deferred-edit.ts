@@ -17,6 +17,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
 import { buildEditArtifact } from "./_lib/submission-emit";
+import { applyUnique } from "./_lib/string-edit";
 
 const PREVIEW_LINES_PER_BLOCK = 20;
 
@@ -39,14 +40,6 @@ function validatePath(relPath: unknown, root: string): { ok: true; abs: string }
     return { ok: false, err: `${relPath}: escapes sandbox` };
   }
   return { ok: true, abs };
-}
-
-function applyUnique(content: string, oldStr: string, newStr: string): { ok: true; out: string } | { ok: false; err: string } {
-  if (oldStr.length === 0) return { ok: false, err: "old_string is empty" };
-  const idx = content.indexOf(oldStr);
-  if (idx < 0) return { ok: false, err: "old_string not found in current content" };
-  if (content.indexOf(oldStr, idx + 1) >= 0) return { ok: false, err: "old_string matches multiple times; add surrounding context to make it unique" };
-  return { ok: true, out: content.slice(0, idx) + newStr + content.slice(idx + oldStr.length) };
 }
 
 function clipPreview(s: string): string {
