@@ -28,7 +28,7 @@ A model class — `RABBIT_SAGE_MODEL` (planner), `LEAD_HARE_MODEL` (overseer), `
 ### Containment
 
 **Habitat**:
-Per-instance containment perimeter for one **Peer** — scratch FS, peer allowlists, supervisor, submitTo, tools, model — resolved once at session start; **Rails** read from it.
+Per-instance containment perimeter for one **Peer** — scratch FS, peer allowlists, supervisor, submitTo, tools, model — resolved once at session start; **Rails** read from it. Materialised at session_start by the `habitat` baseline extension; rails read fields via `getHabitat()` from `_lib/habitat.ts`.
 _Avoid_: sandbox (overloaded), environment, scope, surface
 
 **Scratch Sandbox**:

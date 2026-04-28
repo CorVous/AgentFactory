@@ -1,7 +1,7 @@
 // agent-status-reporter — child-side companion to agent-spawn's RPC server.
 //
-// When this agent runs as a delegated child (i.e. --rpc-sock is set), open
-// a long-lived connection to the parent's per-call RPC socket and push
+// When this agent runs as a delegated child (i.e. Habitat.rpcSock is set),
+// open a long-lived connection to the parent's per-call RPC socket and push
 // session-stat snapshots whenever the agent's state changes meaningfully
 // (turn boundaries, tool boundaries, provider responses). The parent's
 // agent-spawn caches the latest snapshot per delegation and the
@@ -9,11 +9,6 @@
 //
 // No-ops for top-level (non-delegated) runs — same gating idiom as
 // requestHumanApproval in deferred-confirm.
-//
-// Status updates run on the same socket pi already uses for end-of-turn
-// approval forwarding. The parent's net.createServer happily accepts
-// multiple concurrent connections; the long-lived status conn and the
-// short-lived approval conn(s) coexist without coordination.
 //
 // Failure semantics: best-effort. Connect failures, mid-session
 // disconnects, and EPIPE all settle silently after one 500 ms reconnect
@@ -23,6 +18,7 @@
 import net from "node:net";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { getHabitat } from "./_lib/habitat";
 
 const THROTTLE_MS = 250;
 const RECONNECT_DELAY_MS = 500;
@@ -134,18 +130,26 @@ function handleDisconnect(rt: ReporterRuntime, sockPath: string, ctx: ExtensionC
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
-    // pi.getFlag("rpc-sock") would only work for the extension that
-    // registered the flag (deferred-confirm). The runner mirrors the
-    // CLI value into PI_RPC_SOCK so cross-extension readers like this
-    // one can see it.
-    const sockPath = (process.env.PI_RPC_SOCK || "").trim();
+    // Read rpcSock, delegationId, and agentName from Habitat.
+    // Falls back to env vars so the extension keeps working if habitat.ts
+    // somehow loaded without a valid spec (e.g. a stale child invoked
+    // without the runner).
+    let sockPath = "";
+    let delegationId = "";
+    let agentName = "agent";
+    try {
+      const h = getHabitat();
+      sockPath = (h.rpcSock || "").trim();
+      delegationId = (h.delegationId || "").trim();
+      agentName = (h.agentName || "agent").trim() || "agent";
+    } catch {
+      sockPath = (process.env.PI_RPC_SOCK || "").trim();
+      delegationId = (process.env.PI_AGENT_DELEGATION_ID || "").trim();
+      agentName = (process.env.PI_AGENT_NAME || "agent").trim() || "agent";
+    }
+
     if (!sockPath) return; // top-level run, no parent to talk to
-
-    const delegationId = (process.env.PI_AGENT_DELEGATION_ID || "").trim();
     if (!delegationId) return; // spawned without a delegation id; can't be routed
-
-    const agentName =
-      ((pi.getFlag("agent-name") as string | undefined) || process.env.PI_AGENT_NAME || "agent").trim();
 
     const rt: ReporterRuntime = {
       sock: null,
