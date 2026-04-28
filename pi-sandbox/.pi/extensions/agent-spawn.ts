@@ -63,6 +63,7 @@ import { Type } from "typebox";
 import { parse as parseYaml } from "yaml";
 import { generateInstanceName } from "./_lib/agent-naming";
 import { requestHumanApproval, type ApprovalRequest } from "./deferred-confirm";
+import { getHabitat } from "./_lib/habitat";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
@@ -147,11 +148,6 @@ interface SpawnState {
 function getState(): SpawnState {
   const g = globalThis as { __pi_delegate_pending__?: SpawnState };
   return (g.__pi_delegate_pending__ ??= { pending: new Map(), cleanupRegistered: false });
-}
-
-function parseFlagList(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
 /** Read the child recipe's `shortName:` and `model:` so the parent can
@@ -243,13 +239,6 @@ function finalText(p: PendingDelegation, exit: { code: number | null; signal: No
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerFlag("allowed-agents", {
-    description:
-      "Comma-separated list of recipe names this agent may delegate to. " +
-      "Set by the runner from the recipe's `agents:` field.",
-    type: "string",
-  });
-
   const state = getState();
   ensureProcessCleanup(state);
 
@@ -284,7 +273,12 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const allowed = parseFlagList(pi.getFlag("allowed-agents") as string | undefined);
+      let allowed: string[] = [];
+      try {
+        allowed = getHabitat().agents;
+      } catch {
+        // Habitat not yet set; no allowed list — all recipes denied.
+      }
       if (allowed.length === 0 || !allowed.includes(params.recipe)) {
         return {
           content: [
