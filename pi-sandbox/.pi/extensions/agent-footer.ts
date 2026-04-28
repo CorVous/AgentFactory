@@ -2,7 +2,8 @@
 // `npm run agent` rails:
 //   line 1, left:  the sandbox scratch root (home replaced by ~).
 //   line 1, right: comma-separated active tools from pi.getActiveTools()
-//                  — `delegate` and `approve_delegation` hidden.
+//                  — `delegate` hidden because the agents-it-can-spawn
+//                  list on line 2 already conveys delegation capability.
 //   line 2 (opt):  skills list on the left, agent delegation list on
 //                  the right. Both read from getHabitat(). Skipped when
 //                  both are empty.
@@ -30,7 +31,7 @@ function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
-const HIDDEN_TOOLS = new Set(["delegate", "approve_delegation"]);
+const HIDDEN_TOOLS = new Set(["delegate"]);
 
 function renderLeftRight(
   width: number,

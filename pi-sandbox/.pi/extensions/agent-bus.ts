@@ -18,8 +18,9 @@
 // envelope construction, encoding, decoding, and inbound rendering all
 // route through that library.
 //
-// Companion to agent-spawn (blocking delegation). The two are
-// orthogonal: a recipe loads either, both, or neither.
+// Companion to atomic-delegate. Atomic delegate uses the bus's submission
+// flow internally; for explicit peer messaging, agents call agent_send /
+// agent_call directly.
 
 import fs from "node:fs";
 import net from "node:net";
@@ -171,6 +172,15 @@ function handleIncoming(state: BusState, env: Envelope) {
   // If this is a reply to a pending submission (approval-result or
   // revision-requested), route it to the submission-emit dispatch and stop.
   if (env.in_reply_to && dispatchSubmissionReply(env)) return;
+
+  // atomic-delegate hook: spawned workers send submissions FROM names
+  // that don't appear in this agent's static acceptedFrom list. The
+  // hook self-gates on its own pending-workers map and runs BEFORE the
+  // acceptedFrom check so dynamic workers aren't dropped.
+  const adHook = (
+    globalThis as { __pi_atomic_delegate_dispatch__?: (env: Envelope) => boolean }
+  ).__pi_atomic_delegate_dispatch__;
+  if (adHook && adHook(env)) return;
 
   // Typed dispatch: non-message envelopes go to the supervisor rail when it
   // is loaded; message-kind envelopes always flow through the general inbox.

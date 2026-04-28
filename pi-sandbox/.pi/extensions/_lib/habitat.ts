@@ -19,10 +19,6 @@ export interface Habitat {
   noEditAdd: string[];
   noEditSkip: string[];
 
-  // Delegation-only context (still in use until Phase 5)
-  rpcSock?: string;
-  delegationId?: string;
-
   // Phase 3b: peer relationships
   supervisor?: string;
   submitTo?: string;
@@ -70,8 +66,6 @@ export function materialiseHabitat(rawJson: string): Habitat {
     description: optionalString(obj, "description"),
     tier: optionalString(obj, "tier"),
     type: optionalString(obj, "type"),
-    rpcSock: optionalString(obj, "rpcSock"),
-    delegationId: optionalString(obj, "delegationId"),
     skills: stringList(obj, "skills"),
     agents: stringList(obj, "agents"),
     noEditAdd: stringList(obj, "noEditAdd"),

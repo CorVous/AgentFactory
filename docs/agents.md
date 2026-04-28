@@ -19,8 +19,8 @@ in [`scripts/breed-names.json`](../scripts/breed-names.json) and the
 generator + collision detection in
 [`scripts/agent-naming.mjs`](../scripts/agent-naming.mjs).
 
-Collision detection runs in two places: `agent-spawn` tracks in-flight
-sibling slugs in its `state.pending` registry so two parallel
+Collision detection runs in two places: `atomic-delegate` tracks
+in-flight sibling slugs in its pending-workers map so two parallel
 `deferred-writer` children always get different breeds; the runner
 probes `${BUS_ROOT}/*.sock` so a second `peer-chatter` launched in
 another terminal won't pick a breed that's already bound. `--agent-name
@@ -56,22 +56,19 @@ stable peer name on the bus.
 - `agent-footer` — replaces pi's default footer. Line 1 shows the
   sandbox root on the left and the comma-separated active tools (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
-  extension-registered tools) on the right. `delegate` and
-  `approve_delegation` are filtered out of the tool list because every
-  delegating agent has them — they tell the user nothing about what
-  the recipe can actually do, and the agents-it-can-spawn list on
-  line 2 already conveys delegation capability. Line 2 (when populated)
-  shows the recipe's `skills:` list on the left and the recipes this
-  agent may `delegate` to on the right — both as plain comma-separated
-  lists, no labels, matching line 1's bare style. Read from the
-  `PI_AGENT_SKILLS` / `PI_AGENT_AGENTS` env vars set by the runner
-  (pi.getFlag is scoped per-extension, so cross-extension flag reads
-  have to bounce through env, mirroring how `agent-status-reporter`
-  reads `--rpc-sock`); the line is skipped entirely when both lists
-  are empty. Line 3 shows `$cost` and the context-usage percent on
-  the left, model id on the right — pi's default token-flow stats
-  (↑input, ↓output, cache R/W, context window size) are intentionally
-  dropped. Line 4 is the extension-status line.
+  extension-registered tools) on the right. `delegate` is filtered out
+  of the tool list because every delegating agent has it — it tells
+  the user nothing about what the recipe can actually do, and the
+  agents-it-can-spawn list on line 2 already conveys delegation
+  capability. Line 2 (when populated) shows the recipe's `skills:`
+  list on the left and the recipes this agent may `delegate` to on
+  the right — both as plain comma-separated lists, no labels,
+  matching line 1's bare style. Reads both from `getHabitat()`; the
+  line is skipped entirely when both lists are empty. Line 3 shows
+  `$cost` and the context-usage percent on the left, model id on the
+  right — pi's default token-flow stats (↑input, ↓output, cache R/W,
+  context window size) are intentionally dropped. Line 4 is the
+  extension-status line.
 - `hide-extensions-list` — strips pi's `[Extensions]` section (added by
   `showLoadedResources` to the chat history at startup) since the
   agent-footer already shows the active tools and the path listing is
@@ -91,35 +88,24 @@ stable peer name on the bus.
   load any deferred-* extension — when no handlers register,
   `agent_end` returns silently.
 
-  **Approval routing** is handled by an exported helper,
+  **Approval routing** is handled by an exported helper in
+  `_lib/escalation.ts`,
   `requestHumanApproval(ctx, pi, {title, summary, preview}) →
-  Promise<boolean>`, that picks the right channel:
+  Promise<boolean>`. After Phase 5 the routing is:
   - `ctx.hasUI` → renders `ctx.ui.confirm` locally (this terminal is
     the human's).
-  - else `--rpc-sock` flag set → forwards over a unix socket to the
-    parent agent's RPC server (parent itself recurses if it's also
-    headless, so escalations walk up the chain to whoever can answer).
-  - else loud-fails to stderr (`[deferred] dropped: no UI and no
-    --rpc-sock`) and returns `false` — replacing today's silent drop
-    of queued drafts under `pi -p`.
+  - else loud-fails to stderr (`[deferred] dropped: no UI available`)
+    and returns `false`.
 
-  The same primitive is reused by `agent-spawn`'s
-  `approve_delegation({escalate: true})`, so any agent works whether
-  it's running standalone or as a child.
-
-  RPC protocol (newline-delimited JSON, single round-trip):
-  ```
-  client → server : {type: "request-approval", title, summary, preview}
-  server → client : {type: "approval-result", approved: boolean}
-  ```
-  IPC failures (parent died, EPIPE, malformed reply, server closed
-  without replying) settle as `approved: false`. No retries, no
-  offline queueing.
+  Cross-agent escalation now flows over the bus as a typed
+  `approval-request` envelope handled by the supervisor rail (see the
+  Supervisor inbound rail section below) rather than over per-call
+  Unix sockets.
 
   When no UI is present, the apply-loop's status notifications
   (`writes applied: …`, `edits applied: …`, etc.) are routed to
-  stdout as `[deferred] …` lines so the parent's `delegate` /
-  `approve_delegation` tool result captures them.
+  stdout as `[deferred] …` lines so any wrapping process that
+  captures the worker's stdout still sees them.
 
 ```sh
 set -a; source models.env; set +a
@@ -152,7 +138,7 @@ peers: [planner, reviewer]        # optional; peers this one may address
 
 > **Phase 3b note:** `supervisor`, `acceptedFrom`, and `peers` are declarable and materialised into the `Habitat` but no rail enforces them yet. `acceptedFrom` becomes active in Phase 3c when the supervisor inbound rail and peer allowlist are wired.
 
-When `submitTo` is set on a recipe, the `deferred-*` end-of-turn flow ships the aggregated artifacts to that peer as a `submission` bus envelope instead of rendering a local approval dialog. The worker waits for an `approval-result` reply: on approval it logs `"submission applied by supervisor"` (the supervisor handles the actual writes in Phase 4b); on rejection it discards the queue and logs the reason. A `revision-requested` reply is treated as rejection in Phase 4a — revision threading lands in Phase 4c. Recipes that do **not** set `submitTo` keep the existing local-or-rpc-sock approval flow unchanged.
+When `submitTo` is set on a recipe, the `deferred-*` end-of-turn flow ships the aggregated artifacts to that peer as a `submission` bus envelope instead of rendering a local approval dialog. The worker waits for an `approval-result` reply: on approval it logs `"submission applied by supervisor"` (the supervisor handles the actual writes); on rejection it discards the queue and logs the reason. A `revision-requested` reply is treated as rejection in Phase 4a — revision threading lands in Phase 4c. Recipes that do **not** set `submitTo` keep the local UI-or-fail approval flow unchanged.
 
 ### `prompt:` and extension fragments
 
@@ -163,22 +149,18 @@ present, prepends it to the system prompt that pi receives. Recipes only
 need to describe the agent's role; the standard rules for `deferred_write`,
 `deferred_edit`, `delegate`, etc. come from the fragments.
 
-Two conditional fragments are gated by the runner so they don't appear
+One conditional fragment is gated by the runner so it doesn't appear
 when irrelevant:
 
 - `deferred-confirm.prompt.md` (apply order, atomic batch semantics) is
   loaded only when at least one `deferred-*` tool extension is active —
   baseline `deferred-confirm` itself is a no-op without one.
-- `agent-spawn.approval.prompt.md` (the draft-approval workflow) is loaded
-  only when at least one recipe in `agents:` declares a `deferred-*`
-  extension. A delegator whose children never queue drafts gets the basic
-  `delegate` / `approve_delegation` mechanics from `agent-spawn.prompt.md`
-  but no approval-flow guidance.
 
 Final order seen by the model: baseline-extension fragments → recipe-
-extension fragments → `agent-spawn` fragments (when implicit) → recipe
-`prompt:`. Edit a fragment to change behaviour for every recipe that
-loads its extension; edit a recipe's `prompt:` for that one agent only.
+extension fragments (including `atomic-delegate.prompt.md` when implicit
+from `agents:`) → recipe `prompt:`. Edit a fragment to change behaviour
+for every recipe that loads its extension; edit a recipe's `prompt:`
+for that one agent only.
 
 The runner always passes `--no-extensions --no-skills --no-context-files`
 to pi, so only what the recipe declares is loaded. Tool names go through
@@ -193,58 +175,22 @@ All seven appear under "Extension CLI Flags" in `pi --help`.
 
 When `agents:` is non-empty the runner also implicitly:
 
-- adds `agent-spawn` to `extensions:`,
-- adds `delegation-boxes` to `extensions:` (renders one status box
-  per pending delegation above the input editor — name, 3-cell
-  context bar, cost, turn, state — laid out 2 or 3 boxes per row
-  depending on terminal width), and
-- adds `delegate` and `approve_delegation` to `tools:`.
+- adds `atomic-delegate` to `extensions:`, and
+- adds `delegate` to `tools:`.
 
 Explicit duplicates in the recipe are fine. The inverse is rejected
-loudly: declaring `extensions: [agent-spawn]` or
-`tools: [delegate | approve_delegation]` without `agents:` causes the
-runner to `die()` so the allowlist is never accidentally empty. To
-disable delegation, drop the `agents:` field entirely.
+loudly: declaring `extensions: [atomic-delegate]` or `tools: [delegate]`
+without `agents:` causes the runner to `die()` so the allowlist is
+never accidentally empty. To disable delegation, drop the `agents:`
+field entirely.
 
-The boxes are populated by the **`agent-status-reporter`** baseline
-extension running inside each delegated child. It self-gates on
-`--rpc-sock` (a no-op for top-level runs) and pushes newline-delimited
-JSON envelopes over the existing per-call socket whenever it crosses a
-turn / tool / provider-response boundary, throttled to one write per
-250 ms. Envelopes:
-
-```jsonc
-// Once per child connection. Tags the conn so subsequent status
-// envelopes can omit `delegation_id`.
-{"type": "hello", "id": "<delegation_id>"}
-
-// Many per child. Cached on the parent's PendingDelegation entry
-// and rendered by delegation-boxes.
-{
-  "type": "status",
-  "delegation_id": "<optional once tagged>",
-  "agent_name": "<from --agent-name>",
-  "model_id": "<ctx.model.id>",
-  "context_pct": 12.4,
-  "context_tokens": 2480,
-  "context_window": 200000,
-  "cost_usd": 0.0123,
-  "turn_count": 3,
-  "state": "running" | "paused" | "settled"
-}
-```
-
-The parent's `agent-spawn` server consumes both envelope types on the
-same socket as the existing `request-approval` flow; a long-lived
-status conn and short-lived approval conn(s) coexist without
-coordination. Status updates are best-effort: connect failures and
-mid-session disconnects retry once at 500 ms then give up silently.
-The parent stamps `state: "paused"` when the child sends
-`request-approval` and `state: "settled"` once the child exits, so the
-final box transitions are visible even if the reporter dropped its
-connection. The 3-cell context bar uses the same eighths-block format
-as the footer (`renderBar(pct, 3)` from
-`pi-sandbox/.pi/extensions/_lib/context-bar.ts`).
+> **Live status widget:** the per-delegation status boxes that
+> previously rendered above the input editor (the
+> `delegation-boxes` widget fed by `agent-status-reporter` over
+> `--rpc-sock`) are deferred to a later phase. After Phase 5 the
+> model gets a textual summary as the `delegate` tool's return
+> value; there is no live progress indicator while the worker is
+> running.
 
 ## Where agent code lives
 
@@ -318,7 +264,7 @@ allowlist already omits the built-in `edit`/`write`, and each
 deferred-* tool enforces its own existence/non-existence preconditions
 at queue time.
 
-## Worked example: writer-foreman (parent-driven approval over RPC)
+## Worked example: writer-foreman (atomic delegate)
 
 `pi-sandbox/agents/writer-foreman.yaml` is a Lead-tier foreman that
 decomposes a drafting request and dispatches focused batches to a
@@ -329,46 +275,42 @@ agents: [deferred-writer]
 tools: [read, ls, grep, find]
 ```
 
-The runner implicitly loads `agent-spawn` and adds `delegate` +
-`approve_delegation` to the tool allowlist, and pushes
-`--allowed-agents deferred-writer` so the child recipe is locked.
+The runner implicitly loads `atomic-delegate` and adds `delegate` to
+the tool allowlist; the spawned worker is locked to recipes in
+`deferred-writer`'s allowlist.
 
-Flow per batch (or per parallel set of batches):
+Flow per batch:
 
 1. Foreman calls `delegate({recipe: "deferred-writer", task: "…"})`.
-   Returns immediately with a `delegation_id`; the child is spawning
-   in the background. Repeat for each independent batch before
-   collecting any results — all children run in parallel.
-2. The runner spawns a child `pi -p` with `--rpc-sock <path>`.
-3. Child drafts in memory, hits `agent_end`. Its `deferred-confirm`
-   has no `ctx.hasUI` (print mode) but does have `--rpc-sock`, so
-   `requestHumanApproval` opens the socket and sends
-   `request-approval` with the preview.
-4. The foreman's per-call RPC server receives the request. The child
-   remains paused on the open socket.
-5. Foreman calls `approve_delegation({id})` (no decision yet). Blocks
-   until the child settles, then returns the preview.
-6. Foreman LLM reads the preview, decides:
-   - `approve_delegation({id, approved: true})` — auto-approve.
-   - `approve_delegation({id, approved: false})` — discard.
-   - `approve_delegation({id, escalate: true})` — ask the human via
-     `requestHumanApproval`, which renders `ctx.ui.confirm` in the
-     foreman's terminal (or recursively forwards if the foreman is
-     itself a child).
-7. The decision is sent over the open RPC connection. Child resumes,
-   applies (or discards) the drafts, prints `[deferred] writes
-   applied: …` to stdout, exits.
-8. `approve_delegation` returns the captured stdout (plus the preview
-   as an audit trail) to the foreman.
+   The call is a single atomic round-trip.
+2. The atomic-delegate extension allocates a fresh tmpdir scratch root,
+   constructs a habitat overlay (`supervisor = submitTo = peers =
+   acceptedFrom = [foreman]`, `agents = []`), spawns the worker via
+   `node scripts/run-agent.mjs`, and registers a per-worker dispatch
+   hook on the bus.
+3. The worker runs `pi -p`, drafts files into its in-memory
+   `deferred-write` queue, hits `agent_end`. Because `submitTo` is set,
+   `deferred-confirm` ships a `submission` envelope to the foreman over
+   the bus and waits for a reply.
+4. Foreman's `agent-bus.handleIncoming` calls the
+   `__pi_atomic_delegate_dispatch__` hook (which runs BEFORE the
+   `acceptedFrom` check). The hook:
+   - Sends `approval-result(approved=true, note="queued for end-of-turn approval")` back to the worker so its `shipSubmission` Promise resolves and the worker's process exits cleanly.
+   - Resolves the `delegate` tool call's pending Promise with the artifacts.
+   - Registers the artifacts as a `deferred-confirm` handler labelled
+     `Delegate (<workerName>)`.
+5. The `delegate` tool returns synchronously to the foreman's model
+   with a textual summary; multiple `delegate` calls in one turn each
+   register their own handler.
+6. At `agent_end`, the foreman's `deferred-confirm` collects every
+   handler (its own deferred-* operations and one per delegate), shows
+   one unified preview, and applies on approval. If the foreman has
+   `submitTo` set itself, the artifacts bundle up and ship to the
+   foreman's supervisor instead — the recursive shape Just Works.
 
-Shortcut: `approve_delegation({id, approved: true})` combines steps 5–6
-into one call — it blocks until the child settles, sends the decision
-immediately, and includes the preview in the tool result for audit.
-
-A foreman that is itself launched as a child — e.g.
-`delegator → writer-foreman → deferred-writer` — works the same way:
-its own `requestHumanApproval` reads its own `--rpc-sock` and forwards
-escalations one more hop up. The chain bottoms out at the human.
+A foreman that is itself launched as a child of `delegator` works the
+same way at every level: each tier's `delegate` is atomic; submissions
+flow up through whatever escalation chain is configured.
 
 ### Debugging the rails
 
@@ -424,65 +366,72 @@ When an extension delegates to a child `pi` process:
 
 See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
 
-## Multi-agent: spawn vs. talk
+## Multi-agent: delegate vs. talk
 
 Two orthogonal extensions cover the two distinct relationships a recipe
-might want with another agent. `agent-spawn` is implicitly wired by the
-`agents:` recipe field; `agent-bus` is opt-in via `extensions:` +
+might want with another agent. `atomic-delegate` is implicitly wired by
+the `agents:` recipe field; `agent-bus` is opt-in via `extensions:` +
 `tools:`. A recipe can use either, both, or neither.
 
-### `agent-spawn` — non-blocking delegation with parent-driven approval
+### `atomic-delegate` — single-call delegation over the bus
 
 Wired implicitly when the recipe declares `agents: [a, b, …]`. Registers
-two tools:
+one tool:
 
-- `delegate({recipe, task, sandbox?, timeout_ms?})` — spawns
-  `node scripts/run-agent.mjs <recipe> --sandbox <dir> -p <task>
-  -- --rpc-sock <path>` as a subprocess and returns immediately with
-  a `delegation_id`. The child runs in the background. The parent LLM
-  can call `delegate` multiple times before calling `approve_delegation`
-  for any of them — all children spawn in parallel. Default timeout is
-  5 minutes (measured from the `delegate` call).
-- `approve_delegation({id, approved?, escalate?, comment?})` — the join
-  point. Blocks until the child settles, then:
-  - **Child exited without drafts**: returns captured stdout; no
-    decision needed.
-  - **Child paused, no decision given**: returns the preview so the
-    parent LLM can review it. Call again with `approved: true|false`
-    to send the decision.
-  - **Child paused, decision given**: sends the decision, waits for
-    the child to finish, returns captured stdout plus the preview as
-    an audit trail.
-  - **`escalate: true`**: asks the human via `requestHumanApproval`
-    (recurses up the parent chain if the parent itself is a child via
-    `--rpc-sock`).
+- `delegate({recipe, task, workspace?, timeout_ms?})` — spawns
+  `node scripts/run-agent.mjs <recipe>` in a fresh tmpdir scratch
+  root, hands it the task, waits for the worker to ship its drafted
+  artifacts back as a `submission` envelope, and registers those
+  artifacts as a `deferred-confirm` handler so they queue for unified
+  end-of-turn approval alongside any of the caller's own deferred-*
+  operations. Single atomic call — no separate approve step. Default
+  timeout is 5 minutes (measured from the `delegate` call to the
+  arrival of the submission).
 
-**Pre-flight checks** in `delegate.execute` (in order):
+**Worker habitat overlay.** Each spawned worker is locked to the
+caller via a `--topology-overlay` JSON blob set by the extension:
+
+```json
+{
+  "supervisor": "<callerName>",
+  "submitTo": "<callerName>",
+  "acceptedFrom": ["<callerName>"],
+  "peers": ["<callerName>"],
+  "agents": []
+}
+```
+
+So the worker can only message the caller, can only submit to the
+caller, has no further-delegation capability, and won't accept typed
+inbound envelopes from anyone else. The overlay overrides whatever
+peer fields the worker recipe declares.
+
+**Pre-flight checks** in `delegate.execute`:
 
 1. **Recipe allowlist** — `params.recipe` must be in
-   `--allowed-agents` (set by the runner from `agents:`). Error:
+   `getHabitat().agents`. Error:
    `delegate: recipe 'X' not in this agent's allowed list […]`.
-2. **Sandbox containment** — `params.sandbox || ctx.cwd` must equal
-   or be inside the parent's sandbox root (parent root = `ctx.cwd`
-   because the runner spawns pi with `cwd = sandboxRoot`). Children
-   may run in subdirectories of the parent's sandbox but never
-   anywhere outside it. Error: `delegate: sandbox '…' escapes parent
-   root '…'`.
+2. **Recipe exists** — `pi-sandbox/agents/<recipe>.yaml` must exist.
 
-**Pending delegations** are tracked in a globalThis registry
-(`__pi_delegate_pending__`) keyed by `delegation_id`. Each entry holds
-the child process handle, a `settled` promise (resolves when the child
-exits or sends a `request-approval`), and a `resolvedConn` field set
-once the child pauses. A watchdog enforces `timeout_ms` across the whole
-life of the delegation (delegate + LLM thinking + approve_delegation);
-exceeding it sends `approved: false` to the child (if paused) and kills
-the process. `process.once("exit")` cleanup walks the registry, denies
-all pending requests, kills surviving children, and unlinks sockets.
+**Workspace bundling.** When `workspace.include: ["a.txt", "sub/"]`
+is passed, those relative paths are resolved against the caller's
+sandbox and copied into the worker's tmpdir before launch (recursing
+into directories). Use this to give the worker read-only context
+files (existing code it needs to reference). Paths that escape the
+caller sandbox are silently skipped.
 
-**Sockets** are per-call at
-`${os.tmpdir()}/pi-rpc-${pid}-${randomUUID()}.sock`, deliberately
-outside any sandbox root so neither `sandbox` nor `no-edit` flag
-them as escapes.
+**Inbound dispatch.** When the worker ships its submission to the
+caller's bus socket, `agent-bus.handleIncoming` invokes
+`__pi_atomic_delegate_dispatch__` BEFORE the `acceptedFrom` check, so
+dynamically-spawned worker names don't need to live in the caller's
+static `acceptedFrom` list. The hook self-gates on its own pending-
+workers map (keyed by `<breed>-<recipe>` slug); envelopes from an
+unknown sender fall through to the rest of the routing chain.
+
+**Cleanup.** After the worker exits (graceful exit after submission,
+or kill on timeout), the scratch tmpdir is removed. The artifacts
+themselves are in-memory in the deferred-confirm handler until the
+end-of-turn applies (or rejects) them.
 
 Worked examples: `pi-sandbox/agents/writer-foreman.yaml` (single-
 recipe foreman driving `deferred-writer`) and
@@ -538,13 +487,14 @@ Worked example: `pi-sandbox/agents/peer-chatter.yaml`.
 
 ### Why two systems and not one
 
-Spawn is a blocking function call (ephemeral, anonymous handle,
-structured return); peer-talk is async messaging (long-lived, stable
-name, `pi.sendUserMessage` delivery). Forcing delegation through the bus
-would make every subtask allocate a name and burn turns polling an
-inbox; forcing peers through `createAgentSession` doesn't work at all
-since peers are independent processes. Keeping them as two independent
-extensions lets recipes mix exactly the relationship they need.
+`delegate` is an atomic blocking call (ephemeral worker, structured
+return: artifacts queued); peer-talk is async long-lived messaging
+(stable named peers, `pi.sendUserMessage` delivery). Both happen to
+ride the same Unix-socket bus protocol — atomic-delegate's wire format
+is the same `submission` envelope kind that the supervisor inbound
+rail handles — but the recipe-level affordances differ enough that
+keeping them as two independent extensions is what lets recipes mix
+exactly the relationship they need.
 
 ### Verifying the multi-agent rails under tmux
 
@@ -569,13 +519,8 @@ tmux send-keys -t bus-test:0.0 '/quit' Enter
 tmux send-keys -t bus-test:0.1 '/quit' Enter
 ```
 
-For non-paused `delegate`, run `npm run agent -- delegator --sandbox
-/tmp/p` and prompt *"delegate to recipe peer-chatter with task 'list
-/tmp'"* — the child spawns, runs in print mode, exits, and the
-captured stdout comes back as the tool result.
-
-For the **parent-driven approval** flow, drive `writer-foreman` end-
-to-end (single file):
+To exercise the **atomic delegate** end-to-end, drive
+`writer-foreman` (single file):
 
 ```sh
 set -a; source models.env; set +a
@@ -585,43 +530,42 @@ tmux new-session -d -s foreman -x 200 -y 50 \
 sleep 5
 tmux send-keys -t foreman \
   'draft hello.txt with text "Hi"' Enter
-sleep 90                              # delegate returns immediately (non-blocking),
-                                      # child runs in background, foreman calls
-                                      # approve_delegation({id, approved: true})
-tmux capture-pane -t foreman -p       # expect "[deferred] writes applied: hello.txt"
+sleep 60                              # foreman calls delegate; worker drafts and
+                                      # ships submission; foreman queues artifacts;
+                                      # end-of-turn approval renders.
+tmux capture-pane -t foreman -p       # expect a Delegate (...) section in the
+                                      # approval preview.
+tmux send-keys -t foreman 'y' Enter   # approve at end-of-turn dialog
+sleep 5
 ls /tmp/foreman-test/hello.txt        # file present with "Hi"
 tmux send-keys -t foreman '/quit' Enter
 ```
 
-For **parallel dispatch** (multiple files at once):
+For **multiple delegates in one turn** (each surfaces as a separate
+section in the unified preview):
 
 ```sh
 tmux send-keys -t foreman \
-  'draft two files in parallel: hello.txt saying "Hi" and world.txt saying "World"' Enter
-sleep 120   # foreman calls delegate twice (both children spawn in parallel),
-            # then approve_delegation for each
+  'draft two files: hello.txt saying "Hi" and world.txt saying "World"' Enter
+sleep 120   # foreman calls delegate twice; both submissions queue;
+            # one unified end-of-turn dialog shows both Delegate sections.
+tmux send-keys -t foreman 'y' Enter
+sleep 5
 ls /tmp/foreman-test/   # hello.txt and world.txt both present
 ```
 
 Negative cases worth probing manually:
 
-- **Foreman escalates**: ambiguous task → expect
-  `approve_delegation({escalate: true})` and a `ctx.ui.confirm`
-  dialog in the foreman's terminal.
-- **Recursive escalation**: wrap with `delegator` (`delegator →
-  writer-foreman → deferred-writer`) and force the foreman to
-  escalate; the prompt surfaces in the *delegator's* terminal.
-- **Loud fail**: run `npm run agent -- deferred-writer -p "draft
-  x.txt"` directly. With no UI and no `--rpc-sock`, the child exits
-  but stderr contains `[deferred] dropped: no UI and no --rpc-sock`.
-- **Sandbox escape**: prompt foreman with `sandbox: "/tmp/elsewhere"`
-  → `delegate: sandbox '…' escapes parent root '…'`.
+- **Loud fail under print mode**: run `npm run agent -- deferred-writer
+  -p "draft x.txt"` directly. With no UI, the worker exits but stderr
+  contains `[deferred] dropped: no UI available`. (Cross-agent
+  approval forwarding now flows over the bus, not through `--rpc-sock`.)
 - **Recipe not allowed**: prompt foreman with `recipe:
   "deferred-editor"` → `delegate: recipe 'deferred-editor' not in
   this agent's allowed list [deferred-writer]`.
-- **Schema rejection**: scratch recipe with `extensions: [agent-spawn]`
-  and no `agents:` → runner exits with `loads extension 'agent-spawn'
-  but has no 'agents:' list`.
+- **Schema rejection**: scratch recipe with
+  `extensions: [atomic-delegate]` and no `agents:` → runner exits with
+  `loads extension 'atomic-delegate' but has no 'agents:' list`.
 
 ## Supervisor inbound rail — Phase 3c
 
@@ -696,11 +640,12 @@ wrapper; tests can exercise the full action graph without a live model.
 
 ### Escalation and the `_lib/escalation.ts` primitive
 
-`requestHumanApproval` (the recursive RPC escalation primitive previously owned
-by `deferred-confirm.ts`) was extracted into `_lib/escalation.ts` in Phase 3c.
-`deferred-confirm.ts` now imports from there. The supervisor's `escalate` action
-uses the same module when falling back to the rpc-sock path (legacy delegation)
-or the direct bus path when a `supervisor:` peer is named.
+`requestHumanApproval` lives in `_lib/escalation.ts` and is imported by
+`deferred-confirm.ts`. After Phase 5 it routes only `ctx.hasUI` →
+`ctx.ui.confirm` or loud-fails to stderr; cross-agent escalation flows
+over the bus as an `approval-request` envelope handled by the supervisor
+rail (the `escalate` action sends to `getHabitat().supervisor` directly,
+no rpc-sock fallback).
 
 ## Topology YAML
 

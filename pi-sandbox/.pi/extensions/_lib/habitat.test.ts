@@ -37,8 +37,6 @@ describe("materialiseHabitat", () => {
     expect(h.description).toBeUndefined();
     expect(h.tier).toBeUndefined();
     expect(h.type).toBeUndefined();
-    expect(h.rpcSock).toBeUndefined();
-    expect(h.delegationId).toBeUndefined();
   });
 
   it("preserves all optional fields when present", () => {
@@ -49,8 +47,6 @@ describe("materialiseHabitat", () => {
       description: "Does things",
       tier: "TASK_RABBIT_MODEL",
       type: "deferred-writer",
-      rpcSock: "/tmp/pi-rpc-123.sock",
-      delegationId: "abc-def",
       skills: ["pi-agent-builder"],
       agents: ["deferred-writer"],
       noEditAdd: ["my_tool"],
@@ -60,8 +56,6 @@ describe("materialiseHabitat", () => {
     expect(h.description).toBe("Does things");
     expect(h.tier).toBe("TASK_RABBIT_MODEL");
     expect(h.type).toBe("deferred-writer");
-    expect(h.rpcSock).toBe("/tmp/pi-rpc-123.sock");
-    expect(h.delegationId).toBe("abc-def");
     expect(h.skills).toEqual(["pi-agent-builder"]);
     expect(h.agents).toEqual(["deferred-writer"]);
     expect(h.noEditAdd).toEqual(["my_tool"]);

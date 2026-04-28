@@ -1,6 +1,6 @@
 # mesh-authority — mesh orchestrator recipe.
 # Loads agent-bus (peer membership on the bus) and mesh-authority (spawn/stop
-# long-running nodes). Also declares agents: so delegate/approve_delegation are
+# long-running nodes). Also declares agents: so the atomic `delegate` tool is
 # available for finite task workers.
 #
 # The authority's instance name (--agent-name) is what peers use to address it
@@ -33,7 +33,7 @@ prompt: |
   - mesh_nodes() — list nodes spawned this session
 
   Finite task workers (run once and exit):
-  - delegate({recipe, task}) + approve_delegation({id})
+  - delegate({recipe, task, workspace?, timeout_ms?}) — atomic single call
 
   All nodes you spawn share your PI_AGENT_BUS_ROOT and can reach you by name.
   Incoming messages arrive as synthetic user prompts; also readable via agent_inbox.
@@ -51,7 +51,6 @@ tools:
   - mesh_stop
   - mesh_nodes
   - delegate
-  - approve_delegation
 
 extensions:
   - agent-bus

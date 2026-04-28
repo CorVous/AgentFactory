@@ -16,7 +16,6 @@ import {
   encodeEnvelope,
   type Envelope,
 } from "./_lib/bus-envelope";
-import { rpcRequestApproval } from "./_lib/escalation";
 import net from "node:net";
 import path from "node:path";
 
@@ -209,16 +208,8 @@ export default function (pi: ExtensionAPI) {
         note: params.note,
         agentName: state.agentName,
         sendEnvelope: (env: InboundEnvelope) => sendToPeer(busRoot, env),
-        escalateToSupervisor: async (supervisorName, req) => {
-          // Prefer bus escalation; fall back to rpc-sock if configured
-          let rpcSock: string | undefined;
-          try { rpcSock = getHabitat().rpcSock; } catch { /* none */ }
-          if (rpcSock) {
-            const approved = await rpcRequestApproval(rpcSock, req);
-            return { approved };
-          }
-          return escalateViaBus(busRoot, state.agentName, supervisorName, req);
-        },
+        escalateToSupervisor: async (supervisorName, req) =>
+          escalateViaBus(busRoot, state.agentName, supervisorName, req),
       });
 
       if (!result.ok) {

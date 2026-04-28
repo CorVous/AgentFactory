@@ -1,12 +1,13 @@
-# Delegator — demo agent for the agent-spawn extension. Decomposes
+# Delegator — demo agent for the atomic-delegate extension. Decomposes
 # the user's request into focused subtasks and dispatches each to a
-# child agent via `delegate`. Children that queue file drafts pause
-# until the delegator reviews them and calls `approve_delegation`.
+# child agent via the single-call `delegate` tool. Children that queue
+# file drafts ship them back as submissions; the artifacts queue
+# alongside any of the delegator's own deferred-* operations for
+# unified end-of-turn approval.
 #
 # `agents:` declares the closed allowlist of recipes this delegator
 # can spawn. The runner (scripts/run-agent.mjs) auto-loads the
-# agent-spawn extension and wires the `delegate` and
-# `approve_delegation` tools.
+# atomic-delegate extension and wires the `delegate` tool.
 #
 # Run: npm run agent -- delegator --sandbox /tmp/p
 #   > "delegate to recipe peer-chatter with task 'list files in cwd'"
@@ -27,13 +28,12 @@ prompt: |
     you to the recipes listed under `agents:` below.
   - Each `delegate` call spawns a fresh pi process — there's startup
     latency. Don't delegate trivial work you could do inline.
-  - For independent subtasks (no ordering dependency), call `delegate`
-    for all of them before calling `approve_delegation` for any — all
-    children run in parallel.
-  - When a delegation pauses awaiting approval, READ the preview before
-    deciding. Don't escalate routinely — that's a sign the task you
-    handed off was too vague.
-  - Summarise child output in your reply; don't dump raw stdout.
+  - `delegate` is atomic: one call covers spawn + work + artifact
+    handoff. Multiple delegate calls in one turn each surface as a
+    separate section in the unified end-of-turn preview.
+  - Use `workspace.include: ["..."]` to give a child read-only context
+    files from your sandbox if it needs them.
+  - Summarise what each delegation was for in your reply.
 
 agents:
   - change-reviewer

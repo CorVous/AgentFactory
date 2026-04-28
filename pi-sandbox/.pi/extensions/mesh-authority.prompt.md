@@ -18,4 +18,8 @@ environment. Once spawned, reach them with `agent_call` or `agent_send`
 using their instance name.
 
 For finite task workers (workers that run and exit when done), use
-`delegate` + `approve_delegation` instead of `mesh_spawn`.
+`delegate({recipe, task, workspace?, timeout_ms?})` — a single atomic
+call that spawns the worker, waits for it to ship its drafted
+artifacts back, and queues those artifacts for end-of-turn approval.
+Use `mesh_spawn` only for long-running peer nodes that should stay
+alive until you explicitly stop them.
