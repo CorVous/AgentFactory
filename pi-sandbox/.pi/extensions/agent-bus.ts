@@ -35,6 +35,7 @@ import {
   tryDecodeEnvelope,
   type Envelope,
 } from "./_lib/bus-envelope";
+import { dispatchSubmissionReply } from "./_lib/submission-emit";
 
 interface PendingCall {
   resolve: (body: string) => void;
@@ -166,6 +167,10 @@ function handleIncoming(state: BusState, env: Envelope) {
       return;
     }
   }
+
+  // If this is a reply to a pending submission (approval-result or
+  // revision-requested), route it to the submission-emit dispatch and stop.
+  if (env.in_reply_to && dispatchSubmissionReply(env)) return;
 
   // Typed dispatch: non-message envelopes go to the supervisor rail when it
   // is loaded; message-kind envelopes always flow through the general inbox.
