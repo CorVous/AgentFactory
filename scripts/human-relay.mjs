@@ -74,12 +74,15 @@ async function bindServer() {
           buf = buf.slice(nl + 1);
           if (!line.trim()) continue;
           try {
+            // Wire format duplicates pi-sandbox/.pi/extensions/_lib/bus-envelope.ts
+            // (TS, can't be imported from .mjs without porting). Keep in sync.
             const env = JSON.parse(line);
-            if (env.v !== 1) continue;
+            if (env.v !== 2) continue;
+            if (!env.payload || env.payload.kind !== "message" || typeof env.payload.text !== "string") continue;
             const reStr = env.in_reply_to ? ` re:${env.in_reply_to.slice(0, 8)}` : "";
             // Print above the prompt line
             rl.pause();
-            process.stdout.write(`\r\x1b[K\x1b[33m[from ${env.from}${reStr}]\x1b[0m ${env.body}\n`);
+            process.stdout.write(`\r\x1b[K\x1b[33m[from ${env.from}${reStr}]\x1b[0m ${env.payload.text}\n`);
             rl.prompt(true);
             rl.resume();
           } catch { /* ignore */ }
@@ -111,7 +114,9 @@ async function bindServer() {
 function sendTo(to, body, inReplyTo) {
   const dest = path.join(busRoot, `${to}.sock`);
   return new Promise((resolve) => {
-    const env = { v: 1, msg_id: randomUUID(), from: name, to, ts: Date.now(), body,
+    // Wire format duplicates pi-sandbox/.pi/extensions/_lib/bus-envelope.ts — keep in sync.
+    const env = { v: 2, msg_id: randomUUID(), from: name, to, ts: Date.now(),
+      payload: { kind: "message", text: body },
       ...(inReplyTo ? { in_reply_to: inReplyTo } : {}) };
     const sock = net.connect(dest);
     const done = (ok, reason) => { sock.removeAllListeners(); sock.destroy(); resolve({ ok, reason }); };

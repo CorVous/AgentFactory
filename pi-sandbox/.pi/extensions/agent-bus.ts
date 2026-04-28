@@ -18,19 +18,15 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
-
-interface Envelope {
-  v: 1;
-  msg_id: string;
-  from: string;
-  to: string;
-  ts: number;
-  body: string;
-  in_reply_to?: string;
-}
+import {
+  encodeEnvelope,
+  makeMessageEnvelope,
+  renderInboundForUser,
+  tryDecodeEnvelope,
+  type Envelope,
+} from "./_lib/bus-envelope";
 
 interface PendingCall {
   resolve: (body: string) => void;
@@ -109,13 +105,9 @@ async function bindServer(state: BusState, ctx: { ui: { notify: (m: string, l?: 
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
-        try {
-          const env = JSON.parse(line) as Envelope;
-          if (env.v !== 1 || typeof env.from !== "string" || typeof env.body !== "string") continue;
-          handleIncoming(state, env);
-        } catch {
-          // ignore malformed lines
-        }
+        const env = tryDecodeEnvelope(line);
+        if (!env) continue; // drop malformed / wrong-version envelopes silently
+        handleIncoming(state, env);
       }
     });
     conn.on("error", () => conn.destroy());
@@ -158,7 +150,7 @@ function handleIncoming(state: BusState, env: Envelope) {
     if (pending) {
       clearTimeout(pending.timer);
       state.pendingCalls.delete(env.in_reply_to);
-      pending.resolve(env.body);
+      pending.resolve(env.payload.kind === "message" ? env.payload.text : "");
       return;
     }
   }
@@ -173,9 +165,8 @@ function handleIncoming(state: BusState, env: Envelope) {
 function pushToModel(state: BusState, envs: Envelope[]) {
   if (!state.pi) return;
   for (const env of envs) {
-    const text = `[from ${env.from}${env.in_reply_to ? ` re:${env.in_reply_to.slice(0, 8)}` : ""}] ${env.body}`;
     try {
-      state.pi.sendUserMessage(text, { deliverAs: "followUp" });
+      state.pi.sendUserMessage(renderInboundForUser(env), { deliverAs: "followUp" });
     } catch {
       // best-effort; the message is still in inbox for pull
     }
@@ -193,7 +184,7 @@ async function sendEnvelope(state: BusState, env: Envelope): Promise<{ delivered
     };
     const timer = setTimeout(() => done({ delivered: false, reason: "timeout" }), 1000);
     sock.once("connect", () => {
-      sock.write(`${JSON.stringify(env)}\n`, "utf8", () => {
+      sock.write(encodeEnvelope(env), "utf8", () => {
         clearTimeout(timer);
         done({ delivered: true });
       });
@@ -335,15 +326,12 @@ export default function (pi: ExtensionAPI) {
           details: { delivered: false, reason: "bus not initialized" },
         };
       }
-      const env: Envelope = {
-        v: 1,
-        msg_id: randomUUID(),
+      const env = makeMessageEnvelope({
         from: state.name,
         to: params.to,
-        ts: Date.now(),
-        body: params.body,
-        ...(params.in_reply_to ? { in_reply_to: params.in_reply_to } : {}),
-      };
+        text: params.body,
+        in_reply_to: params.in_reply_to,
+      });
       const result = await sendEnvelope(state, env);
       const text = result.delivered
         ? `Sent to ${params.to} (msg_id ${env.msg_id.slice(0, 8)}).`
@@ -374,9 +362,10 @@ export default function (pi: ExtensionAPI) {
         state.inbox.length = 0;
         state.inbox.push(...remaining);
       }
-      const lines = matched.map(
-        (e) => `[${new Date(e.ts).toISOString()}] ${e.from} → ${e.to} (${e.msg_id.slice(0, 8)}): ${e.body}`,
-      );
+      const lines = matched.map((e) => {
+        const text = e.payload.kind === "message" ? e.payload.text : `(${e.payload.kind})`;
+        return `[${new Date(e.ts).toISOString()}] ${e.from} → ${e.to} (${e.msg_id.slice(0, 8)}): ${text}`;
+      });
       return {
         content: [{ type: "text", text: lines.length === 0 ? "(inbox empty)" : lines.join("\n") }],
         details: { count: matched.length, messages: matched },
@@ -424,14 +413,11 @@ export default function (pi: ExtensionAPI) {
         };
       }
       const timeoutMs = typeof params.timeout_ms === "number" ? params.timeout_ms : 30_000;
-      const env: Envelope = {
-        v: 1,
-        msg_id: randomUUID(),
+      const env = makeMessageEnvelope({
         from: state.name,
         to: params.to,
-        ts: Date.now(),
-        body: params.body,
-      };
+        text: params.body,
+      });
 
       const result = await sendEnvelope(state, env);
       if (!result.delivered) {
