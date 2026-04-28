@@ -58,7 +58,11 @@ git checkout -b claude/phase-0.5-test-infrastructure
    ```
    `--passWithNoTests` keeps `npm test` exit-0 when no test files exist (which is the case immediately after Phase 0.5 ships — Phase 1 brings the first real tests). Drop the flag in a later phase if you want strict-empty-fails.
 3. **Verify the harness works** with the negative-control protocol described under "Verification" below. This is *not* a permanent test — it's a one-time confirmation that you delete before committing.
-4. **Update `AGENTS.md`** with a brief note: `npm test` runs unit tests; tmux remains the integration pattern. Place it near the existing "Debugging the rails" / "Verifying the multi-agent rails under tmux" sections.
+4. **Update `AGENTS.md`** with a short note covering both the test command and the hermetic contract that future test authors need to know:
+
+   > Unit tests live alongside source files as `*.test.ts` and run via `npm test` (vitest). They are **hermetic by contract**: no model API calls, no network, no env vars from `models.env`, no real filesystem outside the test's tmpdir. Tests that need a live model belong in the tmux integration pattern (see "Verifying the multi-agent rails under tmux" below), not in `npm test`.
+
+   Place it near the existing "Debugging the rails" / "Verifying the multi-agent rails under tmux" sections so the integration story stays adjacent.
 
 ---
 
@@ -133,7 +137,7 @@ If all three pass, the harness is healthy. **Delete `_smoke.test.ts` before comm
 - `package.json` has `"test"` and `"test:watch"` scripts.
 - `npm test` exits 0 with "no test files found" message (because of `--passWithNoTests`).
 - The verification protocol passed (you ran it; the temp smoke file is gone).
-- `AGENTS.md` has a one-line note about `npm test`.
+- `AGENTS.md` has a short note covering `npm test` *and* the hermetic-tests contract (no model calls, no env vars, no network in `npm test`).
 - No `tsconfig.json`, no test directory tree, no other tooling added.
 - This file (`docs/phases/phase-0.5-test-infrastructure.md`) deleted in the same commit/PR.
 
