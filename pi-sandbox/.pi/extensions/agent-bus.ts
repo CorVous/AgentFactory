@@ -183,6 +183,16 @@ function handleIncoming(state: BusState, env: Envelope) {
   ).__pi_atomic_delegate_dispatch__;
   if (adHook && adHook(env)) return;
 
+  // status hook: records incoming status envelopes in the status cache for
+  // the TUI widget. Runs BEFORE the acceptedFrom check so atomic-delegate
+  // workers (not in the static acceptedFrom list) can still report status
+  // to their caller. The hook self-gates on the envelope kind, so non-status
+  // envelopes fall through unaffected.
+  const statusHook = (
+    globalThis as { __pi_status_dispatch__?: (env: Envelope) => boolean }
+  ).__pi_status_dispatch__;
+  if (statusHook && statusHook(env)) return;
+
   // Typed dispatch: non-message envelopes go to the supervisor rail when it
   // is loaded; message-kind envelopes always flow through the general inbox.
   const kind = env.payload.kind;
