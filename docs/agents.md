@@ -150,7 +150,9 @@ acceptedFrom: [worker-a, worker-b] # optional; peers allowed to send to this one
 peers: [planner, reviewer]        # optional; peers this one may address
 ```
 
-> **Phase 3b note:** `supervisor`, `submitTo`, `acceptedFrom`, and `peers` are declarable and materialised into the `Habitat` but no rail enforces them yet. They become active in Phase 3c when the supervisor inbound rail and peer allowlist are wired.
+> **Phase 3b note:** `supervisor`, `acceptedFrom`, and `peers` are declarable and materialised into the `Habitat` but no rail enforces them yet. `acceptedFrom` becomes active in Phase 3c when the supervisor inbound rail and peer allowlist are wired.
+
+When `submitTo` is set on a recipe, the `deferred-*` end-of-turn flow ships the aggregated artifacts to that peer as a `submission` bus envelope instead of rendering a local approval dialog. The worker waits for an `approval-result` reply: on approval it logs `"submission applied by supervisor"` (the supervisor handles the actual writes in Phase 4b); on rejection it discards the queue and logs the reason. A `revision-requested` reply is treated as rejection in Phase 4a — revision threading lands in Phase 4c. Recipes that do **not** set `submitTo` keep the existing local-or-rpc-sock approval flow unchanged.
 
 ### `prompt:` and extension fragments
 
