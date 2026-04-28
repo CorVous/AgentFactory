@@ -8,6 +8,10 @@ This file should be deleted in the PR that ships Phase 1 (its purpose is one-sho
 
 ---
 
+## Prerequisite
+
+**Phase 0.5 must have shipped.** This phase practises TDD on the new library module, which requires the vitest harness Phase 0.5 sets up. If `npm test` doesn't exist in `package.json`, stop and ship `docs/phases/phase-0.5-test-infrastructure.md` first.
+
 ## Required reading before you start
 
 Read these in order. They were produced by an architecture grilling session that resolved every load-bearing decision; do not relitigate.
@@ -18,31 +22,48 @@ Read these in order. They were produced by an architecture grilling session that
 4. **`AGENTS.md` and `docs/agents.md`** — project conventions; especially the tmux-based testing pattern under "Debugging the rails" and "Verifying the multi-agent rails under tmux."
 5. **`pi-sandbox/.pi/extensions/agent-bus.ts`** (current state on whichever branch you start from) — the file you will edit. Read end-to-end first.
 
+## Skill to invoke before starting
+
+Invoke **`/tdd`** before writing any code. The library module you're building (`_lib/bus-envelope.ts`) is the exact "deep module, narrow interface" shape `tdd/interface-design.md` is written for: 4–5 pure functions with a clear external API. Tests at the library's interface are the test surface; the rest of Phase 1 is a refactor that those tests protect.
+
+The integration check (tmux smoke test, below) stays as the end-to-end gate. The unit tests catch wire-format regressions instantly without paying for tmux startup.
+
 ---
 
 ## Branch strategy
 
-Branch from `claude/review-codebase-architecture-5YMYu` (which has the ADRs committed). Suggested name: **`claude/phase-1-typed-envelope`**.
+Branch from the post-Phase-0.5 state of `claude/review-codebase-architecture-5YMYu` (which by then has CONTEXT.md, the three ADRs, the mesh branch merged in, *and* vitest configured). Suggested name: **`claude/phase-1-typed-envelope`**.
 
 ```sh
 git fetch origin claude/review-codebase-architecture-5YMYu
 git checkout -b claude/phase-1-typed-envelope origin/claude/review-codebase-architecture-5YMYu
+# Confirm the harness exists; should print vitest config / "no test files found":
+npm test
 ```
 
-If the mesh branch (`claude/agent-mesh-deployment-zDKBE`) has been merged into `review-codebase-architecture-5YMYu` by the time you start, your edits will also need to cover its `agent_call` / `pendingCalls` correlation logic. Check `git log` on your starting branch to find out which `agent-bus.ts` you're working with — the file should declare an `Envelope` interface; whichever shape it has at HEAD is what you're transforming.
+If `npm test` errors with "command not found: vitest" or similar, Phase 0.5 hasn't shipped yet — stop and ship that first.
+
+If the mesh branch's `agent_call` / `pendingCalls` correlation logic isn't present in your `agent-bus.ts`, the mesh merge into the base branch hasn't happened yet — work with the simpler envelope shape and note it in the hand-back. Either way, your job is to introduce the typed library + bump `v: 2` regardless of the current concrete shape.
 
 ---
 
-## Scope — what's in
+## Scope — what's in (TDD order: tests first)
 
-1. **Create `pi-sandbox/.pi/extensions/_lib/bus-envelope.ts`** — typed envelope library:
+1. **Write `pi-sandbox/.pi/extensions/_lib/bus-envelope.test.ts`** — tests for the library you're about to build, before the library exists. Cover:
+   - `makeMessageEnvelope({from, to, text})` produces an envelope with `v: 2`, a fresh UUID `msg_id`, the supplied `from`/`to`/`text`, a numeric `ts`, and `payload.kind === "message"`.
+   - `makeMessageEnvelope({from, to, text, in_reply_to})` carries the `in_reply_to`.
+   - `encodeEnvelope` produces a single line ending in `\n`; the line parses back to the same envelope (`tryDecodeEnvelope(encodeEnvelope(env))` round-trip).
+   - `tryDecodeEnvelope` returns `null` for: not-JSON, wrong `v`, missing `payload`, payload with unknown `kind`, missing required fields, type-mismatched fields. One assertion per malformed input.
+   - `renderInboundForUser` produces `[from <peer>] <text>` for envelopes without `in_reply_to`, and `[from <peer> re:<8-char-prefix>] <text>` when it's set. Match the exact format used today (look at the current `pushToModel` in `agent-bus.ts` for the contract).
+   - Run `npm test`. Watch every test fail (red) — this confirms the harness sees them.
+2. **Create `pi-sandbox/.pi/extensions/_lib/bus-envelope.ts`** — implement until tests pass (green):
    - `Payload` discriminated union (only `{kind: "message"; text: string}` for now; **no other kinds**).
    - `Envelope` interface with `v: 2`, `msg_id`, `from`, `to`, `ts`, `payload`, `in_reply_to?`.
-   - `encodeEnvelope(env): string` — JSON.stringify + newline. One line per envelope.
+   - `encodeEnvelope(env): string` — JSON.stringify + newline.
    - `tryDecodeEnvelope(line): Envelope | null` — parse + validate (`v === 2`, payload shape OK); returns null on any malformation.
-   - `makeMessageEnvelope({from, to, text, in_reply_to?}): Envelope` — constructor for the only kind.
-   - `renderInboundForUser(env): string` — produces `"[from <from>${in_reply_to ? ` re:${slice(in_reply_to,0,8)}` : ""}] <text>"`. Mirrors today's exact format.
-2. **Refactor `pi-sandbox/.pi/extensions/agent-bus.ts`** to use the library:
+   - `makeMessageEnvelope({from, to, text, in_reply_to?}): Envelope` — constructor.
+   - `renderInboundForUser(env): string`.
+3. **Refactor `pi-sandbox/.pi/extensions/agent-bus.ts`** to use the library:
    - Replace the inline `Envelope` interface with the library import.
    - `agent_send` tool builds via `makeMessageEnvelope`.
    - `agent_call` tool (if present on your branch) uses `makeMessageEnvelope` for the request and treats replies as message-kind envelopes.
@@ -50,8 +71,11 @@ If the mesh branch (`claude/agent-mesh-deployment-zDKBE`) has been merged into `
    - `sendEnvelope` uses `encodeEnvelope`.
    - `pushToModel` uses `renderInboundForUser`.
    - `handleIncoming`'s `in_reply_to` correlation logic stays as-is.
-3. **Bump `v: 1` → `v: 2`.** Old envelopes with `v: 1` are rejected by `tryDecodeEnvelope` and silently dropped (existing "ignore malformed lines" behaviour). No backward compat — both ends update atomically, and there's no production with old peers in flight.
-4. **Update `human-relay.mjs`** (if present on your branch — it lives in `scripts/`) to match: it currently re-implements the JSON-line framing in plain JS. Either import the library (it's TS but `human-relay.mjs` is JS — port it as `_lib/bus-envelope.mjs` if needed, or duplicate the small constructors carefully) or update its inline construction to match the new shape and keep them in sync. Pick whichever costs less; document the choice in your PR description.
+   - Run `npm test` again — library tests still pass.
+4. **Bump `v: 1` → `v: 2`** in every code path. Old envelopes with `v: 1` are rejected by `tryDecodeEnvelope` and silently dropped (existing "ignore malformed lines" behaviour). No backward compat — both ends update atomically, and there's no production with old peers in flight.
+5. **Update `human-relay.mjs`** (if present on your branch — it lives in `scripts/`) to match. It currently re-implements JSON-line framing in plain JS. Either import the library (it's TS but `human-relay.mjs` is JS — port it as `_lib/bus-envelope.mjs` if needed, or duplicate the small constructors carefully) or update its inline construction to match the new shape and keep them in sync. Pick whichever costs less; document the choice in your PR description.
+
+**Refactor pass after green:** with tests green, look at the library and `agent-bus.ts` together. Anything obviously redundant, badly named, or untyped can be cleaned up — the unit tests will catch any regression. Don't refactor `agent-bus.ts` beyond the wire-format substitution, but inside the library, follow `tdd/refactoring.md`.
 
 ---
 
@@ -68,28 +92,43 @@ If something feels like it needs to be done as part of this phase, stop and chec
 
 ---
 
-## Step-by-step checklist
+## Step-by-step checklist (red → green → refactor → integration)
 
 ```
-[ ] 1. Read CONTEXT.md, ADR-0001, ADR-0003, AGENTS.md, current agent-bus.ts.
-[ ] 2. Create branch claude/phase-1-typed-envelope from review-codebase-architecture-5YMYu.
-[ ] 3. Write pi-sandbox/.pi/extensions/_lib/bus-envelope.ts with the five exports.
-[ ] 4. Refactor agent-bus.ts to use the library:
+[ ]  1. Read CONTEXT.md, ADR-0001, ADR-0003, AGENTS.md, current agent-bus.ts.
+[ ]  2. Invoke /tdd skill.
+[ ]  3. Confirm Phase 0.5 has shipped: `npm test` should run vitest cleanly
+        (exit 0, "no test files found" is fine).
+[ ]  4. Create branch claude/phase-1-typed-envelope from the base.
+
+  RED:
+[ ]  5. Write _lib/bus-envelope.test.ts covering all five exports and their
+        error modes (see Scope item 1). Tests should fail to compile / run
+        because the library doesn't exist yet — that's expected.
+
+  GREEN:
+[ ]  6. Create _lib/bus-envelope.ts with just enough implementation to make
+        every test pass. Run `npm test` — all green.
+
+  REFACTOR:
+[ ]  7. Look over the library; clean up names, shapes, JSDoc. Tests still
+        green after each change.
+
+  INTEGRATION:
+[ ]  8. Refactor agent-bus.ts to use the library:
         [ ] envelope shape import
         [ ] agent_send envelope construction via makeMessageEnvelope
         [ ] agent_call (if present) — same
         [ ] bus server's data handler uses tryDecodeEnvelope
         [ ] sendEnvelope uses encodeEnvelope
         [ ] pushToModel uses renderInboundForUser
-[ ] 5. If human-relay.mjs exists, update it to construct/parse v:2 envelopes.
-[ ] 6. Bump v: 1 → v: 2 in every code path.
-[ ] 7. Run `npm install` (in case new types or anything is needed) — should be no-op.
-[ ] 8. Type-check: `node_modules/.bin/tsc --noEmit -p pi-sandbox` (or wherever the
-       project keeps its tsconfig — find it first; pi extensions typically don't have
-       a per-project tsconfig and are jiti-loaded at runtime).
-[ ] 9. Smoke test under tmux (see Testing below).
-[ ] 10. Commit (clear message describing the shape change), push, ready for review.
-[ ] 11. Delete this file in the same commit/PR.
+[ ]  9. If human-relay.mjs exists, update it to construct/parse v:2 envelopes.
+[ ] 10. Bump v: 1 → v: 2 everywhere.
+[ ] 11. Run `npm test` — all library tests still green.
+[ ] 12. Smoke test under tmux (see Testing below). End-to-end round-trip
+        confirms the agent-bus.ts integration is correct.
+[ ] 13. Commit (clear message describing the shape change), push.
+[ ] 14. Delete this file in the same commit/PR.
 ```
 
 ---
@@ -132,10 +171,10 @@ If you have time and the mesh branch is present, also run a quick `agent_call` r
 ## Acceptance criteria
 
 - `_lib/bus-envelope.ts` exists with the five exports.
+- `_lib/bus-envelope.test.ts` exists covering all five exports + their error modes; `npm test` passes.
 - `agent-bus.ts` and (if applicable) `human-relay.mjs` reference the library exclusively for envelope construction, encoding, and decoding.
 - `v: 2` everywhere; no `v: 1` left.
 - The tmux smoke test prints `[from planner] ping` on the recipient peer's screen.
-- TypeScript type-check clean (run whatever the project uses — `tsc --noEmit` or whatever's in `package.json`'s `scripts`).
 - `agent-spawn.ts`, `agent-status-reporter.ts`, `deferred-*.ts`, `delegation-boxes.ts`, `agent-header.ts`, `agent-footer.ts`, `sandbox.ts`, `no-edit.ts` are **unchanged**.
 - Recipe YAMLs are **unchanged**.
 - This file (`docs/phases/phase-1-typed-envelope.md`) is deleted in the same commit/PR.
