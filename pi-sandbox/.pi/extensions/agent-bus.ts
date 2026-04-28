@@ -5,11 +5,14 @@
 // message on its next turn via pi.sendUserMessage. The same buffer is
 // also pull-readable via the agent_inbox tool.
 //
-// Bus root resolution: --agent-bus-root flag → $PI_AGENT_BUS_ROOT →
-// ~/.pi-agent-bus/<basename(sandbox-root)>. Deliberately lives outside
-// --sandbox-root so the sandbox extension's path rejection doesn't trip.
-// The bus extension only opens sockets, never invokes path-bearing
-// built-in tools, so the sandbox allowlist is unaffected.
+// busRoot and agentName are read from getHabitat() (materialised by the
+// habitat baseline extension before this session_start runs). The
+// resolution chain (--agent-bus → $PI_AGENT_BUS_ROOT → default) happens
+// in scripts/run-agent.mjs and lands as Habitat.busRoot. The bus root
+// deliberately lives outside scratchRoot so the sandbox extension's
+// path rejection doesn't trip on socket paths; the bus extension only
+// opens sockets, never invokes path-bearing tools, so the sandbox
+// allowlist is unaffected.
 //
 // Companion to agent-spawn (blocking delegation). The two are
 // orthogonal: a recipe loads either, both, or neither.
