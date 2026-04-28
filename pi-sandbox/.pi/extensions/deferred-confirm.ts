@@ -6,6 +6,10 @@
 //   2. The coordinator that, on agent_end, drives every registered handler
 //      through prepare -> unified approval prompt -> atomic apply.
 //
+// When getHabitat().submitTo is set the coordinator instead ships the
+// aggregated artifacts to that peer via the bus and waits for a reply,
+// skipping the local apply entirely (Phase 4a worker-side emit).
+//
 // The approval primitive (requestHumanApproval) now lives in _lib/escalation.ts.
 //
 // The handler array is stashed on globalThis so it's shared across
@@ -15,6 +19,9 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { requestHumanApproval } from "./_lib/escalation";
+import { getHabitat } from "./_lib/habitat";
+import { shipSubmission, makeBusSender } from "./_lib/submission-emit";
+import type { Artifact } from "./_lib/bus-envelope";
 export type { ApprovalRequest } from "./_lib/escalation";
 
 export interface DeferredHandler {
@@ -37,6 +44,8 @@ export type PrepareResult =
       /** Detailed preview body, rendered under the section header. */
       preview: string;
       apply: () => Promise<{ wrote: string[]; failed: string[] }>;
+      /** Artifacts for the supervisor-routed flow; populated when submitTo is set. */
+      artifacts?: Artifact[];
     };
 
 function getHandlers(): DeferredHandler[] {
@@ -100,6 +109,54 @@ export default function (pi: ExtensionAPI) {
     const summaryLine = oks
       .map((p) => `${p.handler.label.toLowerCase()}: ${p.result.summary}`)
       .join(" · ");
+
+    // --- Supervisor-routed flow (submitTo set) --------------------------------
+    let submitTo: string | undefined;
+    try { submitTo = getHabitat().submitTo; } catch { submitTo = undefined; }
+
+    if (submitTo) {
+      const allArtifacts: Artifact[] = oks.flatMap((o) => o.result.artifacts ?? []);
+
+      let busRoot: string;
+      let agentName: string;
+      try {
+        const h = getHabitat();
+        busRoot = h.busRoot;
+        agentName = h.agentName;
+      } catch {
+        tell(ctx, "error", "submission: habitat not available, cannot ship to supervisor");
+        return;
+      }
+
+      let reply: { approved: boolean; note?: string; revisionNote?: string };
+      try {
+        reply = await shipSubmission(
+          {
+            busRoot,
+            agentName,
+            submitTo,
+            sendEnvelope: makeBusSender(busRoot),
+          },
+          allArtifacts,
+          summaryLine,
+        );
+      } catch (e) {
+        tell(ctx, "error", `submission failed: ${(e as Error).message}`);
+        return;
+      }
+
+      if (reply.approved) {
+        tell(ctx, "info", "submission applied by supervisor");
+      } else if (reply.revisionNote !== undefined) {
+        // Phase 4a: revision-requested treated as reject + log.
+        tell(ctx, "info", `submission revision requested (treating as reject): ${reply.revisionNote}`);
+      } else {
+        tell(ctx, "info", `submission rejected: ${reply.note ?? "(no reason)"}`);
+      }
+      return; // no local apply
+    }
+
+    // --- Local-or-rpc-sock flow (submitTo unset, unchanged) ------------------
     const previewBody = oks
       .map((p) => `${p.handler.label} (${p.result.summary})\n\n${p.result.preview}`)
       .join("\n\n---\n\n");
