@@ -701,3 +701,102 @@ by `deferred-confirm.ts`) was extracted into `_lib/escalation.ts` in Phase 3c.
 `deferred-confirm.ts` now imports from there. The supervisor's `escalate` action
 uses the same module when falling back to the rpc-sock path (legacy delegation)
 or the direct bus path when a `supervisor:` peer is named.
+
+## Topology YAML
+
+A topology YAML describes the full set of nodes in a mesh and their peer
+relationships. `npm run mesh -- <file.yaml>` launches all nodes in parallel;
+`scripts/launch-mesh.mjs` is the entry point.
+
+### Schema
+
+```yaml
+bus_root: /tmp/my-mesh          # optional; auto-derived from filename if omitted
+
+# Named groups for use in @ref expressions below.
+groups:
+  workers: [w1, w2, w3]
+  reviewers: [r1, r2]
+
+# Per-group Habitat-overlay defaults. Per-node fields override these.
+# Resolution order: group_bindings (last group wins for scalar fields) → per-node.
+group_bindings:
+  workers:
+    supervisor: authority       # all workers report to authority
+    submitTo: collector         # all workers submit output to collector
+    peers: ["@reviewers"]       # workers can message reviewers (expands to [r1, r2])
+  reviewers:
+    peers: ["@workers"]
+
+nodes:
+  - name: authority             # instance name on the bus (--agent-name)
+    recipe: mesh-authority      # pi-sandbox/agents/<recipe>.yaml
+    sandbox: /tmp/mesh/auth     # optional; auto-created under /tmp if omitted
+    task: "..."                 # optional; sent as the first RPC prompt
+
+  - name: human
+    type: relay                 # spawns human-relay.mjs; no LLM
+
+  # Habitat-overlay fields — override recipe + group_bindings values:
+  - name: w1
+    recipe: mesh-node
+    supervisor: authority       # which peer to escalate approvals to
+    submitTo: collector         # which peer receives submissions
+    acceptedFrom: [authority]   # peers allowed to send approval-request / submission envelopes
+    peers: [authority, r1]      # peers this node may address
+```
+
+All four peer fields (`supervisor`, `submitTo`, `acceptedFrom`, `peers`) are
+optional. Nodes without them launch with only their recipe's own peer fields.
+
+### Group references
+
+Any string value in `acceptedFrom`, `peers`, or a `group_bindings` array that
+starts with `@` is expanded to the group's member list at launch time. The bus
+always sees concrete peer names — groups are a topology-level authoring
+convenience, not a bus-level concept.
+
+```yaml
+groups:
+  workers: [w1, w2, w3]
+nodes:
+  - name: authority
+    recipe: mesh-authority
+    acceptedFrom: ["@workers"]  # expands to [w1, w2, w3] before launch
+```
+
+### Resolution order
+
+For a given node, the effective Habitat overlay is computed as:
+
+1. **Group bindings** — for each group the node belongs to (in declaration
+   order), apply the binding's fields. Later groups overwrite earlier ones for
+   scalar fields; array fields are also replaced.
+2. **Per-node fields** — override everything from group bindings.
+3. **Recipe fields** — used for any field not set by the topology at all.
+
+`@group` refs in binding arrays are expanded during resolution. A ref to an
+undefined group is a hard launch error.
+
+### Validation
+
+`scripts/launch-mesh.mjs` validates the full topology before spawning any node:
+
+- Duplicate node names → error.
+- `@group` references to undefined groups → error.
+- `acceptedFrom` / `peers` referencing a name not in `nodes` → error.
+
+### Launcher integration
+
+For each pi-agent node the launcher passes `--topology-overlay <json>` in the
+passthrough args. `scripts/run-agent.mjs` parses this flag and merges the
+resolved fields into `habitatSpec` (topology fields take precedence over recipe
+values). The `habitat` baseline extension materialises `habitatSpec` at
+`session_start`; all rails read peer relationships from `getHabitat()`.
+
+### Example — grouped mesh
+
+`pi-sandbox/meshes/grouped-mesh.yaml` shows a complete topology that exercises
+groups, group bindings, and per-node overrides. The existing
+`pi-sandbox/meshes/authority-mesh.yaml` (no peer fields) continues to launch
+unchanged.
