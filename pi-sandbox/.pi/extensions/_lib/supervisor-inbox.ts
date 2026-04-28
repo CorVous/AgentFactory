@@ -47,11 +47,6 @@ export interface RespondResult {
   error?: string;
 }
 
-function getPendingRegistry(): Map<string, PendingEntry> {
-  const g = globalThis as { __pi_supervisor_pending__?: Map<string, PendingEntry> };
-  return (g.__pi_supervisor_pending__ ??= new Map());
-}
-
 function isAllowed(from: string): boolean {
   let acceptedFrom: string[];
   try {
