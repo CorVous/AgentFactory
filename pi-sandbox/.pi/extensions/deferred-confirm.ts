@@ -19,6 +19,7 @@
 
 import net from "node:net";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { getHabitat } from "./_lib/habitat";
 
 export interface DeferredHandler {
   /** Section header in the unified confirm preview ("Writes", "Edits", "Moves", "Deletes"). */
@@ -81,7 +82,8 @@ export async function requestHumanApproval(
   if (ctx.hasUI) {
     return ctx.ui.confirm(req.title, req.preview);
   }
-  const sockPath = pi.getFlag("rpc-sock") as string | undefined;
+  let sockPath: string | undefined;
+  try { sockPath = getHabitat().rpcSock; } catch { sockPath = undefined; }
   if (sockPath) {
     return rpcRequestApproval(sockPath, req);
   }
@@ -151,13 +153,6 @@ function tell(ctx: ExtensionContext, level: "info" | "error", message: string) {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerFlag("rpc-sock", {
-    description:
-      "Unix socket path used to forward end-of-turn approval requests to a parent agent. " +
-      "Set by agent-spawn when launching a child; leave unset for interactive runs.",
-    type: "string",
-  });
-
   pi.on("agent_end", async (_event, ctx) => {
     if (handlers.length === 0) return;
 

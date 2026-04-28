@@ -285,10 +285,9 @@ const piArgs = [
 for (const p of extensionPaths) piArgs.push("-e", p);
 for (const p of skillPaths) piArgs.push("--skill", p);
 
-// Pull --agent-name and --rpc-sock out of passthrough.
-// --rpc-sock is kept in passthrough so deferred-confirm still sees it
-// via its own flag registration; it is also carried in the Habitat spec
-// so agent-status-reporter can read it from getHabitat() instead of env.
+// --agent-name passthrough is parsed only to capture the value into the
+// Habitat spec; pi receives it solely via --habitat-spec. Same for
+// --rpc-sock since deferred-confirm now reads getHabitat().rpcSock.
 let agentName = null;                                     // null → generate
 let rpcSock = "";
 const passthrough = [];
@@ -297,7 +296,7 @@ for (let i = 0; i < args.passthrough.length; i++) {
     agentName = args.passthrough[++i];                    // manual override wins
   } else if (args.passthrough[i] === "--rpc-sock" && i + 1 < args.passthrough.length) {
     rpcSock = args.passthrough[++i];
-    passthrough.push("--rpc-sock", rpcSock);
+    // do not push --rpc-sock into passthrough; pi no longer registers this flag
   } else {
     passthrough.push(args.passthrough[i]);
   }
