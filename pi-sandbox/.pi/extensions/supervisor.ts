@@ -14,6 +14,7 @@ import { createSupervisorInbox, type InboundEnvelope } from "./_lib/supervisor-i
 import {
   makeApprovalRequestEnvelope,
   encodeEnvelope,
+  tryDecodeEnvelope,
   type Envelope,
 } from "./_lib/bus-envelope";
 import net from "node:net";
@@ -128,14 +129,13 @@ async function escalateViaBus(
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
         if (!line.trim()) continue;
-        try {
-          const raw = JSON.parse(line) as { payload?: { kind?: string; approved?: boolean; note?: string } };
-          if (raw?.payload?.kind === "approval-result" && typeof raw.payload.approved === "boolean") {
-            clearTimeout(timer);
-            settle({ approved: raw.payload.approved, note: raw.payload.note });
-            return;
-          }
-        } catch { /* ignore */ }
+        const decoded = tryDecodeEnvelope(line);
+        if (decoded?.payload?.kind === "approval-result") {
+          clearTimeout(timer);
+          const p = decoded.payload;
+          settle({ approved: p.approved, note: p.note });
+          return;
+        }
       }
     });
     sock.once("error", () => { clearTimeout(timer); settle({ approved: false, note: "connection error" }); });
