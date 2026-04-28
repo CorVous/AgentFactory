@@ -1,12 +1,8 @@
 // agent-header — replaces pi's default startup header with a two-line
 // banner: the agent name (bold accent), optionally suffixed dim with the
 // model tier (e.g. "deferred-writer · Task Rabbit"), and the recipe
-// description on the next line (dim). Reads `--agent-name`,
-// `--agent-description`, and `--agent-tier`; the runner sets all three
-// from the recipe filename, `description:`, and `model:` (when the
-// latter is a tier var name). If none are set, the header stays empty
-// (no-startup-help's empty render keeps applying). Each flag can be
-// passed on the `npm run agent --` line to override the recipe.
+// description on the next line (dim). Reads identity fields from
+// getHabitat(); falls back gracefully when Habitat is unavailable.
 //
 // Pi wraps the header component in two `Spacer(1)` lines that aren't
 // removable via the public API, so the banner sits with one blank line
@@ -15,6 +11,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { prettify } from "./_lib/agent-naming";
+import { getHabitat } from "./_lib/habitat";
 
 // TASK_RABBIT_MODEL → "Task Rabbit"; LEAD_HARE_MODEL → "Lead Hare"; etc.
 function formatTier(tier: string): string {
@@ -27,28 +24,21 @@ function formatTier(tier: string): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerFlag("agent-name", {
-    description: "Agent name shown bold/accent on the first line of the TUI header banner",
-    type: "string",
-  });
-  pi.registerFlag("agent-description", {
-    description: "One-line description shown dim under the agent name in the TUI header banner",
-    type: "string",
-  });
-  pi.registerFlag("agent-tier", {
-    description: "Model tier var name (e.g. TASK_RABBIT_MODEL) appended dim after the agent name",
-    type: "string",
-  });
-  pi.registerFlag("agent-type", {
-    description: "Recipe filename (e.g. deferred-author); prettified into a type label before the description",
-    type: "string",
-  });
-
   pi.on("session_start", async (_event, ctx) => {
-    const name = (pi.getFlag("agent-name") as string | undefined)?.trim();
-    const description = (pi.getFlag("agent-description") as string | undefined)?.trim();
-    const tier = (pi.getFlag("agent-tier") as string | undefined)?.trim();
-    const type = (pi.getFlag("agent-type") as string | undefined)?.trim();
+    let name: string | undefined;
+    let description: string | undefined;
+    let tier: string | undefined;
+    let type: string | undefined;
+    try {
+      const h = getHabitat();
+      name = h.agentName?.trim() || undefined;
+      description = h.description?.trim() || undefined;
+      tier = h.tier?.trim() || undefined;
+      type = h.type?.trim() || undefined;
+    } catch {
+      // Habitat not available; render nothing.
+    }
+
     if (!name && !description && !type) return;
 
     const tierLabel = tier ? formatTier(tier) : "";
@@ -61,9 +51,8 @@ export default function (pi: ExtensionAPI) {
         // <breed>-<shortName> slug) with the prettified recipe
         // filename, giving "Cinnamon Deferred Author" rather than the
         // compact slug-prettify "Cinnamon Author". Falls back to plain
-        // prettify(name) when the runner didn't pass --agent-type or
-        // when --agent-name was manually overridden to a no-hyphen
-        // value (e.g. `-- --agent-name planner`).
+        // prettify(name) when --agent-type was not set or when
+        // agentName has no hyphen (e.g. a manually-set peer name).
         const breed = name.includes("-") ? name.split("-")[0] : "";
         const displayName = typeLabel && breed
           ? `${prettify(breed)} ${typeLabel}`
