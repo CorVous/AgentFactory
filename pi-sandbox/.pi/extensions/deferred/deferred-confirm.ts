@@ -18,17 +18,17 @@
 // per extension).
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { requestHumanApproval } from "./_lib/escalation";
-import { getHabitat } from "./_lib/habitat";
+import { requestHumanApproval } from "../_lib/escalation";
+import { getHabitat } from "../_lib/habitat";
 import {
   shipSubmission,
   makeBusSender,
   takeLastSubmissionMsgId,
   handleSubmissionReply,
   type SubmissionReply,
-} from "./_lib/submission-emit";
-import type { Artifact } from "./_lib/bus-envelope";
-export type { ApprovalRequest } from "./_lib/escalation";
+} from "../_lib/submission-emit";
+import type { Artifact } from "../_lib/bus-envelope";
+export type { ApprovalRequest } from "../_lib/escalation";
 
 export interface DeferredHandler {
   /** Section header in the unified confirm preview ("Writes", "Edits", "Moves", "Deletes"). */

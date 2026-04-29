@@ -17,7 +17,7 @@ import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
-import { buildMoveArtifact } from "./_lib/submission-emit";
+import { buildMoveArtifact } from "../_lib/submission-emit";
 
 type Move = { srcRel: string; srcAbs: string; dstRel: string; dstAbs: string };
 

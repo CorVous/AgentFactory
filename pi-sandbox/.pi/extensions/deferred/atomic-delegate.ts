@@ -33,16 +33,16 @@ import {
   makeApprovalResultEnvelope,
   type Artifact,
   type Envelope,
-} from "./_lib/bus-envelope";
-import { generateInstanceName } from "./_lib/agent-naming";
-import { getHabitat } from "./_lib/habitat";
-import { applyArtifacts } from "./_lib/submission-apply";
+} from "../_lib/bus-envelope";
+import { generateInstanceName } from "../_lib/agent-naming";
+import { getHabitat } from "../_lib/habitat";
+import { applyArtifacts } from "../_lib/submission-apply";
 import {
   runAtomicDelegate,
   type DispatchHookRegistry,
   type SpawnArgs,
   type WorkerHandle,
-} from "./_lib/atomic-delegate";
+} from "../_lib/atomic-delegate";
 import { registerDeferredHandler } from "./deferred-confirm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
