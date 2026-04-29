@@ -10,9 +10,11 @@
     "mesh": "bash -c 'set -a && source models.env && set +a && exec node scripts/launch-mesh.mjs \"$@\"' --",
     "mesh-human": "node scripts/human-relay.mjs",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "sandcastle": "npx tsx .sandcastle/main.ts"
   },
   "dependencies": {
+    "@ai-hero/sandcastle": "^0.5.5",
     "@mariozechner/pi-coding-agent": "^0.70.2",
     "yaml": "^2.8.3"
   },
