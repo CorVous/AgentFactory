@@ -33,24 +33,39 @@ import {
   makeApprovalResultEnvelope,
   type Artifact,
   type Envelope,
-} from "./_lib/bus-envelope";
-import { generateInstanceName } from "./_lib/agent-naming";
-import { getHabitat } from "./_lib/habitat";
-import { applyArtifacts } from "./_lib/submission-apply";
+} from "../_lib/bus-envelope";
+import { generateInstanceName } from "../_lib/agent-naming";
+import { getHabitat } from "../_lib/habitat";
+import { applyArtifacts } from "../_lib/submission-apply";
 import {
   runAtomicDelegate,
   type DispatchHookRegistry,
   type SpawnArgs,
   type WorkerHandle,
-} from "./_lib/atomic-delegate";
+} from "../_lib/atomic-delegate";
 import { registerDeferredHandler } from "./deferred-confirm";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
+const REPO_ROOT = path.resolve(HERE, "..", "..", "..", "..");
 const RUNNER_PATH = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
 const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 
+const AGENT_SUBDIRS = ["deferred"];
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
+
+// Resolve a recipe short-name to an absolute .yaml path, searching the
+// same subdirectory list that run-agent.mjs uses.
+function resolveRecipePath(name: string): string | null {
+  const direct = path.join(AGENTS_DIR, `${name}.yaml`);
+  if (fs.existsSync(direct)) return direct;
+  if (!name.includes("/")) {
+    for (const sub of AGENT_SUBDIRS) {
+      const p = path.join(AGENTS_DIR, sub, `${name}.yaml`);
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return null;
+}
 
 interface PendingDelegate {
   onSubmission: (artifacts: Artifact[]) => void;
@@ -73,7 +88,8 @@ function getState(): AtomicDelegateState {
 
 function readChildRecipeMeta(recipeName: string): { shortName?: string; tier?: string } {
   try {
-    const file = path.join(AGENTS_DIR, `${recipeName}.yaml`);
+    const file = resolveRecipePath(recipeName);
+    if (!file) return {};
     const recipe = parseYaml(fs.readFileSync(file, "utf8")) as {
       shortName?: unknown;
       model?: unknown;
@@ -274,7 +290,7 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      if (!fs.existsSync(path.join(AGENTS_DIR, `${params.recipe}.yaml`))) {
+      if (!resolveRecipePath(params.recipe)) {
         return {
           content: [{ type: "text", text: `delegate: recipe not found: ${params.recipe}` }],
           details: { error: "recipe_not_found", recipe: params.recipe },
