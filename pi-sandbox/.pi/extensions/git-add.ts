@@ -1,30 +1,25 @@
-// git-add extension — runs `git add <paths>` in the per-issue worktree.
+// git-add extension — runs `git add <paths>` in the active worktree.
 //
 // Each path is validated to be under the worktree root before being passed
 // to git. Uses execFile argument array — no shell injection surface.
 //
-// Reads the worktree path from globalThis.__pi_worktree_manager__ (populated by
-// worktree-manager after worktree_prepare). Fails loudly if no worktree is
-// registered yet.
+// Targets the per-issue worktree when one is registered (after worktree_prepare),
+// otherwise falls back to the kanban worktree.
 
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { execInWorktree } from "./_lib/exec-in-worktree";
-
-function getWorktreePath(): string | undefined {
-  const g = globalThis as { __pi_worktree_manager__?: { worktreePath?: string } };
-  return g.__pi_worktree_manager__?.worktreePath;
-}
+import { getActiveWorktree } from "./_lib/active-worktree";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "git_add",
     label: "Git Add",
     description:
-      "Stage files for commit in the per-issue worktree (`git add <paths>`). " +
+      "Stage files for commit in the active worktree (`git add <paths>`). " +
       "Each path must be relative to the worktree root (no absolute paths, no `..`). " +
-      "Requires `worktree_prepare` to have been called first.",
+      "Targets the per-issue worktree when one is registered, otherwise the kanban worktree.",
     parameters: Type.Object({
       paths: Type.Array(
         Type.String({ description: "Relative path to stage, e.g. 'src/foo.ts' or '.'." }),
@@ -32,18 +27,19 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, params) {
-      const cwd = getWorktreePath();
-      if (!cwd) {
+      const active = getActiveWorktree();
+      if (!active) {
         return {
           content: [
             {
               type: "text",
-              text: "git_add: no per-issue worktree registered yet — call worktree_prepare first.",
+              text: "git_add: no active worktree (kanban or per-issue) — extension not initialised.",
             },
           ],
           details: { ok: false, reason: "no-worktree" },
         };
       }
+      const cwd = active.cwd;
 
       // Validate that no path escapes the worktree root.
       const violations: string[] = [];
@@ -76,10 +72,10 @@ export default function (pi: ExtensionAPI) {
             type: "text",
             text: result.exitCode !== 0
               ? `git add failed (exit ${result.exitCode}):\n${result.stderr}`
-              : `Staged: ${params.paths.join(", ")}`,
+              : `[${active.target}] Staged: ${params.paths.join(", ")}`,
           },
         ],
-        details: { ...result, cwd, paths: params.paths },
+        details: { ...result, cwd, target: active.target, paths: params.paths },
       };
     },
   });

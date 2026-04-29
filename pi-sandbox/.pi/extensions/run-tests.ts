@@ -11,38 +11,34 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { execInWorktree } from "./_lib/exec-in-worktree";
-
-function getWorktreePath(): string | undefined {
-  const g = globalThis as { __pi_worktree_manager__?: { worktreePath?: string } };
-  return g.__pi_worktree_manager__?.worktreePath;
-}
+import { getActiveWorktree } from "./_lib/active-worktree";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "run_tests",
     label: "Run Tests",
     description:
-      "Run the project's test suite (`npm test`) in the per-issue worktree. " +
+      "Run the project's test suite (`npm test`) in the active worktree. " +
       "Returns stdout, stderr, and the exit code. " +
+      "Targets the per-issue worktree when one is registered, otherwise the kanban worktree. " +
       "V1 is hardcoded to Node/npm projects only. " +
-      "Requires `worktree_prepare` to have been called first. " +
       "Exit code 0 = all tests passed; non-zero = failures (check stdout/stderr).",
     parameters: Type.Object({}),
     async execute() {
-      const cwd = getWorktreePath();
-      if (!cwd) {
+      const active = getActiveWorktree();
+      if (!active) {
         return {
           content: [
             {
               type: "text",
-              text: "run_tests: no per-issue worktree registered yet — call worktree_prepare first.",
+              text: "run_tests: no active worktree (kanban or per-issue) — extension not initialised.",
             },
           ],
           details: { ok: false, reason: "no-worktree" },
         };
       }
 
-      const result = await execInWorktree("npm", ["test"], cwd);
+      const result = await execInWorktree("npm", ["test"], active.cwd);
       const summary = result.exitCode === 0 ? "Tests passed." : `Tests FAILED (exit ${result.exitCode}).`;
       return {
         content: [
@@ -51,7 +47,7 @@ export default function (pi: ExtensionAPI) {
             text: `${summary}\n\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`,
           },
         ],
-        details: { ...result, cwd },
+        details: { ...result, cwd: active.cwd, target: active.target },
       };
     },
   });
