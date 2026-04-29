@@ -76,18 +76,18 @@ Single-tool 1→1 spawn-call-collect; queues the spawned peer's **Submission** i
 
 ### Roles (V1 Ralph-Loop architecture)
 
-The deferred-* + **Atomic Delegate** stack defined above remains the model for review-bounded drafting agents. V1 also adds a bd-issue-driven Ralph-Loop stack with three named roles, riding the same protocol layer (bus, **Habitat**, supervisor inbox).
+The deferred-* + **Atomic Delegate** stack defined above remains the model for review-bounded drafting agents. V1 also adds a markdown-issue-driven Ralph-Loop stack with three named roles, riding the same protocol layer (bus, **Habitat**, supervisor inbox).
 
 **Kanban**:
-A long-lived non-LLM **Peer** that watches **bd** state and dispatches **Foremen** for ready issues. Implemented as a script (no pi runtime, no model calls). Bus precedent: `human-relay.mjs`. Pause-when-blocked is "Kanban idle, no Foremen running."
+A long-lived non-LLM **Peer** that watches the **Project**'s issue tree (`.scratch/<feature-slug>/issues/*.md`, per `docs/agents/issue-tracker.md`) and dispatches **Foremen** for ready issues. Implemented as a script (no pi runtime, no model calls). Bus precedent: `human-relay.mjs`. Pause-when-blocked is "Kanban idle, no Foremen running."
 _Avoid_: dispatcher, scheduler, foreman-script
 
 **Foreman**:
-An LLM **Peer** spawned by a **Kanban** for one ready bd issue. Runs the **Ralph Loop** autonomously: claims the issue, creates a git worktree on a feature branch, writes tests, runs them, fixes failures, commits, submits the branch. Arranges **Workers** for ad-hoc help via **Atomic Delegate**. Existing Recipe in the deferred stack: `writer-foreman.yaml` — same role name, different mutation primitives.
+An LLM **Peer** spawned by a **Kanban** for one ready issue file. Runs the **Ralph Loop** autonomously: claims the issue (writes a `Claimed-by:` line into the file), creates a git worktree on a feature branch, writes tests, runs them, fixes failures, commits, submits the branch. Arranges **Workers** for ad-hoc help via **Atomic Delegate**. Existing Recipe in the deferred stack: `writer-foreman.yaml` — same role name, different mutation primitives.
 _Avoid_: worker (overloaded — see Flagged ambiguities), agent, planner
 
 **Worker**:
-An LLM **Peer** **Atomic-Delegated** by a **Foreman** for a specialist subtask — code review, type-check, doc-write, etc. Ephemeral; no bd interaction. Existing Recipes: `code-reviewer.yaml`, `change-reviewer.yaml`.
+An LLM **Peer** **Atomic-Delegated** by a **Foreman** for a specialist subtask — code review, type-check, doc-write, etc. Ephemeral; no issue-tree interaction. Existing Recipes: `code-reviewer.yaml`, `change-reviewer.yaml`.
 _Avoid_: helper, sub-agent; "specialist" only informally
 
 **Ralph Loop**:
@@ -95,7 +95,7 @@ The **Foreman**'s per-issue inner-loop pattern (after Matt Pocock): claim issue 
 _Avoid_: agent loop, work loop, TDD loop (Ralph Loop is the named one in this codebase)
 
 **Project**:
-The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp` binds the mesh's **Bus Root**, beads instance, and worktree scratch to that repo. AgentFactory itself is a *runner*; it is never the **Project**.
+The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp` binds the mesh's **Bus Root**, the project's `.scratch/` issue tree, and worktree scratch to that repo. AgentFactory itself is a *runner*; it is never the **Project**.
 _Avoid_: target, repo (in code, but the term is **Project** in design discussions)
 
 ### Supervisor Actions
@@ -115,9 +115,9 @@ When inbound rail surfaces a **Submission** or approval request, the supervisor'
 - An approval bubbles up the **Supervisor** chain until a peer with a UI handles it.
 - A **Mesh** is either **Static Topology**-launched or **Seed Agent**-grown; both share one **Bus Root** per deployment.
 - An **Atomic Delegate** is a degenerate single-call mesh: ephemeral peer, supervisor = caller, submitTo = caller, torn down on return.
-- A **Kanban** spawns one **Foreman** per ready bd issue (V1). The Kanban persists; the Foreman is ephemeral, ending when it submits its branch.
-- A **Foreman** **Atomic-Delegates** to **Workers** mid-**Ralph Loop** for ad-hoc specialist help; Workers do not interact with bd.
-- A **Mesh** wired to a **Project** pauses (no Foremen running) when no bd issue is ready; it wakes when the bd-watcher extension fires.
+- A **Kanban** spawns one **Foreman** per ready issue file (V1). The Kanban persists; the Foreman is ephemeral, ending when it submits its branch.
+- A **Foreman** **Atomic-Delegates** to **Workers** mid-**Ralph Loop** for ad-hoc specialist help; Workers do not read or write the issue tree.
+- A **Mesh** wired to a **Project** pauses (no Foremen running) when no issue file is ready; it wakes when the issue-watcher extension fires.
 
 ## Example dialogue
 
