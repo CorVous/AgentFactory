@@ -5,8 +5,3 @@ npm-debug.log*
 .DS_Store
 dist/
 pi-sandbox/.pi/scratch/
-
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key

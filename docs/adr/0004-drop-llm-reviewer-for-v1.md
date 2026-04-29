@@ -11,7 +11,7 @@ V1 of the Ralph-Loop mesh routes **Foreman** submissions directly to a human via
 
 ## Considered alternatives
 
-- **Keep ADR-0003 in V1.** Rejected for V1: requires designing the supervisor LLM's review prompt against branch payloads (different shape from artifact lists), engineering its tool palette (read diff, run tests, run `bd show`), and tuning its tier choice — all before the Foreman side has shipped. Re-considered for V2.
+- **Keep ADR-0003 in V1.** Rejected for V1: requires designing the supervisor LLM's review prompt against branch payloads (different shape from artifact lists), engineering its tool palette (read diff, run tests, read the issue file), and tuning its tier choice — all before the Foreman side has shipped. Re-considered for V2.
 - **Hybrid: LLM auto-approves "tests pass + diff < N lines + no new deps."** Rejected for V1: needs a classifier extension and signals worth trusting. Premature without observed traffic.
 - **Drop ADR-0003 entirely.** Rejected: the trust split it motivates is real and survives branch-mode. The LLM-in-loop is just not needed *yet*.
 

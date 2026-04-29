@@ -15,9 +15,31 @@ After all branches are merged, make a single commit summarizing the merge.
 
 # CLOSE ISSUES
 
-For each branch that was merged, close its issue using the following command:
+For each branch that was merged, close its issue per the convention in `docs/agents/issue-tracker.md`:
 
-`bd close {{TASK_ID}} "Completed by Sandcastle"`
+1. Move the issue file from `issues/` to `issues/closed/` (preserving git history):
+
+   ```
+   git mv .scratch/<feature-slug>/issues/<NN>-<slug>.md .scratch/<feature-slug>/issues/closed/<NN>-<slug>.md
+   ```
+
+   The path of the issue file is passed as `{{TASK_ID}}`.
+
+2. In the moved file, change the `Status:` line at the top to `Status: closed`.
+
+3. Append a closing note under the `## Comments` heading at the bottom of the file:
+
+   ```
+   ## Comments
+
+   - Completed by Sandcastle
+   ```
+
+   (Create the heading if it does not yet exist.)
+
+4. Stage and commit the move + edits as part of the merge commit (or a follow-up commit on the workflow branch).
+
+Sandcastle is the AFK path: branches that came from `Status: ready-for-agent` issues auto-merge here. Issues that were `Status: ready-for-human` should not have reached this prompt — they pause for a PR review instead, and are closed when the human merges that PR.
 
 Here are all the issues:
 

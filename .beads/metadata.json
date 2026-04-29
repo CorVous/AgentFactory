@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "AgentFactory",
-  "project_id": "42449141-7ae0-44af-9181-a2cdb9f6dd3a"
-}
