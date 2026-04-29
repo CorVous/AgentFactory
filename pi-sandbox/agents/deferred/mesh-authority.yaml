@@ -8,7 +8,7 @@
 # collide:
 #
 #   set -a; source models.env; set +a
-#   npm run agent -- mesh-authority -- --agent-name authority
+#   npm run agent -- deferred/mesh-authority -- --agent-name authority
 #
 # Or via the mesh launcher:
 #   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
@@ -57,8 +57,8 @@ extensions:
   - mesh-authority
 
 agents:
-  - mesh-node
-  - deferred-writer
-  - deferred-editor
+  - deferred/mesh-node
+  - deferred/deferred-writer
+  - deferred/deferred-editor
   - code-reviewer
   - change-reviewer

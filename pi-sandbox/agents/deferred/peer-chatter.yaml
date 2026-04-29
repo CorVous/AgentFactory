@@ -5,9 +5,9 @@
 # Launch two panes, each with `set -a; source models.env; set +a`, then:
 #   tmux split-window
 #   # pane A
-#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p1 -- --agent-name planner
+#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- deferred/peer-chatter --sandbox /tmp/p1 -- --agent-name planner
 #   # pane B
-#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a
+#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- deferred/peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a
 #
 # Then prompt pane A: "call agent_list, then agent_send to worker-a with body 'ping'"
 

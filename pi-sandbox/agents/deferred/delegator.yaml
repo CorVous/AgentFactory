@@ -9,9 +9,9 @@
 # can spawn. The runner (scripts/run-agent.mjs) auto-loads the
 # atomic-delegate extension and wires the `delegate` tool.
 #
-# Run: npm run agent -- delegator --sandbox /tmp/p
-#   > "delegate to recipe peer-chatter with task 'list files in cwd'"
-#   > "delegate to recipe deferred-writer with task 'draft README.md'"
+# Run: npm run agent -- deferred/delegator --sandbox /tmp/p
+#   > "delegate to recipe deferred/peer-chatter with task 'list files in cwd'"
+#   > "delegate to recipe deferred/deferred-writer with task 'draft README.md'"
 
 model: LEAD_HARE_MODEL
 shortName: captain
@@ -38,11 +38,11 @@ prompt: |
 agents:
   - change-reviewer
   - code-reviewer
-  - deferred-author
-  - deferred-editor
-  - deferred-writer
-  - peer-chatter
-  - writer-foreman
+  - deferred/deferred-author
+  - deferred/deferred-editor
+  - deferred/deferred-writer
+  - deferred/peer-chatter
+  - deferred/writer-foreman
 
 tools:
   - read

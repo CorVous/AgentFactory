@@ -25,4 +25,4 @@ tools:
   - deferred_edit
 
 extensions:
-  - deferred-edit
+  - deferred/deferred-edit
