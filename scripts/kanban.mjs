@@ -237,6 +237,15 @@ function spawnForeman(issuePath) {
 
   log(`dispatching Foreman for ${issueFlag}`);
 
+  // Foreman is spawned headless (no TTY). Pi exits silently in <1s if there's
+  // no TTY *and* no `-p "<prompt>"` to drive print mode. The recipe's prompt
+  // already describes the full Foreman workflow; this initial user message
+  // just kicks the model off so it starts executing the workflow.
+  const initialPrompt =
+    `Begin the Foreman workflow for issue '${issueFlag}' (mesh branch '${meshBranch}'). ` +
+    `Follow your role prompt: read the Status: line, claim the issue, prepare the per-issue worktree, ` +
+    `run the Ralph Loop, reintegrate, and close.`;
+
   const args = [
     RUNNER,
     FOREMAN_RECIPE,
@@ -245,6 +254,8 @@ function spawnForeman(issuePath) {
     "--mesh-branch", meshBranch,
     "--project-path", projectPath,
     "--kanban-worktree", kanbanWorktree,
+    "--",                  // everything after is passed to pi
+    "-p", initialPrompt,
   ];
 
   const child = spawn(process.execPath, args, {

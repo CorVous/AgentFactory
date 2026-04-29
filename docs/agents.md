@@ -745,3 +745,100 @@ values). The `habitat` baseline extension materialises `habitatSpec` at
 groups, group bindings, and per-node overrides. The existing
 `pi-sandbox/meshes/authority-mesh.yaml` (no peer fields) continues to launch
 unchanged.
+
+## Manual smoke test for the Ralph-Loop AFK trunk
+
+The Ralph-Loop mesh runtime mode (`npm run mesh -- --project … --feature …`,
+issue PRD-0001 #03) drives the AFK trunk against a real project. Use the
+fixture below to exercise it end-to-end without touching a real codebase.
+The fixture uses one trivial `ready-for-agent` issue; the Foreman should
+claim it, run the Ralph Loop, auto-merge into `feature/v1-fixture`, and
+move the issue to `issues/closed/`.
+
+### One-time fixture setup
+
+Note the `git checkout -b feature/v1-fixture` — the issue file MUST land
+on the feature branch, not on `main`. The Kanban worktree checks out the
+feature branch and only sees what's there.
+
+```sh
+mkdir -p /tmp/fixture-project && cd /tmp/fixture-project
+git init -b main
+echo '{"name":"fixture","scripts":{"test":"echo ok"}}' > package.json
+git add . && git commit -m "init"
+
+# Switch to the feature branch BEFORE creating the issue file.
+git checkout -b feature/v1-fixture
+
+mkdir -p .scratch/v1-fixture/issues
+cat > .scratch/v1-fixture/issues/01-trivial.md <<'EOF'
+Status: ready-for-agent
+
+# Trivial issue
+## What to build
+Add a trailing-newline comment to package.json.
+EOF
+
+git add . && git commit -m "fixture issue"
+git checkout main   # back to main; the launcher checks out the feature
+                    # branch into .mesh-features/v1-fixture/kanban/ for you
+```
+
+### Launching the mesh
+
+From the AgentFactory repo root, with `models.env` sourced:
+
+```sh
+cd ~/Git/AgentFactory   # or wherever your AgentFactory checkout is
+set -a; source models.env; set +a
+npm run mesh -- --project /tmp/fixture-project --feature v1-fixture
+```
+
+What you should see, in order:
+
+```
+launch-mesh: adding kanban worktree at /tmp/fixture-project/.mesh-features/v1-fixture/kanban
+launch-mesh: starting Kanban (runtime mode)
+[kanban] … started on bus as "kanban" (…)
+[kanban] … project=/tmp/fixture-project feature=v1-fixture
+[kanban] … issuesDir=…/.scratch/v1-fixture/issues
+[kanban] … maxConcurrent=1 pollInterval=2000ms
+[kanban] … dispatching Foreman for v1-fixture/01-trivial
+[foreman:01-trivial] …pi output as the model executes the workflow…
+[kanban] … Foreman for v1-fixture/01-trivial exited (code=0 …)
+```
+
+After the Foreman exits cleanly, the fixture project's `feature/v1-fixture`
+branch should have a merge commit, and `.scratch/v1-fixture/issues/01-trivial.md`
+should have moved to `.scratch/v1-fixture/issues/closed/01-trivial.md` with
+`Status: closed`.
+
+### Common gotchas
+
+- **Dispatch loop with sub-second exits** — if you see
+  `[kanban] … dispatching Foreman …` followed by
+  `[kanban] … Foreman … exited (code=0 …)` every 2s with no
+  `[foreman:…]` output between them, the Foreman is exiting silently before
+  the model boots. The Kanban's spawn args should include
+  `--`, `-p`, `<initial prompt>` so pi runs in headless print mode; without
+  `-p` and without a TTY, pi exits in <1s.
+- **Issue file on the wrong branch** — if the Kanban polls without ever
+  dispatching, the issue file is probably on `main` instead of
+  `feature/v1-fixture`. Confirm with
+  `ls /tmp/fixture-project/.mesh-features/v1-fixture/kanban/.scratch/v1-fixture/issues/`.
+  If the directory is empty, `git checkout feature/v1-fixture` in the kanban
+  worktree and `git merge main --ff-only` to pull the fixture commit forward.
+- **`kanban: failed to bind bus socket: name "kanban" already held by a live peer`** — a previous mesh
+  invocation is still running. Find and kill it (`pgrep -f kanban.mjs`) or
+  unlink the stale sock at `~/.pi-agent-bus/<bus-root>/kanban.sock` if no
+  process owns it.
+
+### Cleanup
+
+```sh
+# Stop the mesh first (Ctrl-C the kanban).
+cd /tmp/fixture-project
+git worktree remove .mesh-features/v1-fixture/kanban
+rm -rf .mesh-features
+# Or just nuke the whole fixture: rm -rf /tmp/fixture-project
+```
