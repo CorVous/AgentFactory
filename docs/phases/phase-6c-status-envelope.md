@@ -21,7 +21,7 @@ All phases through Phase 5 merged to main. Recommended: **the tidies plan (`docs
 - `docs/adr/0001-mesh-subsumes-delegation.md` — the migration plan; this is the last architectural phase.
 - `pi-sandbox/.pi/extensions/_lib/bus-envelope.ts` — payload union; you're adding a kind.
 - `pi-sandbox/.pi/extensions/agent-bus.ts` — typed dispatch; status envelopes route here.
-- `pi-sandbox/.pi/extensions/atomic-delegate.ts` — the dispatch-hook pattern (the new widget mirrors it).
+- `pi-sandbox/.pi/extensions/deferred/atomic-delegate.ts` — the dispatch-hook pattern (the new widget mirrors it).
 - `pi-sandbox/.pi/extensions/_lib/atomic-delegate.ts` — for the worker name → registry mental model.
 - The deleted `delegation-boxes.ts` and `agent-status-reporter.ts` from git history (`git show 4870f02^:pi-sandbox/.pi/extensions/delegation-boxes.ts`) — for reference of what the old widget rendered. **Don't port the implementation; use as a UX reference only.** The old version reached into `agent-spawn`'s globalThis registry that no longer exists.
 - `pi-sandbox/.pi/extensions/_lib/context-bar.ts` — already exists for rendering an eighths-block bar; reuse it.

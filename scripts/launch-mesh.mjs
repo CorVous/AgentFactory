@@ -31,6 +31,21 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
 const RELAY = path.join(REPO_ROOT, "scripts", "human-relay.mjs");
+const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
+const AGENT_SUBDIRS = ["deferred"];
+
+// Resolve a recipe name to an absolute file path (supports sub-path notation).
+function resolveRecipePath(name) {
+  const direct = path.join(AGENTS_DIR, `${name}.yaml`);
+  if (existsSync(direct)) return direct;
+  if (!name.includes("/")) {
+    for (const sub of AGENT_SUBDIRS) {
+      const p = path.join(AGENTS_DIR, sub, `${name}.yaml`);
+      if (existsSync(p)) return p;
+    }
+  }
+  return null;
+}
 
 function die(msg) {
   process.stderr.write(`launch-mesh: ${msg}\n`);
@@ -72,7 +87,7 @@ for (const node of topology.nodes) {
   }
   if (node.type === "relay") die("relay node must have an explicit name");
   if (!node.recipe) die(`unnamed node is missing 'recipe'`);
-  const recipeFile = path.join(REPO_ROOT, "pi-sandbox", "agents", `${node.recipe}.yaml`);
+  const recipeFile = resolveRecipePath(node.recipe);
   let shortName = node.recipe;
   let tier;
   try {

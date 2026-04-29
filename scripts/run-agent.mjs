@@ -7,6 +7,13 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
+// Sub-directories of AGENTS_DIR and EXTENSIONS_DIR that are also searched
+// when resolving recipes and extensions by short name. Names are resolved as
+// `<dir>/<name>` first (allowing explicit sub-path notation), then by plain
+// `<name>` against each search directory in order.
+const AGENT_SUBDIRS = ["deferred"];
+const EXTENSION_SUBDIRS = ["deferred"];
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = path.join(REPO_ROOT, "pi-sandbox");
 const AGENTS_DIR = path.join(SANDBOX_ROOT, "agents");
@@ -76,16 +83,17 @@ function printHelp() {
 }
 
 function listAgents() {
-  let entries;
-  try {
-    entries = readdirSync(AGENTS_DIR);
-  } catch (e) {
-    die(`failed to read ${AGENTS_DIR}: ${e.message}`);
-  }
-  const names = entries
-    .filter((f) => f.endsWith(".yaml"))
-    .map((f) => f.slice(0, -".yaml".length))
-    .sort();
+  const names = [];
+  const collectYamls = (dir, prefix) => {
+    let entries;
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const f of entries) {
+      if (f.endsWith(".yaml")) names.push((prefix ? prefix + "/" : "") + f.slice(0, -".yaml".length));
+    }
+  };
+  collectYamls(AGENTS_DIR, "");
+  for (const sub of AGENT_SUBDIRS) collectYamls(path.join(AGENTS_DIR, sub), sub);
+  names.sort();
   const rel = path.relative(REPO_ROOT, AGENTS_DIR) || AGENTS_DIR;
   if (names.length === 0) {
     process.stdout.write(`No agents found in ${rel}\n`);
@@ -96,9 +104,26 @@ function listAgents() {
   process.stdout.write(`\nRun: npm run agent -- <name>\n`);
 }
 
+// Resolve a recipe name to an absolute file path. Names may be given as
+// "name" (searched in AGENTS_DIR and each AGENT_SUBDIRS in order) or as
+// "subdir/name" (resolved directly under AGENTS_DIR).
+function resolveRecipePath(name) {
+  // Direct path: "deferred/deferred-writer" → AGENTS_DIR/deferred/deferred-writer.yaml
+  const direct = path.join(AGENTS_DIR, `${name}.yaml`);
+  if (existsSync(direct)) return direct;
+  // Short name: "deferred-writer" → search each subdir
+  if (!name.includes("/")) {
+    for (const sub of AGENT_SUBDIRS) {
+      const p = path.join(AGENTS_DIR, sub, `${name}.yaml`);
+      if (existsSync(p)) return p;
+    }
+  }
+  return null;
+}
+
 function loadRecipe(name) {
-  const file = path.join(AGENTS_DIR, `${name}.yaml`);
-  if (!existsSync(file)) die(`recipe not found: ${file}`);
+  const file = resolveRecipePath(name);
+  if (!file) die(`recipe not found: ${path.join(AGENTS_DIR, `${name}.yaml`)}`);
   let recipe;
   try {
     recipe = parseYaml(readFileSync(file, "utf8"));
@@ -147,7 +172,7 @@ function applyAgentsField(recipe, name) {
   }
 
   for (const a of declared) {
-    if (!existsSync(path.join(AGENTS_DIR, `${a}.yaml`))) {
+    if (!resolveRecipePath(a)) {
       die(`recipe ${name} agents: lists '${a}', but pi-sandbox/agents/${a}.yaml does not exist`);
     }
   }
@@ -207,6 +232,21 @@ function resolveModel(tierOrId) {
   return requested;
 }
 
+// Resolve an extension name to an absolute .ts path. Names may be given as
+// "name" (searched in EXTENSIONS_DIR and each EXTENSION_SUBDIRS) or as
+// "subdir/name" (resolved directly under EXTENSIONS_DIR).
+function resolveExtensionPath(name) {
+  const direct = path.join(EXTENSIONS_DIR, `${name}.ts`);
+  if (existsSync(direct)) return direct;
+  if (!name.includes("/")) {
+    for (const sub of EXTENSION_SUBDIRS) {
+      const p = path.join(EXTENSIONS_DIR, sub, `${name}.ts`);
+      if (existsSync(p)) return p;
+    }
+  }
+  return null;
+}
+
 function resolveExtensionPaths(names) {
   const seen = new Set();
   const merged = [...BASELINE_EXTENSIONS, ...names];
@@ -217,8 +257,8 @@ function resolveExtensionPaths(names) {
       return true;
     })
     .map((n) => {
-      const p = path.join(EXTENSIONS_DIR, `${n}.ts`);
-      if (!existsSync(p)) die(`extension not found: ${p}`);
+      const p = resolveExtensionPath(n);
+      if (!p) die(`extension not found: ${path.join(EXTENSIONS_DIR, `${n}.ts`)}`);
       return p;
     });
 }
@@ -247,7 +287,16 @@ function loadPromptFragments(extensionNames) {
   const fragments = [];
   for (const name of extensionNames) {
     if (name === "deferred-confirm" && !hasDeferredTool) continue;
-    const p = path.join(EXTENSIONS_DIR, `${name}.prompt.md`);
+    // Resolve the prompt fragment alongside the extension .ts file. Search the
+    // same directories as resolveExtensionPath so moved extensions are found.
+    const shortName = name.includes("/") ? name.split("/").pop() : name;
+    let p = path.join(EXTENSIONS_DIR, `${name}.prompt.md`);
+    if (!existsSync(p) && !name.includes("/")) {
+      for (const sub of EXTENSION_SUBDIRS) {
+        const candidate = path.join(EXTENSIONS_DIR, sub, `${shortName}.prompt.md`);
+        if (existsSync(candidate)) { p = candidate; break; }
+      }
+    }
     if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
   }
   return fragments;
