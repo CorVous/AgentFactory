@@ -1,14 +1,14 @@
 # ISSUES
 
-Issues live as markdown files under `.scratch/<feature-slug>/issues/<NN>-<slug>.md` (see `docs/agents/issue-tracker.md`). An issue is **open** if its `Status:` line is one of `needs-triage`, `needs-info`, `ready-for-agent`, or `ready-for-human`. Closed issues have `Status: closed` (or `wontfix`).
+Issues live as markdown files under `.scratch/<feature-slug>/issues/<NN>-<slug>.md` (see `docs/agents/issue-tracker.md`). Sandcastle is the **AFK** path: it only picks up issues with `Status: ready-for-agent`. Issues with `Status: ready-for-human` (HITL) follow a different workflow — they pause for a PR review and are not in scope here.
 
-Here are the paths of open issue files in the repo:
+Here are the paths of `ready-for-agent` issue files in the repo:
 
-<open-issue-paths>
+<ready-for-agent-paths>
 
-!`grep -L '^Status: \(closed\|wontfix\)' .scratch/*/issues/*.md 2>/dev/null`
+!`grep -l '^Status: ready-for-agent' .scratch/*/issues/*.md 2>/dev/null`
 
-</open-issue-paths>
+</ready-for-agent-paths>
 
 Read each path (and any sibling `PRD.md`) to learn the issue's title, status, dependencies (from any `Depends-on:` line), and acceptance criteria.
 
