@@ -95,8 +95,16 @@ The **Foreman**'s per-issue inner-loop pattern (after Matt Pocock): claim issue 
 _Avoid_: agent loop, work loop, TDD loop (Ralph Loop is the named one in this codebase)
 
 **Project**:
-The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp` binds the mesh's **Bus Root**, the project's `.scratch/` issue tree, and worktree scratch to that repo. AgentFactory itself is a *runner*; it is never the **Project**.
+The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp --feature <slug>` binds the mesh's **Bus Root**, the kanban worktree at `~/.mesh-scratch/<project>/<feature-slug>/kanban/`, and per-issue worktree scratch to that `(project, feature)` pair. AgentFactory itself is a *runner*; it is never the **Project**.
 _Avoid_: target, repo (in code, but the term is **Project** in design discussions)
+
+**Feature**:
+The unit of mesh work — a coherent body of effort the user wants to ship as one integration into `main`. Each feature has a slug (e.g., `v1-ralph-loop-mesh`), a dedicated branch (`feature/<feature-slug>`), a dedicated worktree, a PRD, and a set of vertical-slice issue files. The mesh authoring flow (**Orchestrator**) and runtime (**Kanban** + **Foremen**) are scoped to one feature per invocation.
+_Avoid_: project (overloaded), epic, milestone
+
+**Orchestrator**:
+A planning-time LLM **Peer** (Lead Hare tier, interactive) that runs *before* the mesh's runtime, from inside the feature's kanban worktree. Drives a grill session, produces `.scratch/<feature-slug>/PRD.md`, then breaks the PRD into vertical-slice issue files via deferred-write for the user to review and commit. Distinct from the **Kanban** (which dispatches at runtime) and from **Foremen** (which execute issues). Existing Recipe (planned): `pi-sandbox/agents/ralph/orchestrator.yaml`.
+_Avoid_: planner (too generic), prd-writer, scoper
 
 ### Supervisor Actions
 
