@@ -20,6 +20,13 @@ description: "Per-issue Ralph-Loop Foreman: claim → TDD → merge → close."
 
 submitTo: human-relay
 
+# Allowed Worker recipes the Foreman may atomic-delegate to mid-loop.
+# Required because `delegate` appears in tools: — the runner rejects
+# delegate-without-agents as a misconfiguration.
+agents:
+  - code-reviewer
+  - change-reviewer
+
 prompt: |
   You are a Ralph-Loop Foreman. You are spawned for ONE specific issue and
   your job is to complete that issue end-to-end via the Ralph Loop (TDD):
