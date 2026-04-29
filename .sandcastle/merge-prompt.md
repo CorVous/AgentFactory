@@ -15,9 +15,18 @@ After all branches are merged, make a single commit summarizing the merge.
 
 # CLOSE ISSUES
 
-For each branch that was merged, close its issue using the following command:
+For each branch that was merged, close its issue file (path passed as `{{TASK_ID}}`) by:
 
-`bd close {{TASK_ID}} "Completed by Sandcastle"`
+1. Setting the `Status:` line at the top of the file to `Status: closed`.
+2. Appending a closing note under the `## Comments` heading at the bottom of the file:
+
+   ```
+   ## Comments
+
+   - Completed by Sandcastle
+   ```
+
+   (Create the heading if it does not yet exist.)
 
 Here are all the issues:
 

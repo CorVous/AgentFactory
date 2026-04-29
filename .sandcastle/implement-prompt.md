@@ -2,7 +2,7 @@
 
 Fix issue {{TASK_ID}}: {{ISSUE_TITLE}}
 
-Pull in the issue using `bd show {{TASK_ID}}`. If it has a parent PRD, pull that in too.
+Read the issue file at `{{TASK_ID}}` (a path relative to the repo root, under `.scratch/<feature-slug>/issues/`). If a sibling `PRD.md` exists in the same `.scratch/<feature-slug>/` directory, pull that in too.
 
 Only work on the issue specified.
 
@@ -51,9 +51,9 @@ Keep it concise.
 
 # THE ISSUE
 
-If the task is not complete, leave a comment on the issue with what was done.
+If the task is not complete, append a note under the `## Comments` heading at the bottom of the issue file (`{{TASK_ID}}`) describing what was done.
 
-Do not close the issue - this will be done later.
+Do not close the issue (i.e. do not change its `Status:` line to `closed`) — this will be done later.
 
 Once complete, output <promise>COMPLETE</promise>.
 
