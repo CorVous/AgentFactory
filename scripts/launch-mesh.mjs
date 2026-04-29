@@ -10,13 +10,13 @@
 //   bus_root: /tmp/pi-mesh-demo   # optional; auto-derived from filename
 //   nodes:
 //     - name: authority           # instance name (--agent-name)
-//       recipe: mesh-authority    # recipe in pi-sandbox/agents/
+//       recipe: deferred/mesh-authority    # recipe in pi-sandbox/agents/
 //       sandbox: /tmp/mesh/auth   # optional; auto-created
 //       task: "..."               # optional; if set, passes -p (non-interactive)
 //     - name: human
 //       type: relay               # spawns human-relay.mjs instead of a pi agent
 //     - name: analyst
-//       recipe: mesh-node
+//       recipe: deferred/mesh-node
 //       task: "wait for requests"
 
 import { spawn } from "node:child_process";

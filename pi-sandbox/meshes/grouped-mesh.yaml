@@ -41,7 +41,7 @@ nodes:
     type: relay
 
   - name: authority
-    recipe: mesh-authority
+    recipe: deferred/mesh-authority
     sandbox: /tmp/pi-mesh-grouped/authority
     acceptedFrom: ["@workers"]
     task: |
@@ -50,7 +50,7 @@ nodes:
       When a worker sends you a request, coordinate with your peers and reply.
 
   - name: analyst
-    recipe: mesh-node
+    recipe: deferred/mesh-node
     sandbox: /tmp/pi-mesh-grouped/analyst
     task: |
       You are the analyst worker in a mesh. Your name is "analyst".
@@ -58,7 +58,7 @@ nodes:
       research it using your tools and reply with agent_send.
 
   - name: writer
-    recipe: mesh-writer
+    recipe: deferred/mesh-writer
     sandbox: /tmp/pi-mesh-grouped/writer
     # Per-node override: writer submits drafts to reviewer, not authority.
     submitTo: reviewer
@@ -68,7 +68,7 @@ nodes:
       save it to a file, then reply with the file path and a summary.
 
   - name: reviewer
-    recipe: mesh-node
+    recipe: deferred/mesh-node
     sandbox: /tmp/pi-mesh-grouped/reviewer
     acceptedFrom: [writer]
     task: |
