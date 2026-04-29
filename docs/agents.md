@@ -109,9 +109,9 @@ stable peer name on the bus.
 
 ```sh
 set -a; source models.env; set +a
-npm run agent -- deferred-writer            # interactive, sandboxed to $PWD
-npm run agent -- deferred-writer --sandbox /tmp/scratch
-npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthrough
+npm run agent -- deferred/deferred-writer            # interactive, sandboxed to $PWD
+npm run agent -- deferred/deferred-writer --sandbox /tmp/scratch
+npm run agent -- deferred/deferred-writer -p "draft a README" --thinking off   # passthrough
 ```
 
 ## Recipe shape
@@ -124,12 +124,12 @@ description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # the agent's role, prepended with extension fragments
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm] baseline
+extensions: [deferred/deferred-write]      # merged with the [deferred/sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred/deferred-confirm] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail
 noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
-agents: [deferred-writer]         # optional; recipes this agent may delegate to
+agents: [deferred/deferred-writer]         # optional; recipes this agent may delegate to
 supervisor: lead-hare             # optional; peer name to escalate approvals to
 submitTo: collector               # optional; peer name to ship submissions to
 acceptedFrom: [worker-a, worker-b] # optional; peers allowed to send to this one
@@ -152,12 +152,12 @@ need to describe the agent's role; the standard rules for `deferred_write`,
 One conditional fragment is gated by the runner so it doesn't appear
 when irrelevant:
 
-- `deferred-confirm.prompt.md` (apply order, atomic batch semantics) is
+- `deferred/deferred-confirm.prompt.md` (apply order, atomic batch semantics) is
   loaded only when at least one `deferred-*` tool extension is active —
-  baseline `deferred-confirm` itself is a no-op without one.
+  baseline `deferred/deferred-confirm` itself is a no-op without one.
 
 Final order seen by the model: baseline-extension fragments → recipe-
-extension fragments (including `atomic-delegate.prompt.md` when implicit
+extension fragments (including `deferred/atomic-delegate.prompt.md` when implicit
 from `agents:`) → recipe `prompt:`. Edit a fragment to change behaviour
 for every recipe that loads its extension; edit a recipe's `prompt:`
 for that one agent only.
@@ -175,11 +175,11 @@ All seven appear under "Extension CLI Flags" in `pi --help`.
 
 When `agents:` is non-empty the runner also implicitly:
 
-- adds `atomic-delegate` to `extensions:`, and
+- adds `deferred/atomic-delegate` to `extensions:`, and
 - adds `delegate` to `tools:`.
 
 Explicit duplicates in the recipe are fine. The inverse is rejected
-loudly: declaring `extensions: [atomic-delegate]` or `tools: [delegate]`
+loudly: declaring `extensions: [deferred/atomic-delegate]` or `tools: [delegate]`
 without `agents:` causes the runner to `die()` so the allowlist is
 never accidentally empty. To disable delegation, drop the `agents:`
 field entirely.
@@ -197,20 +197,22 @@ field entirely.
 | Location | Behavior |
 | --- | --- |
 | `pi-sandbox/agents/<name>.yaml` | Agent recipe consumed by `npm run agent` |
+| `pi-sandbox/agents/<subdir>/<name>.yaml` | Subdirectory-qualified recipe; use `<subdir>/<name>` as the recipe name (e.g. `deferred/deferred-writer`) |
 | `pi-sandbox/.pi/extensions/<name>.ts` | Project-local extension, auto-discovered by `npm run pi`; loaded explicitly by `npm run agent` when listed in a recipe |
+| `pi-sandbox/.pi/extensions/<subdir>/<name>.ts` | Subdirectory-qualified extension; use `<subdir>/<name>` in the recipe's `extensions:` list (e.g. `deferred/deferred-write`) |
 | `~/.pi/agent/extensions/<name>.ts` | Global extension, hot-reloadable via `/reload` |
 | `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
 
 ## Worked example: deferred-writer
 
-`pi-sandbox/agents/deferred-writer.yaml` composes three extensions:
+`pi-sandbox/agents/deferred/deferred-writer.yaml` composes three extensions:
 
-- `sandbox` (baseline) — disables `bash`, clamps fs activity to the root.
-- `deferred-write` — registers the `deferred_write` tool. Drafts are
+- `deferred/sandbox` (baseline) — disables `bash`, clamps fs activity to the root.
+- `deferred/deferred-write` — registers the `deferred_write` tool. Drafts are
   buffered in extension memory; the extension registers a handler with
   the `deferred-confirm` baseline that previews queued drafts and writes
   approved ones (sha256-verified after write, ≤ 50 files / ≤ 2 MB each).
-- `no-edit` — blocks `edit` outright and rejects any create-only tool
+- `deferred/no-edit` — blocks `edit` outright and rejects any create-only tool
   whose target already exists. The create-only set is discovered at
   session start from `pi.getAllTools()`: any tool whose schema declares
   `path: string` plus a content-shaped string field
@@ -221,28 +223,28 @@ field entirely.
 
 Non-interactive runs refuse to write because there's no UI to confirm.
 
-`deferred-write` and `no-edit` are independent rails: an agent that wants
-overwrite-on-approval keeps `deferred-write` and omits `no-edit`; an
+`deferred/deferred-write` and `deferred/no-edit` are independent rails: an agent that wants
+overwrite-on-approval keeps `deferred/deferred-write` and omits `deferred/no-edit`; an
 agent using plain `write` but still wanting create-only semantics keeps
-`no-edit` and omits `deferred-write`.
+`deferred/no-edit` and omits `deferred/deferred-write`.
 
 ## Worked example: deferred-author (composing all four kinds)
 
-`pi-sandbox/agents/deferred-author.yaml` composes the full set of
-deferred-* tool extensions and relies on `deferred-confirm` (baseline)
+`pi-sandbox/agents/deferred/deferred-author.yaml` composes the full set of
+deferred-* tool extensions and relies on `deferred/deferred-confirm` (baseline)
 to show one approval dialog at end-of-turn:
 
-- `deferred-write` — `deferred_write({path, content})`. Creates new
+- `deferred/deferred-write` — `deferred_write({path, content})`. Creates new
   files. Same shape and limits as the worked example above.
-- `deferred-edit` — `deferred_edit({path, old_string, new_string})`.
+- `deferred/deferred-edit` — `deferred_edit({path, old_string, new_string})`.
   Modifies existing files. Validates `old_string` is unique against the
   buffered file state at queue time, so multi-edit ordering works. Re-
   validates against disk at apply time; any drift aborts the batch.
-- `deferred-move` — `deferred_move({src, dst})`. Verbatim relocation:
+- `deferred/deferred-move` — `deferred_move({src, dst})`. Verbatim relocation:
   bit-identical content at the new path. Refuses to overwrite (`dst`
   must not exist). Parent directories of `dst` are auto-created at
   apply time. Cross-device EXDEV falls back to copy + unlink.
-- `deferred-delete` — `deferred_delete({path})`. Removes existing files
+- `deferred/deferred-delete` — `deferred_delete({path})`. Removes existing files
   (rejects directories and missing paths at queue time so the model
   gets immediate feedback).
 
@@ -258,30 +260,30 @@ then edit at the new path") fails at the edit's re-validation because
 `dst` doesn't exist when the edit's `prepare` reads from disk.
 
 Authoring agents should compose the four deferred-* extensions and let
-`deferred-confirm` drive the dialog rather than each running its own.
-`no-edit` is redundant under this composition: the recipe's `tools:`
+`deferred/deferred-confirm` drive the dialog rather than each running its own.
+`deferred/no-edit` is redundant under this composition: the recipe's `tools:`
 allowlist already omits the built-in `edit`/`write`, and each
 deferred-* tool enforces its own existence/non-existence preconditions
 at queue time.
 
 ## Worked example: writer-foreman (atomic delegate)
 
-`pi-sandbox/agents/writer-foreman.yaml` is a Lead-tier foreman that
+`pi-sandbox/agents/deferred/writer-foreman.yaml` is a Lead-tier foreman that
 decomposes a drafting request and dispatches focused batches to a
-`deferred-writer` child. The recipe declares only:
+`deferred/deferred-writer` child. The recipe declares only:
 
 ```yaml
-agents: [deferred-writer]
+agents: [deferred/deferred-writer]
 tools: [read, ls, grep, find]
 ```
 
-The runner implicitly loads `atomic-delegate` and adds `delegate` to
+The runner implicitly loads `deferred/atomic-delegate` and adds `delegate` to
 the tool allowlist; the spawned worker is locked to recipes in
-`deferred-writer`'s allowlist.
+`deferred/deferred-writer`'s allowlist.
 
 Flow per batch:
 
-1. Foreman calls `delegate({recipe: "deferred-writer", task: "…"})`.
+1. Foreman calls `delegate({recipe: "deferred/deferred-writer", task: "…"})`.
    The call is a single atomic round-trip.
 2. The atomic-delegate extension allocates a fresh tmpdir scratch root,
    constructs a habitat overlay (`supervisor = submitTo = peers =
@@ -308,14 +310,14 @@ Flow per batch:
    `submitTo` set itself, the artifacts bundle up and ship to the
    foreman's supervisor instead — the recursive shape Just Works.
 
-A foreman that is itself launched as a child of `delegator` works the
+A foreman that is itself launched as a child of `deferred/delegator` works the
 same way at every level: each tier's `delegate` is atomic; submissions
 flow up through whatever escalation chain is configured.
 
 ### Debugging the rails
 
 Set `AGENT_DEBUG=1` in the environment when launching an agent and the
-`sandbox` and `no-edit` extensions will dump their resolved tool sets
+`deferred/sandbox` and `deferred/no-edit` extensions will dump their resolved tool sets
 via `ctx.ui.notify` on `session_start`. Useful when you've added a new
 write tool and want to confirm it was picked up by introspection.
 
@@ -327,7 +329,7 @@ drive a full TUI session under tmux:
 ```sh
 set -a; source models.env; set +a
 tmux new-session -d -s pi-test -x 200 -y 50 \
-  'AGENT_DEBUG=1 npm run agent -- deferred-writer'
+  'AGENT_DEBUG=1 npm run agent -- deferred/deferred-writer'
 sleep 5                                              # let pi boot + print debug
 tmux send-keys -t pi-test 'draft hello.txt saying hi' Enter
 sleep 30                                             # wait for the model
@@ -433,9 +435,9 @@ or kill on timeout), the scratch tmpdir is removed. The artifacts
 themselves are in-memory in the deferred-confirm handler until the
 end-of-turn applies (or rejects) them.
 
-Worked examples: `pi-sandbox/agents/writer-foreman.yaml` (single-
-recipe foreman driving `deferred-writer`) and
-`pi-sandbox/agents/delegator.yaml` (general-purpose planner with a
+Worked examples: `pi-sandbox/agents/deferred/writer-foreman.yaml` (single-
+recipe foreman driving `deferred/deferred-writer`) and
+`pi-sandbox/agents/deferred/delegator.yaml` (general-purpose planner with a
 broad allowlist).
 
 ### `agent-bus` — async peer messaging (long-lived, named)
@@ -483,7 +485,7 @@ v1 defaults intentionally deferred to later: no auth (filesystem perms
 only), no offline queue, no synthesised request/response correlation
 beyond the optional `in_reply_to` field, hard-fail on name collision.
 
-Worked example: `pi-sandbox/agents/peer-chatter.yaml`.
+Worked example: `pi-sandbox/agents/deferred/peer-chatter.yaml`.
 
 ### Why two systems and not one
 
@@ -508,9 +510,9 @@ targeting:
 ```sh
 set -a; source models.env; set +a
 tmux new-session -d -s bus-test -x 200 -y 50 \
-  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p1 -- --agent-name planner'
+  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- deferred/peer-chatter --sandbox /tmp/p1 -- --agent-name planner'
 tmux split-window -t bus-test \
-  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a'
+  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- deferred/peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a'
 sleep 5
 tmux send-keys -t bus-test:0.0 'call agent_list, then agent_send to worker-a with body "ping"' Enter
 sleep 30
@@ -526,7 +528,7 @@ To exercise the **atomic delegate** end-to-end, drive
 set -a; source models.env; set +a
 mkdir -p /tmp/foreman-test
 tmux new-session -d -s foreman -x 200 -y 50 \
-  'AGENT_DEBUG=1 npm run agent -- writer-foreman --sandbox /tmp/foreman-test'
+  'AGENT_DEBUG=1 npm run agent -- deferred/writer-foreman --sandbox /tmp/foreman-test'
 sleep 5
 tmux send-keys -t foreman \
   'draft hello.txt with text "Hi"' Enter
@@ -556,16 +558,16 @@ ls /tmp/foreman-test/   # hello.txt and world.txt both present
 
 Negative cases worth probing manually:
 
-- **Loud fail under print mode**: run `npm run agent -- deferred-writer
+- **Loud fail under print mode**: run `npm run agent -- deferred/deferred-writer
   -p "draft x.txt"` directly. With no UI, the worker exits but stderr
   contains `[deferred] dropped: no UI available`. (Cross-agent
   approval forwarding now flows over the bus, not through `--rpc-sock`.)
 - **Recipe not allowed**: prompt foreman with `recipe:
-  "deferred-editor"` → `delegate: recipe 'deferred-editor' not in
-  this agent's allowed list [deferred-writer]`.
+  "deferred/deferred-editor"` → `delegate: recipe 'deferred/deferred-editor' not in
+  this agent's allowed list [deferred/deferred-writer]`.
 - **Schema rejection**: scratch recipe with
-  `extensions: [atomic-delegate]` and no `agents:` → runner exits with
-  `loads extension 'atomic-delegate' but has no 'agents:' list`.
+  `extensions: [deferred/atomic-delegate]` and no `agents:` → runner exits with
+  `loads extension 'deferred/atomic-delegate' but has no 'agents:' list`.
 
 ## Supervisor inbound rail — Phase 3c
 
@@ -675,7 +677,7 @@ group_bindings:
 
 nodes:
   - name: authority             # instance name on the bus (--agent-name)
-    recipe: mesh-authority      # pi-sandbox/agents/<recipe>.yaml
+    recipe: deferred/mesh-authority      # pi-sandbox/agents/<recipe>.yaml
     sandbox: /tmp/mesh/auth     # optional; auto-created under /tmp if omitted
     task: "..."                 # optional; sent as the first RPC prompt
 
@@ -684,7 +686,7 @@ nodes:
 
   # Habitat-overlay fields — override recipe + group_bindings values:
   - name: w1
-    recipe: mesh-node
+    recipe: deferred/mesh-node
     supervisor: authority       # which peer to escalate approvals to
     submitTo: collector         # which peer receives submissions
     acceptedFrom: [authority]   # peers allowed to send approval-request / submission envelopes
@@ -706,7 +708,7 @@ groups:
   workers: [w1, w2, w3]
 nodes:
   - name: authority
-    recipe: mesh-authority
+    recipe: deferred/mesh-authority
     acceptedFrom: ["@workers"]  # expands to [w1, w2, w3] before launch
 ```
 
