@@ -40,5 +40,19 @@ npm run pi                                  # raw pi session for exploration
   build-by-pi workflow.
 - [`docs/conventions.md`](./docs/conventions.md) — branch, commit, secrets.
 
+## Agent skills
+
+### Issue tracker
+
+Local markdown under `.scratch/<feature-slug>/`. See [`docs/agents/issue-tracker.md`](./docs/agents/issue-tracker.md).
+
+### Triage labels
+
+Five canonical roles, default strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See [`docs/agents/triage-labels.md`](./docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See [`docs/agents/domain.md`](./docs/agents/domain.md).
+
 @docs/agents.md
 @docs/model-tiers.md
