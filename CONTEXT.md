@@ -95,7 +95,7 @@ The **Foreman**'s per-issue inner-loop pattern (after Matt Pocock): claim issue 
 _Avoid_: agent loop, work loop, TDD loop (Ralph Loop is the named one in this codebase)
 
 **Project**:
-The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp --feature <slug>` binds the mesh's **Bus Root**, the kanban worktree at `~/.mesh-scratch/<project>/<feature-slug>/kanban/`, and per-issue worktree scratch to that `(project, feature)` pair. AgentFactory itself is a *runner*; it is never the **Project**.
+The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp --feature <slug>` binds the mesh's **Bus Root**, the kanban worktree at `<project>/.mesh-features/<feature-slug>/kanban/`, and per-issue worktree scratch to that `(project, feature)` pair. AgentFactory itself is a *runner*; it is never the **Project**.
 _Avoid_: target, repo (in code, but the term is **Project** in design discussions)
 
 **Feature**:
