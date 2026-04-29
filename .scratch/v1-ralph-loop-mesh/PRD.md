@@ -10,7 +10,7 @@ The developer also wants the system to *pause* cleanly when there is no work —
 
 ## Solution
 
-Add a markdown-issue-driven mesh that runs alongside the existing stack, on the same protocol layer. A long-lived **Kanban** peer (non-LLM, like `human-relay.mjs`) watches the **Project**'s issue state under `.scratch/<feature-slug>/issues/` via an `issue-watcher` extension. When an issue becomes ready (its file's `Status:` line transitions to `ready-for-agent`), the **Kanban** spawns a **Foreman** (LLM, per-issue, ephemeral) that runs the **Ralph Loop** autonomously: claims the issue file (writes a `Claimed-by:` line), checks out a git worktree on a feature branch, writes tests, runs them, fixes failures, commits, and submits the branch. The Foreman can `delegate` to **Workers** (specialist recipes — code review, type-check, etc.) mid-loop for ad-hoc help. Submissions route to `human-relay` for QA; the human picks approve / reject / revise via the existing `respond_to_request` surface. When no ready issue files remain, the **Kanban** idles on its bus socket; no Foremen run; no model cost is incurred. The existing deferred-* stack is preserved in named subdirectories — both stacks ride the same bus protocol and **Habitat** materialiser.
+Add a markdown-issue-driven mesh that runs alongside the existing stack, on the same protocol layer. A long-lived **Kanban** peer (non-LLM, like `human-relay.mjs`) watches the **Project**'s issue state under `.scratch/<feature-slug>/issues/` via an `issue-watcher` extension. When an issue becomes ready (`Status: ready-for-agent` or `Status: ready-for-human`), the **Kanban** spawns a **Foreman** (LLM, per-issue, ephemeral) that runs the **Ralph Loop** autonomously: claims the issue file (writes a `Claimed-by:` line), checks out a git worktree on a feature branch, writes tests, runs them, fixes failures, commits. Reintegration takes one of two paths per `docs/agents/issue-tracker.md`: **AFK** (`ready-for-agent`) auto-merges the feature branch into the workflow branch and closes the issue; **HITL** (`ready-for-human`) pushes the branch, opens a PR against the workflow branch, also surfaces a submission to `human-relay` for review, and pauses until the PR is merged. The Foreman can `delegate` to **Workers** (specialist recipes — code review, type-check, etc.) mid-loop for ad-hoc help. When no ready issue files remain, the **Kanban** idles on its bus socket; no Foremen run; no model cost is incurred. The existing deferred-* stack is preserved in named subdirectories — both stacks ride the same bus protocol and **Habitat** materialiser.
 
 ## User Stories
 
@@ -26,11 +26,15 @@ Add a markdown-issue-driven mesh that runs alongside the existing stack, on the 
 8. As a developer, I want a **Foreman** to create a git worktree on a feature branch named after the issue (e.g., `feature/<feature-slug>-<NN>-<slug>`), so that the Foreman's work is isolated from canonical and visible to me by branch name.
 9. As a developer, I want a **Foreman** to run the project's tests inside its worktree, so that the Foreman can self-verify its work before submitting.
 10. As a developer, I want a **Foreman** to commit its work to the feature branch in coherent commits, so that the diff and commit history are reviewable through normal git tooling.
-11. As a developer, I want a **Foreman** to submit the branch when it considers the work done, so that I receive a clean reviewable branch.
-12. As a developer, I want the **Foreman** to include test status (pass / fail / not-run) in its **Submission**, so that the QA UI can show whether the worker self-verified.
-13. As a developer, I want submissions to surface in `human-relay`, so that I can review and decide approve / reject / revise from a familiar UI.
-14. As a developer, I want `human-relay`'s revise action to send feedback to the **Foreman** that produced the submission (or, if the Foreman has already exited, to leave a note in the issue file's `## Comments` section and re-claim), so that revision is a real round-trip and not just rejection.
-15. As a developer, I want a rejected or aborted **Foreman** to release its claim (remove the `Claimed-by:` line), so that the issue can be re-attempted.
+11. As a developer, I want a **Foreman** to choose its reintegration path from the issue's triage role at claim time (`ready-for-agent` → auto-merge; `ready-for-human` → push + PR-pause), so that AFK and HITL issues each follow the right workflow per `docs/agents/issue-tracker.md`.
+11a. As a developer, when a **Foreman** completes work on a `ready-for-agent` (AFK) issue with passing tests, I want it to auto-merge its feature branch into the workflow branch and exit cleanly, so that AFK work flows back without human review.
+11b. As a developer, when a **Foreman** completes work on a `ready-for-human` (HITL) issue, I want it to push the feature branch and open a pull request against the workflow branch, then exit, so that I can review and merge from a familiar UI; the issue-file claim stays in place until the PR is merged or rejected.
+11c. As a developer, when a **Foreman**'s tests fail on any issue (AFK or HITL), I want it to abort without merging or pushing, so that broken work never pollutes the workflow branch.
+11d. As a developer, when a **Foreman** successfully reintegrates (auto-merged for AFK, PR-merged for HITL), I want its issue file moved to `issues/closed/` with `Status: closed` and a closing note, so that the issue tree reflects completion.
+12. As a developer, I want the **Foreman** to include test status (pass / fail / not-run) in its **Submission** (HITL path) and in the auto-merge commit message (AFK path), so that the verification record is captured either way.
+13. As a developer, for HITL issues, I want submissions to surface in `human-relay` (in addition to the PR), so that I can opt to approve / reject / revise from the bus UI before the PR-merge step closes the loop.
+14. As a developer, for HITL issues, I want `human-relay`'s revise action to send feedback to the **Foreman** that produced the submission (or, if the Foreman has already exited, to leave a note in the issue file's `## Comments` section and re-claim), so that revision is a real round-trip and not just rejection.
+15. As a developer, I want a rejected or aborted **Foreman** (test failure, HITL revise, HITL reject) to release its claim (remove the `Claimed-by:` line), so that the issue can be re-attempted.
 16. As a developer, I want **Foreman** timeouts to be generous (10-30 min default), so that a long TDD loop can finish without being killed.
 17. As a developer, I want the mesh to pause when no issues are ready, so that I do not pay model cost during inactivity.
 18. As a developer, I want the mesh to wake automatically when a new issue becomes ready or a blocker is cleared, so that I do not have to restart anything when I add work.
@@ -48,7 +52,7 @@ Add a markdown-issue-driven mesh that runs alongside the existing stack, on the 
 30. As a developer, I want a clear vocabulary (**Kanban**, **Foreman**, **Worker**, **Ralph Loop**, **Project**) in `CONTEXT.md`, so that future architecture conversations do not re-litigate the naming.
 31. As a developer, I want ADR-0001 / 0002 / 0003 / 0004 / 0005 referenced from the V1 PRD and from each new module, so that the design rationale is traceable from the code.
 32. As a planning agent (e.g., Pocock's `/prd-to-issues`), I want to create thin-vertical-slice issue files that one **Ralph Loop** can complete, so that workforce scales by issue granularity rather than worker complexity.
-33. As a developer, I want a future PR-shepherd module (V2) to slot in as a `submitTo` target instead of `human-relay`, so that the Submission shape we ship in V1 does not need to change when PR-mode arrives.
+33. As a developer, I want a future PR-shepherd module (V2) to extend the HITL path with richer PR operations (auto-rebase on workflow-branch updates, comment-watch, CI-failure feedback to the Foreman), so that V2 builds on V1's PR-pause semantics rather than replacing them.
 
 ## Implementation Decisions
 
@@ -58,11 +62,15 @@ Add a markdown-issue-driven mesh that runs alongside the existing stack, on the 
 
 - **issue-watcher (extension).** Observes the **Project**'s issue files and emits `wake` envelopes when a relevant transition is observed. Interface: "fire wake envelope to a configured target peer when a relevant issue-state transition happens." V1 ships bare-wake-up semantics (the Kanban re-scans the issue tree on every wake); the envelope-payload schema leaves room for issue-tagged or typed-event variants in V2.
 
-- **Worktree manager (extension).** Owns the per-issue git worktree lifecycle for a Foreman: `git worktree add` on Foreman start, `git worktree remove` on submission or abort. Owns the branch naming convention. Pure-function core (decide branch name, decide path) testable without a real repo.
+- **Worktree manager (extension).** Owns the per-issue git worktree lifecycle for a Foreman: `git worktree add` (off the workflow branch) on Foreman start, `git worktree remove` on completion (auto-merge for AFK, push-and-PR for HITL) or abort. Owns the branch naming convention and the reintegration step (merge for AFK, push for HITL). Pure-function core (decide branch name, decide path, decide reintegration mode) testable without a real repo.
 
-- **Foreman recipes.** New YAML recipes under `pi-sandbox/agents/ralph/`. Tools palette includes `bash`, `read`, `write`, `edit`, `grep`, `find`, `glob`, `delegate`. Habitat-overlay fields (`agents:`, `submitTo:`) declare specialist Workers and the submission target (`human-relay`).
+- **Reintegration mode selection (Foreman logic).** At claim time, the Foreman reads the issue's `Status:` line: `ready-for-agent` selects auto-merge (no submission envelope, no PR); `ready-for-human` selects push-and-PR plus a `submission` envelope to `human-relay`. Test failure in either mode aborts before reintegration.
 
-- **Submission payload (V1 branch variant).** The `submission` bus envelope's payload schema gains a branch-mode variant carrying `branchRef`, `projectPath`, `issuePath` (relative to the project root, e.g. `.scratch/v1-ralph-loop-mesh/issues/01-kanban-script.md`), optional `testOutput`. The supervisor inbound rail (`_lib/supervisor-inbox.ts`) handles it via the same action graph; in V1 only `human-relay` invokes those actions (per ADR-0004).
+- **Foreman recipes.** New YAML recipes under `pi-sandbox/agents/ralph/`. Tools palette includes `bash`, `read`, `write`, `edit`, `grep`, `find`, `glob`, `delegate`. Habitat-overlay fields declare specialist Workers (`agents:`); `submitTo: human-relay` is set unconditionally (used only on the HITL path; AFK runs ignore the field).
+
+- **Submission payload (V1 branch variant, HITL only).** The `submission` bus envelope's payload schema gains a branch-mode variant carrying `branchRef`, `prRef` (URL or number, post-push), `projectPath`, `issuePath` (relative to the project root, e.g. `.scratch/v1-ralph-loop-mesh/issues/01-kanban-script.md`), optional `testOutput`. Only the HITL path emits this envelope. The supervisor inbound rail (`_lib/supervisor-inbox.ts`) handles it via the same action graph; in V1 only `human-relay` invokes those actions (per ADR-0004).
+
+- **Issue-close step.** On successful AFK auto-merge or HITL PR-merge, the workflow that performed the merge (the Foreman for AFK, the PR-merge handler for HITL) `git mv`s the issue file from `issues/<NN>-<slug>.md` to `issues/closed/<NN>-<slug>.md`, sets `Status: closed`, and appends a closing note under `## Comments`.
 
 ### Modules that move (preserved, not modified)
 
@@ -80,7 +88,7 @@ Add a markdown-issue-driven mesh that runs alongside the existing stack, on the 
 - **Kanban is non-LLM.** Dispatch is deterministic; no model in the control plane.
 - **Foreman is per-issue ephemeral.** One issue file, one Foreman process. Coordinator (Kanban) persists; Foremen do not.
 - **Atomic Delegate survives unchanged for Foreman → Worker.** The same `delegate` tool the deferred stack uses handles mid-loop specialist help in the Ralph stack.
-- **Branches, not patches or PRs, are the V1 deliverable.** PR-mode is pluggable behind the **Submission** seam (Story #33); not in V1.
+- **Reintegration is path-specific.** AFK (`ready-for-agent`) auto-merges the feature branch into the workflow branch — the V1 deliverable for AFK is the merged commit. HITL (`ready-for-human`) pushes the branch and opens a PR — the V1 deliverable for HITL is the PR. PR-shepherd richer ops (Story #33) layer on the HITL path in V2.
 - **Project is configured per-mesh-launch.** AgentFactory is a runner. Multi-project meshes are V2.
 - **Workers are Atomic Delegate targets only.** They do not read or write the issue tree. Decomposition belongs upstream in PRD-driven planning, not in workers.
 - **Pause is genuinely free.** No idle model calls; the Kanban awaits on a bus socket.
@@ -94,8 +102,9 @@ Add a markdown-issue-driven mesh that runs alongside the existing stack, on the 
 ### Contract decisions
 
 - The Foreman receives its issue path via a CLI flag (`--issue <feature-slug>/<NN>-<slug>`, resolved against the project's `.scratch/`) when spawned by the Kanban. Same flag-passing mechanism the runner uses today for `--habitat-spec`.
-- The Foreman's `submitTo` is `human-relay` in V1.
-- The Worktree manager exposes `prepareWorktree(issueId, projectPath) → {worktreePath, branchName}` and `disposeWorktree(worktreePath)` to the Foreman, called at session start and end respectively.
+- The Foreman receives its workflow branch via a CLI flag (`--workflow-branch <ref>`, default `main`) so the worktree branches off the right base and reintegration knows where to merge or open the PR.
+- The Foreman's `submitTo` is `human-relay` in V1, used only on the HITL path. AFK runs do not emit a submission envelope.
+- The Worktree manager exposes `prepareWorktree(issuePath, projectPath, workflowBranch) → {worktreePath, branchName, mode}` (where `mode` is `"auto-merge"` or `"pr-pause"`) and `disposeWorktree(worktreePath)` to the Foreman, called at session start and end respectively. The reintegration call (merge for AFK, push+open-PR for HITL) is a separate method on the same module.
 
 ## Testing Decisions
 
@@ -125,7 +134,7 @@ A good test exercises the *external behaviour* of a deep module with real inputs
 
 ## Out of Scope
 
-- **PR submission and PR-watching modules.** Future modules layer on the `submitTo` field — a `pr-shepherd` peer takes a branch submission and opens a PR; another module watches the PR for review-requested events, comments, and CI failures. Not V1.
+- **Rich PR-watching modules.** V1's HITL path opens a PR and pauses; that's the V1 deliverable for HITL. A future `pr-shepherd` peer that auto-rebases on workflow-branch updates, watches for review-requested events, comments, and CI failures, and feeds them back to a re-spawned Foreman is V2 (see Story #33).
 - **LLM reviewer in the loop.** Per ADR-0004, the supervisor LLM is not in V1. ADR-0003 is preserved as future-state.
 - **Issue-tree decomposition.** Foremen do not create child issue files for sub-tasks. Decomposition is a planning step (`/prd-to-issues`-style), upstream of the mesh.
 - **Multi-project meshes.** Each `npm run mesh` invocation binds to one **Project**. A registry of projects with per-issue project routing is V2.

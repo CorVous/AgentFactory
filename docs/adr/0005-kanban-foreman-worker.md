@@ -1,6 +1,6 @@
 # Kanban dispatches Foremen who arrange Workers for their kanban story
 
-V1 of AgentFactory adds a markdown-issue-driven mesh on top of the existing protocol layer. A long-lived non-LLM **Kanban** peer watches the **Project**'s issue tree under `.scratch/<feature-slug>/issues/` via an `issue-watcher` extension; on each ready issue file it spawns an LLM **Foreman** running the **Ralph Loop**. Foremen `delegate` mid-loop to **Workers** (specialist **Recipes**) for ad-hoc help. Submissions are git branches; in V1 they route to `human-relay` for QA (per [ADR-0004](./0004-drop-llm-reviewer-for-v1.md)). The existing deferred-* + **Atomic Delegate** stack is preserved in subdirectories — both stacks coexist on the same protocol layer for different workflows.
+V1 of AgentFactory adds a markdown-issue-driven mesh on top of the existing protocol layer. A long-lived non-LLM **Kanban** peer watches the **Project**'s issue tree under `.scratch/<feature-slug>/issues/` via an `issue-watcher` extension; on each ready issue file it spawns an LLM **Foreman** running the **Ralph Loop**. Foremen `delegate` mid-loop to **Workers** (specialist **Recipes**) for ad-hoc help. Reintegration takes one of two paths per `docs/agents/issue-tracker.md`: AFK (`Status: ready-for-agent`) auto-merges the feature branch into the workflow branch and closes the issue; HITL (`Status: ready-for-human`) pushes the branch, opens a PR against the workflow branch, surfaces a submission to `human-relay` for review (per [ADR-0004](./0004-drop-llm-reviewer-for-v1.md)), and pauses until the PR is merged. The existing deferred-* + **Atomic Delegate** stack is preserved in subdirectories — both stacks coexist on the same protocol layer for different workflows.
 
 ## Why
 
@@ -43,7 +43,7 @@ V1 of AgentFactory adds a markdown-issue-driven mesh on top of the existing prot
 
 ### Submission shape
 
-- The `submission` bus envelope's payload schema gains a branch-mode variant: `branchRef`, `projectPath`, `issuePath` (relative to the project root), optional `testOutput`. The wire format stays bus-envelope-compatible.
+- The `submission` bus envelope's payload schema gains a branch-mode variant: `branchRef`, `prRef` (URL or number, post-push), `projectPath`, `issuePath` (relative to the project root), optional `testOutput`. Only the HITL path emits this envelope; AFK runs auto-merge directly and skip the submission entirely. The wire format stays bus-envelope-compatible.
 - `_lib/supervisor-inbox.ts`'s action graph handles the new payload via the same approve/reject/revise/escalate surface; in V1 only `human-relay` invokes those actions (per ADR-0004).
 
 ### What survives unchanged
