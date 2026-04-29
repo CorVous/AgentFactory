@@ -45,7 +45,17 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
-  const out = { name: null, sandbox: null, agentBus: null, passthrough: [] };
+  const out = {
+    name: null,
+    sandbox: null,
+    agentBus: null,
+    // Extension CLI Flags — Ralph-Loop Foreman context
+    issue: null,          // --issue <feature-slug>/<NN>-<slug>
+    meshBranch: null,     // --mesh-branch <branch>
+    projectPath: null,    // --project-path <path>
+    kanbanWorktree: null, // --kanban-worktree <path>
+    passthrough: [],
+  };
   let passthroughOnly = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -59,6 +69,14 @@ function parseArgs(argv) {
       out.sandbox = argv[++i] ?? die("--sandbox requires a directory");
     } else if (a === "--agent-bus") {
       out.agentBus = argv[++i] ?? die("--agent-bus requires a directory");
+    } else if (a === "--issue") {
+      out.issue = argv[++i] ?? die("--issue requires a value");
+    } else if (a === "--mesh-branch") {
+      out.meshBranch = argv[++i] ?? die("--mesh-branch requires a value");
+    } else if (a === "--project-path") {
+      out.projectPath = argv[++i] ?? die("--project-path requires a path");
+    } else if (a === "--kanban-worktree") {
+      out.kanbanWorktree = argv[++i] ?? die("--kanban-worktree requires a path");
     } else if (a === "--help" || a === "-h") {
       printHelp();
       process.exit(0);
@@ -453,6 +471,15 @@ if (topologyOverlayJson) {
 }
 
 piArgs.push("--habitat-spec", JSON.stringify(habitatSpec));
+
+// Extension CLI Flags — Ralph-Loop Foreman context.
+// These are forwarded as pi extension flags so the worktree-manager
+// extension can read them via pi.getFlag().
+if (args.issue) piArgs.push("--issue", args.issue);
+if (args.meshBranch) piArgs.push("--mesh-branch", args.meshBranch);
+if (args.projectPath) piArgs.push("--project-path", args.projectPath);
+if (args.kanbanWorktree) piArgs.push("--kanban-worktree", args.kanbanWorktree);
+
 piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);

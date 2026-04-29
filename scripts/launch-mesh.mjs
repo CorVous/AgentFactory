@@ -19,7 +19,7 @@
 //       recipe: mesh-node
 //       task: "wait for requests"
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +31,7 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
 const RELAY = path.join(REPO_ROOT, "scripts", "human-relay.mjs");
+const KANBAN = path.join(REPO_ROOT, "scripts", "kanban.mjs");
 const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 const AGENT_SUBDIRS = ["deferred"];
 
@@ -52,12 +53,99 @@ function die(msg) {
   process.exit(1);
 }
 
-// ── Parse CLI ────────────────────────────────────────────────────────────────
+function git(cwd, ...args) {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
 
-const meshFile = process.argv[2];
-if (!meshFile || meshFile.startsWith("-")) die("Usage: launch-mesh.mjs <mesh.yaml>");
-const meshPath = path.resolve(meshFile);
-if (!existsSync(meshPath)) die(`mesh file not found: ${meshPath}`);
+// ── Parse CLI ────────────────────────────────────────────────────────────────
+//
+// Two modes:
+//   (a) Runtime mode: --project <path> --feature <slug>
+//       Materialises the kanban worktree (idempotent) and spawns the Kanban.
+//   (b) Topology mode: <mesh.yaml>  (existing behaviour, unchanged)
+
+const argv = process.argv.slice(2);
+
+// Detect runtime mode: first arg is --project or --feature
+const isRuntimeMode = argv.some((a) => a === "--project" || a === "--feature");
+
+if (isRuntimeMode) {
+  // ── Runtime mode ────────────────────────────────────────────────────────────
+  let projectArg = null;
+  let featureSlug = null;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--project" && argv[i + 1]) projectArg = argv[++i];
+    else if (argv[i] === "--feature" && argv[i + 1]) featureSlug = argv[++i];
+  }
+  if (!projectArg) die("runtime mode requires --project <path>");
+  if (!featureSlug) die("runtime mode requires --feature <slug>");
+
+  const projectPath = path.resolve(projectArg);
+  if (!existsSync(projectPath)) die(`project path not found: ${projectPath}`);
+
+  const meshBranch = `feature/${featureSlug}`;
+  const kanbanWorktreePath = path.join(projectPath, ".mesh-features", featureSlug, "kanban");
+
+  // git worktree add — idempotent: skip if the worktree directory already exists
+  if (!existsSync(kanbanWorktreePath)) {
+    process.stderr.write(`launch-mesh: adding kanban worktree at ${kanbanWorktreePath}\n`);
+    mkdirSync(path.dirname(kanbanWorktreePath), { recursive: true });
+    try {
+      git(projectPath, "worktree", "add", kanbanWorktreePath, meshBranch);
+    } catch (e) {
+      die(`git worktree add failed: ${e.message}\n  (Is feature/${featureSlug} a branch in ${projectPath}?)`);
+    }
+  } else {
+    process.stderr.write(`launch-mesh: kanban worktree already present at ${kanbanWorktreePath}\n`);
+  }
+
+  // Bus root: scoped to (project, feature)
+  const busRoot = process.env.PI_AGENT_BUS_ROOT
+    ? path.resolve(process.env.PI_AGENT_BUS_ROOT)
+    : path.join(os.homedir(), ".pi-agent-bus", `${path.basename(projectPath)}-${featureSlug}`);
+  mkdirSync(busRoot, { recursive: true });
+
+  process.stderr.write(`launch-mesh: starting Kanban (runtime mode)\n`);
+  process.stderr.write(`  project=${projectPath}\n`);
+  process.stderr.write(`  feature=${featureSlug}\n`);
+  process.stderr.write(`  kanbanWorktree=${kanbanWorktreePath}\n`);
+  process.stderr.write(`  busRoot=${busRoot}\n`);
+
+  const kanbanArgs = [
+    KANBAN,
+    "--name", "kanban",
+    "--bus-root", busRoot,
+    "--project", projectPath,
+    "--feature", featureSlug,
+    "--kanban-worktree", kanbanWorktreePath,
+  ];
+
+  const child = spawn(process.execPath, kanbanArgs, {
+    cwd: kanbanWorktreePath,
+    stdio: "inherit",
+    env: { ...process.env, PI_AGENT_BUS_ROOT: busRoot },
+  });
+
+  child.on("exit", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+
+  process.once("SIGINT", () => {
+    try { child.kill("SIGTERM"); } catch { /* noop */ }
+  });
+  process.once("SIGTERM", () => {
+    try { child.kill("SIGTERM"); } catch { /* noop */ }
+  });
+
+  // Exit immediately — the kanban process takes over stdio
+  // (process will stay alive as long as the child is alive via the exit handler)
+} else {
+  // ── Topology mode (existing behaviour) ──────────────────────────────────────
+  const meshFile = argv[0];
+  if (!meshFile || meshFile.startsWith("-")) die("Usage: launch-mesh.mjs <mesh.yaml>  OR  launch-mesh.mjs --project <path> --feature <slug>");
+  const meshPath = path.resolve(meshFile);
+  if (!existsSync(meshPath)) die(`mesh file not found: ${meshPath}`);
 
 // ── Load topology ─────────────────────────────────────────────────────────────
 
@@ -281,3 +369,4 @@ process.stderr.write(
   `launch-mesh: started ${children.length} node(s) — bus_root=${busRoot}\n` +
   `             Press Ctrl+C to stop all.\n`,
 );
+} // end topology mode else block
