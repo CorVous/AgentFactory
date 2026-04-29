@@ -40,14 +40,17 @@ Per ADR-0001 / 0002 / 0005, the mesh is the sole runtime; the Habitat materialis
 ### Foreman recipe (`pi-sandbox/agents/ralph/foreman.yaml`, happy-path only)
 
 - `LEAD_HARE_MODEL` tier (story #25).
-- Tools palette: `bash, read, write, edit, grep, find, glob, delegate`.
+- Tools palette: `read, write, edit, grep, find, glob, delegate, run_tests, git_status, git_diff, git_add, git_commit`. **No `bash` — V1 explicitly avoids granting unrestricted shell access; capability-bounded tools wrap whitelisted commands instead. Podman containerization is the long-term answer for tasks that need arbitrary commands.**
 - Habitat overlay declares `submitTo: human-relay` (used only by the HITL path in #04 — AFK runs ignore the field).
+
+**Design note on `bash` removal:** The `sandbox` baseline extension (always merged by `scripts/run-agent.mjs`) hard-blocks `bash` with `{ block: true }`. Rather than route around the sandbox, V1 provides five purpose-built tools: `run_tests` (wraps `npm test`), `git_status` (`git status --porcelain`), `git_diff` (`git diff` / `git diff --staged`), `git_add` (`git add <paths>`), and `git_commit` (`git commit -m <message>`). Each uses `execFile` with an argument array — no shell injection surface. The per-issue worktree path is read from `globalThis.__pi_worktree_manager__` populated by `worktree_prepare`. Podman containerization is the long-term story for tasks that need truly arbitrary commands.
+
 - Workflow per claim (happy path):
   1. Read the issue file's `Status:` line; AFK trunk handles `ready-for-agent` only (HITL `ready-for-human` exits early in this issue and is wired up in #04).
   2. Write a `Claimed-by:` line into the issue file.
-  3. Call `prepareWorktree` to get a per-issue worktree on `feature/<slug>-<NN>-<slug>`.
-  4. Run the Ralph Loop (TDD): write tests, run them, fix failures, commit. Tests run via `bash` inside the per-issue worktree.
-  5. On all-tests-pass: call `reintegrate` (auto-merge into `feature/<slug>` with test status in the merge commit message, story #12 AFK half), then close the issue (`git mv` to `issues/closed/`, `Status: closed`, append closing note under `## Comments` — all committed on `feature/<slug>`), then `disposeWorktree`.
+  3. Call `worktree_prepare` to get a per-issue worktree on `feature/<slug>-<NN>-<slug>`.
+  4. Run the Ralph Loop (TDD): write tests, run them via `run_tests`, fix failures, commit via `git_status` / `git_diff` / `git_add` / `git_commit`.
+  5. On all-tests-pass: call `worktree_reintegrate` (auto-merge into `feature/<slug>` with test status in the merge commit message, story #12 AFK half), then close the issue (`git mv` to `issues/closed/`, `Status: closed`, append closing note under `## Comments` — all committed on `feature/<slug>`), then `worktree_dispose`.
 - **Abort path (test-fail, kill, timeout) is deferred to #03b.** In this slice, an abort leaks the worktree and per-issue branch — that's #03b's job to clean up.
 - Generous default timeout (10–30 min, story #16).
 
@@ -61,7 +64,7 @@ This is the trunk's HITL gate. Once the hermetic pieces are green, run a tmux in
 - [ ] Kanban binds a bus socket and idles when no `ready-for-agent` issues exist.
 - [ ] Kanban dispatches one Foreman per `ready-for-agent` issue (V1 hardcoded max concurrency; #06 makes it a flag).
 - [ ] Foreman writes a `Claimed-by:` line atomically before doing other work.
-- [ ] Foreman creates a per-issue worktree on the right branch and runs project tests inside it via `bash`.
+- [ ] Foreman creates a per-issue worktree on the right branch and runs project tests inside it via `run_tests` (and commits via `git_add` / `git_commit`). No `bash` — V1 uses capability-bounded tools only.
 - [ ] On test-pass, Foreman commits its work, AFK auto-merges into `feature/<slug>` with test-status in the commit message, and closes the issue (`git mv` to `issues/closed/` with `Status: closed` + closing note).
 - [ ] Per-issue worktree manager has hermetic unit tests against a tmpdir git repo covering: branch naming, off-the-right-base creation, AFK auto-merge, disposal. (Abort-cleanup tests in #03b.)
 - [ ] Kanban spawn-decision pure function has unit tests covering: ready issue selected, claimed issue skipped. (Blocked-skipped + non-existent-depends-on lives in #07; full input-shape coverage in #03b.)

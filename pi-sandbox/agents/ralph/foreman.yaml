@@ -57,15 +57,14 @@ prompt: |
   All test-writing and fixing work happens in this worktree.
 
   ### Step 4 — Run the Ralph Loop (TDD)
-  From inside the per-issue worktree (use `bash` with the worktree path
-  as the working directory):
+  Work inside the per-issue worktree using the capability-bounded tools:
     a. Write failing tests first (red phase).
     b. Implement the feature to make them pass (green phase).
     c. Refactor if needed (blue phase).
-    d. Run the project's test suite (`npm test` or equivalent).
+    d. Run the project's test suite: `run_tests`.
     e. If tests fail, fix and repeat until all pass.
-    f. Commit your work in logical increments:
-       `git commit -m "<descriptive message>"`.
+    f. Commit your work in logical increments using `git_status`,
+       `git_diff`, `git_add`, and `git_commit`.
 
   Work only within the per-issue worktree directory. Do not modify files
   in the kanban worktree or the main project root.
@@ -97,7 +96,6 @@ prompt: |
   - Generous timeout: take the time you need for a thorough TDD loop.
 
 tools:
-  - bash
   - read
   - write
   - edit
@@ -105,6 +103,16 @@ tools:
   - find
   - glob
   - delegate
+  - run_tests
+  - git_status
+  - git_diff
+  - git_add
+  - git_commit
 
 extensions:
   - worktree-manager
+  - run-tests
+  - git-status
+  - git-diff
+  - git-add
+  - git-commit
