@@ -21,6 +21,7 @@ import {
   disposeWorktree,
   type ReintegrationMode,
 } from "./_lib/worktree-manager";
+import { registerSandboxRoot, unregisterSandboxRoot } from "./deferred/sandbox";
 
 interface WorktreeState {
   issuePath: string;
@@ -139,6 +140,9 @@ export default function (pi: ExtensionAPI) {
         state.worktreePath = result.worktreePath;
         state.branchName = result.branchName;
         state.mode = result.mode;
+        // Widen the sandbox path-allowlist so the git tools can operate in
+        // the per-issue worktree (which lives outside the kanban sandbox root).
+        registerSandboxRoot(result.worktreePath);
         return {
           content: [
             {
@@ -230,6 +234,8 @@ export default function (pi: ExtensionAPI) {
       try {
         disposeWorktree(state.worktreePath, state.projectPath);
         const disposed = state.worktreePath;
+        // Remove the per-issue worktree from the sandbox path-allowlist.
+        unregisterSandboxRoot(state.worktreePath);
         state.worktreePath = undefined;
         state.branchName = undefined;
         return {
