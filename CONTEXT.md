@@ -80,27 +80,22 @@ The deferred-* + **Atomic Delegate** stack defined above remains the model for r
 
 **Kanban**:
 A long-lived non-LLM **Peer** that watches the **Project**'s issue tree (`.scratch/<feature-slug>/issues/*.md`, per `docs/agents/issue-tracker.md`) and dispatches **Foremen** for ready issues. Implemented as a script (no pi runtime, no model calls). Bus precedent: `human-relay.mjs`. Pause-when-blocked is "Kanban idle, no Foremen running."
-Canonical reference: [ADR-0005](docs/adr/0005-kanban-foreman-worker.md). Rides the protocol defined in [ADR-0001](docs/adr/0001-mesh-subsumes-delegation.md); each spawned Foreman gets a **Habitat** per [ADR-0002](docs/adr/0002-habitat-materialises-once.md). Human QA path follows [ADR-0004](docs/adr/0004-drop-llm-reviewer-for-v1.md).
 _Avoid_: dispatcher, scheduler, foreman-script
 
 **Foreman**:
 An LLM **Peer** spawned by a **Kanban** for one ready issue file. Runs the **Ralph Loop** autonomously: claims the issue (writes a `Claimed-by:` line into the file), creates a git worktree on a feature branch, writes tests, runs them, fixes failures, commits, submits the branch. Arranges **Workers** for ad-hoc help via **Atomic Delegate**. Existing Recipe in the deferred stack: `writer-foreman.yaml` — same role name, different mutation primitives.
-Canonical reference: [ADR-0005](docs/adr/0005-kanban-foreman-worker.md). **Habitat** materialises once per [ADR-0002](docs/adr/0002-habitat-materialises-once.md); supervisor inbox per [ADR-0003](docs/adr/0003-supervisor-llm-in-review-loop.md) (preserved as future-state per [ADR-0004](docs/adr/0004-drop-llm-reviewer-for-v1.md)); bus protocol per [ADR-0001](docs/adr/0001-mesh-subsumes-delegation.md).
 _Avoid_: worker (overloaded — see Flagged ambiguities), agent, planner
 
 **Worker**:
 An LLM **Peer** **Atomic-Delegated** by a **Foreman** for a specialist subtask — code review, type-check, doc-write, etc. Ephemeral; no issue-tree interaction. Existing Recipes: `code-reviewer.yaml`, `change-reviewer.yaml`.
-Canonical reference: [ADR-0005](docs/adr/0005-kanban-foreman-worker.md). Rides the **Atomic Delegate** primitive described in [ADR-0001](docs/adr/0001-mesh-subsumes-delegation.md); **Habitat** per [ADR-0002](docs/adr/0002-habitat-materialises-once.md).
 _Avoid_: helper, sub-agent; "specialist" only informally
 
 **Ralph Loop**:
 The **Foreman**'s per-issue inner-loop pattern (after Matt Pocock): claim issue → worktree → write test → run test → fail → fix → re-run → pass → commit → submit. One pi session per issue, ending when the Foreman submits.
-Canonical reference: [ADR-0005](docs/adr/0005-kanban-foreman-worker.md).
 _Avoid_: agent loop, work loop, TDD loop (Ralph Loop is the named one in this codebase)
 
 **Project**:
 The canonical repository a **Mesh** is wired to at launch. `npm run mesh -- --project ~/Projects/myapp --feature <slug>` binds the mesh's **Bus Root**, the kanban worktree at `<project>/.mesh-features/<feature-slug>/kanban/`, and per-issue worktree scratch to that `(project, feature)` pair. AgentFactory itself is a *runner*; it is never the **Project**.
-Canonical reference: [ADR-0005](docs/adr/0005-kanban-foreman-worker.md).
 _Avoid_: target, repo (in code, but the term is **Project** in design discussions)
 
 **Feature**:
