@@ -17,7 +17,7 @@
 
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { getHabitat } from "./_lib/habitat";
+import { getHabitat } from "../_lib/habitat";
 
 const STATIC_PATH_TOOLS = ["read", "write", "edit", "ls", "grep", "find"];
 

@@ -203,7 +203,7 @@ field entirely.
 
 ## Worked example: deferred-writer
 
-`pi-sandbox/agents/deferred-writer.yaml` composes three extensions:
+`pi-sandbox/agents/deferred/deferred-writer.yaml` composes three extensions:
 
 - `sandbox` (baseline) — disables `bash`, clamps fs activity to the root.
 - `deferred-write` — registers the `deferred_write` tool. Drafts are
@@ -228,7 +228,7 @@ agent using plain `write` but still wanting create-only semantics keeps
 
 ## Worked example: deferred-author (composing all four kinds)
 
-`pi-sandbox/agents/deferred-author.yaml` composes the full set of
+`pi-sandbox/agents/deferred/deferred-author.yaml` composes the full set of
 deferred-* tool extensions and relies on `deferred-confirm` (baseline)
 to show one approval dialog at end-of-turn:
 
@@ -266,7 +266,7 @@ at queue time.
 
 ## Worked example: writer-foreman (atomic delegate)
 
-`pi-sandbox/agents/writer-foreman.yaml` is a Lead-tier foreman that
+`pi-sandbox/agents/deferred/writer-foreman.yaml` is a Lead-tier foreman that
 decomposes a drafting request and dispatches focused batches to a
 `deferred-writer` child. The recipe declares only:
 
@@ -433,9 +433,9 @@ or kill on timeout), the scratch tmpdir is removed. The artifacts
 themselves are in-memory in the deferred-confirm handler until the
 end-of-turn applies (or rejects) them.
 
-Worked examples: `pi-sandbox/agents/writer-foreman.yaml` (single-
+Worked examples: `pi-sandbox/agents/deferred/writer-foreman.yaml` (single-
 recipe foreman driving `deferred-writer`) and
-`pi-sandbox/agents/delegator.yaml` (general-purpose planner with a
+`pi-sandbox/agents/deferred/delegator.yaml` (general-purpose planner with a
 broad allowlist).
 
 ### `agent-bus` — async peer messaging (long-lived, named)
@@ -483,7 +483,7 @@ v1 defaults intentionally deferred to later: no auth (filesystem perms
 only), no offline queue, no synthesised request/response correlation
 beyond the optional `in_reply_to` field, hard-fail on name collision.
 
-Worked example: `pi-sandbox/agents/peer-chatter.yaml`.
+Worked example: `pi-sandbox/agents/deferred/peer-chatter.yaml`.
 
 ### Why two systems and not one
 

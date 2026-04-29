@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # `npm run mesh:cleanup -- --feature <slug>`
 
