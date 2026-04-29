@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # Directory reorg + CONTEXT.md vocabulary
 

@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # issue-watcher extension (wake replaces polling)
 

@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-human
 
 # HITL trunk end-to-end
 

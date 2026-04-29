@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-human
 
 # AFK trunk end-to-end
 

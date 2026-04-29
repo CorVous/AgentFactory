@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # Thin Orchestrator (minimum to make issues appear)
 

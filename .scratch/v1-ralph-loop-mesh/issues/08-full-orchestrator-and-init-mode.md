@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-human
 
 # Full Orchestrator (grill → PRD → issues) + launcher `--init` mode
 

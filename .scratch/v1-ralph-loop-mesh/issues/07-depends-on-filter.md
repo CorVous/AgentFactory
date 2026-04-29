@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 
 # Depends-on filter (blocked issues invisible to Kanban)
 
