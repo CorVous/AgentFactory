@@ -11,7 +11,7 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 // when resolving recipes and extensions by short name. Names are resolved as
 // `<dir>/<name>` first (allowing explicit sub-path notation), then by plain
 // `<name>` against each search directory in order.
-const AGENT_SUBDIRS = ["deferred"];
+const AGENT_SUBDIRS = ["deferred", "ralph"];
 const EXTENSION_SUBDIRS = ["deferred"];
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
