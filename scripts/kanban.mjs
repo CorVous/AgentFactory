@@ -181,6 +181,41 @@ async function bindBusSocket(sockPath) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Build the argv array for spawning a Foreman via run-agent.mjs.
+ *
+ * Extracted as a pure function so it can be unit-tested without spawning a
+ * real process.  The Foreman is always run in pi print mode (-p) with a seed
+ * task: without a -p flag pi exits silently in <1 s when there is no TTY,
+ * causing the Kanban to re-dispatch the same issue every 5 s indefinitely.
+ *
+ * @param {string} relPath   - issue path relative to .scratch/ (e.g. "v1-fixture/01-add-function.md")
+ * @param {string} meshBranch - e.g. "feature/v1-fixture"
+ * @param {string} project    - absolute path to the project root (used as sandbox)
+ * @param {string} busRoot    - absolute path to the bus socket directory
+ * @param {string} kanbanWorktree - absolute cwd of the kanban worktree (process.cwd())
+ * @returns {string[]} argv suitable for spawn(process.execPath, argv, {...})
+ */
+export function buildForemanArgv(relPath, meshBranch, project, busRoot, kanbanWorktree) {
+  // The initial user message that kicks off the Foreman workflow in print mode.
+  // The recipe's prompt already contains the full AFK Ralph Loop instructions;
+  // this message provides the concrete issue context so the model starts working.
+  const initialPrompt =
+    `Run the AFK Ralph Loop on the issue at ${relPath}. ` +
+    `Use pi.getFlag('issue') and pi.getFlag('mesh-branch') from the foreman-flags extension for context.`;
+
+  return [
+    RUNNER,
+    "ralph/foreman",
+    "--sandbox", project,
+    "--agent-bus", busRoot,
+    "--",
+    "--issue", relPath,
+    "--mesh-branch", meshBranch,
+    "-p", initialPrompt,
+  ];
+}
+
+/**
  * Spawn a Foreman process for the given issue.
  * Returns the child process and the issue path it is handling.
  */
@@ -199,15 +234,7 @@ function spawnForeman(issuePath, meshBranch, project, busRoot) {
     relPath = issuePath.slice(projectScratchBase.length);
   }
 
-  const args = [
-    RUNNER,
-    "ralph/foreman",
-    "--sandbox", project,
-    "--agent-bus", busRoot,
-    "--",
-    "--issue", relPath,
-    "--mesh-branch", meshBranch,
-  ];
+  const args = buildForemanArgv(relPath, meshBranch, project, busRoot, process.cwd());
 
   process.stderr.write(`kanban: dispatching Foreman for ${relPath} (branch: ${meshBranch})\n`);
 
@@ -237,88 +264,97 @@ function spawnForeman(issuePath, meshBranch, project, busRoot) {
 }
 
 // ---------------------------------------------------------------------------
-// Main loop
+// Main loop — only executes when the file is run directly (not imported)
+// ---------------------------------------------------------------------------
+// Guard: when kanban.mjs is imported by tests (to access buildForemanArgv)
+// the top-level code below must not run — it binds sockets and calls
+// process.exit on failure.  `isMain` is true only when node executes this
+// file as the entry point (process.argv[1] resolves to this file).
 // ---------------------------------------------------------------------------
 
-const { feature, project, meshBranch, maxConcurrent, busRoot } = parseArgs();
-const sockPath = path.join(busRoot, "kanban.sock");
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 
-let server;
-try {
-  server = await bindBusSocket(sockPath);
-} catch (e) {
-  die(e.message);
-}
+if (isMain) {
+  const { feature, project, meshBranch, maxConcurrent, busRoot } = parseArgs();
+  const sockPath = path.join(busRoot, "kanban.sock");
 
-process.stderr.write(`kanban: joined bus as "kanban" at ${sockPath}\n`);
-process.stderr.write(`kanban: feature=${feature} project=${project} meshBranch=${meshBranch} maxConcurrent=${maxConcurrent}\n`);
-process.stderr.write(`kanban: polling every ${POLL_INTERVAL_MS}ms (V1 polling; #05 wires issue-watcher)\n`);
+  let server;
+  try {
+    server = await bindBusSocket(sockPath);
+  } catch (e) {
+    die(e.message);
+  }
 
-/** Map from issuePath → child process */
-const runningForemen = new Map();
+  process.stderr.write(`kanban: joined bus as "kanban" at ${sockPath}\n`);
+  process.stderr.write(`kanban: feature=${feature} project=${project} meshBranch=${meshBranch} maxConcurrent=${maxConcurrent}\n`);
+  process.stderr.write(`kanban: polling every ${POLL_INTERVAL_MS}ms (V1 polling; #05 wires issue-watcher)\n`);
 
-function pruneExited() {
-  for (const [issuePath, child] of runningForemen) {
-    if (child.exitCode !== null || child.killed) {
-      const code = child.exitCode;
-      process.stderr.write(`kanban: Foreman for ${issuePath} exited (code=${code})\n`);
-      runningForemen.delete(issuePath);
+  /** Map from issuePath → child process */
+  const runningForemen = new Map();
+
+  function pruneExited() {
+    for (const [issuePath, child] of runningForemen) {
+      if (child.exitCode !== null || child.killed) {
+        const code = child.exitCode;
+        process.stderr.write(`kanban: Foreman for ${issuePath} exited (code=${code})\n`);
+        runningForemen.delete(issuePath);
+      }
     }
   }
-}
 
-function tick() {
-  pruneExited();
+  function tick() {
+    pruneExited();
 
-  const currentForemen = [...runningForemen.keys()].map((p) => ({ issuePath: p }));
-  // Scan from process.cwd() — the launcher spawns the Kanban with
-  // cwd: kanbanWorktreePath, where the feature branch is checked out.
-  const issueTree = scanIssueTree(feature, process.cwd());
+    const currentForemen = [...runningForemen.keys()].map((p) => ({ issuePath: p }));
+    // Scan from process.cwd() — the launcher spawns the Kanban with
+    // cwd: kanbanWorktreePath, where the feature branch is checked out.
+    const issueTree = scanIssueTree(feature, process.cwd());
 
-  if (issueTree.length === 0) {
-    // Issues directory missing or empty — idle silently
-    return;
-  }
+    if (issueTree.length === 0) {
+      // Issues directory missing or empty — idle silently
+      return;
+    }
 
-  const decisions = decideSpawns(issueTree, currentForemen, maxConcurrent);
+    const decisions = decideSpawns(issueTree, currentForemen, maxConcurrent);
 
-  for (const { issuePath } of decisions) {
-    const child = spawnForeman(issuePath, meshBranch, project, busRoot);
-    runningForemen.set(issuePath, child);
+    for (const { issuePath } of decisions) {
+      const child = spawnForeman(issuePath, meshBranch, project, busRoot);
+      runningForemen.set(issuePath, child);
 
-    child.once("exit", (code, signal) => {
-      process.stderr.write(
-        `kanban: Foreman for ${path.basename(issuePath)} exited (code=${code ?? "null"} signal=${signal ?? "null"})\n`,
-      );
-      runningForemen.delete(issuePath);
-    });
-  }
+      child.once("exit", (code, signal) => {
+        process.stderr.write(
+          `kanban: Foreman for ${path.basename(issuePath)} exited (code=${code ?? "null"} signal=${signal ?? "null"})\n`,
+        );
+        runningForemen.delete(issuePath);
+      });
+    }
 
-  if (decisions.length === 0 && currentForemen.length === 0) {
-    process.stderr.write(`kanban: no ready issues — idling\n`);
-  }
-}
-
-// Initial tick immediately, then on timer
-tick();
-const timer = setInterval(tick, POLL_INTERVAL_MS);
-
-// ---------------------------------------------------------------------------
-// Shutdown
-// ---------------------------------------------------------------------------
-
-function cleanup() {
-  clearInterval(timer);
-  try { server?.close(); } catch { /* noop */ }
-  try { fs.unlinkSync(sockPath); } catch { /* noop */ }
-  for (const [issuePath, child] of runningForemen) {
-    if (child.exitCode === null && !child.killed) {
-      process.stderr.write(`kanban: sending SIGTERM to Foreman for ${issuePath}\n`);
-      try { child.kill("SIGTERM"); } catch { /* noop */ }
+    if (decisions.length === 0 && currentForemen.length === 0) {
+      process.stderr.write(`kanban: no ready issues — idling\n`);
     }
   }
-}
 
-process.once("SIGINT", () => { process.stderr.write("\nkanban: SIGINT received — shutting down\n"); cleanup(); process.exit(0); });
-process.once("SIGTERM", () => { cleanup(); process.exit(0); });
-process.once("exit", cleanup);
+  // Initial tick immediately, then on timer
+  tick();
+  const timer = setInterval(tick, POLL_INTERVAL_MS);
+
+  // ---------------------------------------------------------------------------
+  // Shutdown
+  // ---------------------------------------------------------------------------
+
+  function cleanup() {
+    clearInterval(timer);
+    try { server?.close(); } catch { /* noop */ }
+    try { fs.unlinkSync(sockPath); } catch { /* noop */ }
+    for (const [issuePath, child] of runningForemen) {
+      if (child.exitCode === null && !child.killed) {
+        process.stderr.write(`kanban: sending SIGTERM to Foreman for ${issuePath}\n`);
+        try { child.kill("SIGTERM"); } catch { /* noop */ }
+      }
+    }
+  }
+
+  process.once("SIGINT", () => { process.stderr.write("\nkanban: SIGINT received — shutting down\n"); cleanup(); process.exit(0); });
+  process.once("SIGTERM", () => { cleanup(); process.exit(0); });
+  process.once("exit", cleanup);
+}
