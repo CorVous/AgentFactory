@@ -323,3 +323,31 @@ describe("ralph/foreman recipe", () => {
     expect(recipe.prompt.toLowerCase()).toContain("afk");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Slice G: foreman-flags extension and recipe wiring.
+// ---------------------------------------------------------------------------
+
+const FOREMAN_FLAGS_EXT_PATH = path.resolve(
+  HERE,
+  "..",
+  "ralph",
+  "foreman-flags.ts",
+);
+
+describe("ralph/foreman-flags extension", () => {
+  it("extension file exists at pi-sandbox/.pi/extensions/ralph/foreman-flags.ts", () => {
+    expect(existsSync(FOREMAN_FLAGS_EXT_PATH)).toBe(true);
+  });
+
+  it("extension file exports a default function (extension factory)", async () => {
+    const mod = await import(FOREMAN_FLAGS_EXT_PATH);
+    expect(typeof mod.default).toBe("function");
+  });
+
+  it("foreman recipe extensions list includes ralph/foreman-flags", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(Array.isArray(recipe.extensions)).toBe(true);
+    expect(recipe.extensions).toContain("ralph/foreman-flags");
+  });
+});

@@ -5,6 +5,9 @@ description: Per-issue Foreman — claims an issue, runs the Ralph Loop TDD cycl
 # Habitat overlay: AFK runs ignore submitTo; HITL path (wired in #04) uses it.
 submitTo: human-relay
 
+extensions:
+  - ralph/foreman-flags
+
 tools:
   - bash
   - read
