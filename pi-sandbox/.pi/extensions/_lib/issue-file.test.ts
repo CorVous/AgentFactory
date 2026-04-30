@@ -266,3 +266,60 @@ describe("orchestrator-thin recipe", () => {
     expect(recipe.extensions).toContain("deferred/deferred-write");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Slice F: recipe validation — hermetic parse of ralph/foreman.yaml.
+// ---------------------------------------------------------------------------
+
+const FOREMAN_RECIPE_PATH = path.resolve(HERE, "..", "..", "..", "agents", "ralph", "foreman.yaml");
+
+describe("ralph/foreman recipe", () => {
+  it("recipe file exists at pi-sandbox/agents/ralph/foreman.yaml", () => {
+    expect(existsSync(FOREMAN_RECIPE_PATH)).toBe(true);
+  });
+
+  it("recipe YAML parses without error", () => {
+    const raw = readFileSync(FOREMAN_RECIPE_PATH, "utf8");
+    const recipe = parseYaml(raw);
+    expect(recipe).toBeTruthy();
+    expect(typeof recipe).toBe("object");
+  });
+
+  it("recipe has a non-empty prompt string", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(typeof recipe.prompt).toBe("string");
+    expect(recipe.prompt.trim().length).toBeGreaterThan(0);
+  });
+
+  it("recipe model is LEAD_HARE_MODEL", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(recipe.model).toBe("LEAD_HARE_MODEL");
+  });
+
+  it("recipe shortName is a valid lowercase slug", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(recipe.shortName).toMatch(/^[a-z][a-z0-9-]*$/);
+  });
+
+  it("recipe tools include bash, read, write, edit, grep, find, glob", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    for (const tool of ["bash", "read", "write", "edit", "grep", "find", "glob"]) {
+      expect(recipe.tools).toContain(tool);
+    }
+  });
+
+  it("recipe declares submitTo: human-relay", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(recipe.submitTo).toBe("human-relay");
+  });
+
+  it("recipe prompt mentions HITL early-exit stub and #04", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(recipe.prompt).toContain("#04");
+  });
+
+  it("recipe prompt mentions AFK Ralph Loop", () => {
+    const recipe = parseYaml(readFileSync(FOREMAN_RECIPE_PATH, "utf8"));
+    expect(recipe.prompt.toLowerCase()).toContain("afk");
+  });
+});

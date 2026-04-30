@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// launch-mesh.mjs — start all nodes of a mesh topology in parallel.
+// launch-mesh.mjs — start a Ralph-Loop Kanban mesh or a topology-YAML mesh.
 //
-// Usage:
+// Runtime mode (Ralph-Loop):
+//   npm run mesh -- --project <path> --feature <slug>
+//   node scripts/launch-mesh.mjs --project <path> --feature <slug>
+//
+// Topology mode (legacy):
 //   set -a; source models.env; set +a
 //   node scripts/launch-mesh.mjs <mesh.yaml>
 //   npm run mesh -- <mesh.yaml>
@@ -19,8 +23,8 @@
 //       recipe: deferred/mesh-node
 //       task: "wait for requests"
 
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { spawn, execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,11 +35,203 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
 const RELAY = path.join(REPO_ROOT, "scripts", "human-relay.mjs");
+const KANBAN = path.join(REPO_ROOT, "scripts", "kanban.mjs");
 
 function die(msg) {
   process.stderr.write(`launch-mesh: ${msg}\n`);
   process.exit(1);
 }
+
+function git(args, cwd) {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+}
+
+// ── Runtime mode detection ────────────────────────────────────────────────────
+// If the first arg is "--project" or "--feature", we're in Ralph-Loop runtime mode.
+// Otherwise we expect a topology YAML file as the first arg.
+
+const firstArg = process.argv[2];
+const isRuntimeMode = firstArg === "--project" || firstArg === "--feature";
+
+// ── Ralph-Loop runtime mode ───────────────────────────────────────────────────
+
+if (isRuntimeMode) {
+  // Parse runtime-mode args
+  const args = process.argv.slice(2);
+  let project = null;
+  let feature = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--project" && args[i + 1]) project = path.resolve(args[++i]);
+    else if (args[i] === "--feature" && args[i + 1]) feature = args[++i];
+  }
+
+  if (!project) die("runtime mode requires --project <path>");
+  if (!feature) die("runtime mode requires --feature <slug>");
+
+  const meshBranch = `feature/${feature}`;
+
+  // ── Guard 1: must be inside a worktree of <project> ──────────────────────
+  //
+  // We identify "inside a worktree" by checking whether process.cwd() is under
+  // the project path AND is NOT the project root itself (worktrees are separate
+  // directories). We use `git worktree list --porcelain` to enumerate all worktrees.
+  const cwd = process.cwd();
+  let worktrees;
+  try {
+    const listing = git(["worktree", "list", "--porcelain"], project);
+    worktrees = listing.split(/\n\n+/).filter(Boolean).map((block) => {
+      const m = /^worktree (.+)$/m.exec(block);
+      return m ? path.resolve(m[1]) : null;
+    }).filter(Boolean);
+  } catch (e) {
+    die(`failed to read worktree list from project at ${project}: ${e.message}`);
+  }
+
+  // The first entry is always the main checkout. We must be in a non-main worktree.
+  const mainWorktree = worktrees[0];
+  const nonMainWorktrees = worktrees.slice(1);
+
+  const cwdResolved = path.resolve(cwd);
+  // Check that cwd is or is under one of the non-main worktrees.
+  const isInNonMainWorktree = nonMainWorktrees.some(
+    (wt) => cwdResolved === wt || cwdResolved.startsWith(wt + path.sep),
+  );
+
+  if (!isInNonMainWorktree) {
+    die(
+      `launch-mesh runtime mode must be invoked from inside a worktree of ${project}.\n` +
+      `  Current directory: ${cwd}\n` +
+      `  Project main checkout: ${mainWorktree}\n` +
+      `  Non-main worktrees: ${nonMainWorktrees.join(", ") || "(none)"}\n` +
+      `  Create a worktree first with:\n` +
+      `    git worktree add <project>/.mesh-features/${feature}/kanban ${meshBranch}`,
+    );
+  }
+
+  // ── Guard 2: feature branch must exist ────────────────────────────────────
+  let featureBranchExists = false;
+  try {
+    git(["rev-parse", "--verify", `refs/heads/${meshBranch}`], project);
+    featureBranchExists = true;
+  } catch {
+    // branch doesn't exist
+  }
+
+  if (!featureBranchExists) {
+    die(
+      `feature branch '${meshBranch}' does not exist on project at ${project}.\n` +
+      `  Create it first with: git checkout -b ${meshBranch} main`,
+    );
+  }
+
+  // ── Guard 3: .scratch/<slug>/issues/ must exist and be non-empty ─────────
+  // We check on the current worktree (which should be on meshBranch).
+  const issuesDir = path.join(cwd, ".scratch", feature, "issues");
+  let issueFiles;
+  try {
+    issueFiles = readdirSync(issuesDir).filter((f) => f.endsWith(".md"));
+  } catch {
+    issueFiles = [];
+  }
+
+  if (issueFiles.length === 0) {
+    die(
+      `no issue files found at ${issuesDir}.\n` +
+      `  Ensure .scratch/${feature}/issues/*.md files exist on ${meshBranch} before starting the Kanban.\n` +
+      `  Run the orchestrator first: npm run agent -- ralph/orchestrator-thin --feature ${feature}`,
+    );
+  }
+
+  // ── Ensure / fast-forward kanban worktree ─────────────────────────────────
+  const kanbanWorktreePath = path.join(project, ".mesh-features", feature, "kanban");
+  const kanbanExists = existsSync(kanbanWorktreePath);
+
+  if (!kanbanExists) {
+    mkdirSync(path.dirname(kanbanWorktreePath), { recursive: true });
+    try {
+      git(["worktree", "add", kanbanWorktreePath, meshBranch], project);
+      process.stderr.write(`launch-mesh: created kanban worktree at ${kanbanWorktreePath}\n`);
+    } catch (e) {
+      die(`failed to create kanban worktree at ${kanbanWorktreePath}: ${e.message}`);
+    }
+  } else {
+    // Worktree exists — ensure it's on the mesh branch and up to date.
+    try {
+      const listing = git(["worktree", "list", "--porcelain"], project);
+      const blocks = listing.split(/\n\n+/);
+      for (const block of blocks) {
+        const worktreeMatch = /^worktree (.+)$/m.exec(block);
+        const branchMatch = /^branch refs\/heads\/(.+)$/m.exec(block);
+        if (
+          worktreeMatch &&
+          path.resolve(worktreeMatch[1]) === path.resolve(kanbanWorktreePath)
+        ) {
+          if (branchMatch && branchMatch[1] !== meshBranch) {
+            die(
+              `kanban worktree at ${kanbanWorktreePath} is on branch '${branchMatch[1]}', ` +
+              `expected '${meshBranch}'.`,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      die(`failed to verify kanban worktree state: ${e.message}`);
+    }
+    process.stderr.write(`launch-mesh: using existing kanban worktree at ${kanbanWorktreePath}\n`);
+  }
+
+  // ── Spawn the Kanban from the kanban worktree ─────────────────────────────
+  const busRoot = process.env.PI_AGENT_BUS_ROOT
+    ? path.resolve(process.env.PI_AGENT_BUS_ROOT)
+    : path.join(os.homedir(), ".pi-agent-bus", `kanban-${feature}`);
+
+  process.stderr.write(`\nlaunch-mesh: starting Ralph-Loop Kanban\n`);
+  process.stderr.write(`  feature:          ${feature}\n`);
+  process.stderr.write(`  project:          ${project}\n`);
+  process.stderr.write(`  meshBranch:       ${meshBranch}\n`);
+  process.stderr.write(`  kanbanWorktree:   ${kanbanWorktreePath}\n`);
+  process.stderr.write(`  busRoot:          ${busRoot}\n`);
+  process.stderr.write(`  issues found:     ${issueFiles.length}\n\n`);
+
+  const kanbanChild = spawn(
+    process.execPath,
+    [
+      KANBAN,
+      "--feature", feature,
+      "--project", project,
+      "--mesh-branch", meshBranch,
+      "--bus-root", busRoot,
+    ],
+    {
+      cwd: kanbanWorktreePath,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PI_AGENT_BUS_ROOT: busRoot,
+      },
+    },
+  );
+
+  kanbanChild.on("exit", (code, signal) => {
+    process.stderr.write(`launch-mesh: kanban exited (code=${code} signal=${signal})\n`);
+    process.exit(code ?? 0);
+  });
+
+  process.once("SIGINT", () => {
+    process.stderr.write("\nlaunch-mesh: SIGINT — stopping kanban\n");
+    try { kanbanChild.kill("SIGTERM"); } catch { /* noop */ }
+  });
+  process.once("SIGTERM", () => {
+    try { kanbanChild.kill("SIGTERM"); } catch { /* noop */ }
+  });
+
+  // The kanban process owns the lifetime — we don't fall through to topology mode.
+  // (The process stays alive via the kanbanChild exit listener above.)
+  process.exitCode = 0;
+} else {
+
+// ── Topology mode (existing behaviour, unchanged) ────────────────────────────
 
 // ── Parse CLI ────────────────────────────────────────────────────────────────
 
@@ -266,3 +462,5 @@ process.stderr.write(
   `launch-mesh: started ${children.length} node(s) — bus_root=${busRoot}\n` +
   `             Press Ctrl+C to stop all.\n`,
 );
+
+} // end topology mode else-block
