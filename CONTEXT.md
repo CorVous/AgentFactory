@@ -48,7 +48,7 @@ An extension that enforces one axis of a **Habitat** — FS containment, write-e
 Directory holding peer Unix sockets at `${BUS_ROOT}/${instance_name}.sock`.
 
 **Mesh**:
-A running collection of **Peers** sharing one **Bus Root**. Humans never run a mesh directly; every mesh is launched under a **Top Supervisor** (tier ≥ `LEAD_HARE_MODEL`) and the human participates only through the **TUI**.
+A running collection of **Peers** sharing one **Bus Root**. Humans never run a mesh directly; every mesh is launched under a **Top Supervisor** (tier ≥ `LEAD_HARE_MODEL` recommended) and the human participates only through the **TUI**.
 
 **Submission**:
 A typed envelope from a worker to its **submitTo** peer carrying staged artifacts (writes, edits, moves, deletes) for review and atomic apply.
@@ -61,7 +61,7 @@ _Avoid_: workspace, payload
 A peer's escalation target for approvals; chains upward through declared `supervisor:` links until the **Top Supervisor**. `escalate` from the Top Supervisor surfaces to the human via the **TUI** rather than a peer.
 
 **Top Supervisor**:
-The peer at the head of a **Mesh**'s escalation chain — the first peer whose `supervisor` field is unset. Tier must be ≥ `LEAD_HARE_MODEL`; the validator rejects topologies whose top is a Task Rabbit. There is exactly one per mesh.
+The peer at the head of a **Mesh**'s escalation chain — the first peer whose `supervisor` field is unset. Tier ≥ `LEAD_HARE_MODEL` is strongly recommended (the chain ends at this peer's LLM, so a Task Rabbit at the top means the cheapest model is the final approver); the launcher prints a warning but does **not** reject — the framework stays modifiable for testing, demos, and deliberate overrides. There is exactly one per mesh.
 
 **submitTo**:
 A peer's submission target; the peer that receives and applies the worker's artifacts.
