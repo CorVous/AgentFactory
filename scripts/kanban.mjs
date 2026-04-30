@@ -21,6 +21,7 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { scanIssueTree } from "./kanban-scan.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
@@ -70,50 +71,10 @@ function die(msg) {
 // ---------------------------------------------------------------------------
 // Issue-file parsing
 // ---------------------------------------------------------------------------
-
-/**
- * Parse metadata from an issue file (Status:, Claimed-by:, Depends-on: lines).
- */
-function parseIssueFile(filePath) {
-  let content;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
-  const statusMatch = /^Status:\s*(.+)$/m.exec(content);
-  const claimedMatch = /^Claimed-by:\s*(.+)$/m.exec(content);
-  const dependsOnMatches = [...content.matchAll(/^Depends-on:\s*(.+)$/mg)];
-  return {
-    path: filePath,
-    status: statusMatch ? statusMatch[1].trim() : "",
-    claimedBy: claimedMatch ? claimedMatch[1].trim() : undefined,
-    dependsOn: dependsOnMatches.map((m) => m[1].trim()),
-  };
-}
-
-/**
- * Scan the issue directory for open (non-closed) issue files.
- * Returns parsed metadata for each valid issue file.
- */
-function scanIssueTree(feature, project) {
-  const issuesDir = path.join(project, ".scratch", feature, "issues");
-  let entries;
-  try {
-    entries = fs.readdirSync(issuesDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const issues = [];
-  for (const e of entries) {
-    if (!e.isFile() || !e.name.endsWith(".md")) continue;
-    const filePath = path.join(issuesDir, e.name);
-    const meta = parseIssueFile(filePath);
-    if (meta) issues.push(meta);
-  }
-  return issues;
-}
+// scanIssueTree is imported from ./kanban-scan.mjs.  It reads from
+// <scanRoot>/.scratch/<feature>/issues/ where scanRoot = process.cwd().
+// The launcher spawns the Kanban with cwd: kanbanWorktreePath (the git
+// worktree checked out on feature/<slug>), so the issues are visible there.
 
 // ---------------------------------------------------------------------------
 // Spawn decision (delegates to _lib/kanban-spawn-decision)
@@ -224,13 +185,18 @@ async function bindBusSocket(sockPath) {
  * Returns the child process and the issue path it is handling.
  */
 function spawnForeman(issuePath, meshBranch, project, busRoot) {
-  // Compute the relative path for --issue flag: strip the project prefix.
-  // The issue path is absolute; --issue expects <feature-slug>/<NN>-<slug>
-  // relative to .scratch/.
-  const scratchBase = path.join(project, ".scratch") + path.sep;
+  // Compute the relative path for --issue flag: strip the .scratch/ prefix.
+  // The issue path is absolute (from the kanban worktree checkout); --issue
+  // expects <feature-slug>/<NN>-<slug> relative to .scratch/.
+  // Try the kanban worktree's .scratch/ first (correct path after the fix),
+  // then fall back to the project root's .scratch/ (belt-and-suspenders).
+  const kanbanScratchBase = path.join(process.cwd(), ".scratch") + path.sep;
+  const projectScratchBase = path.join(project, ".scratch") + path.sep;
   let relPath = issuePath;
-  if (issuePath.startsWith(scratchBase)) {
-    relPath = issuePath.slice(scratchBase.length);
+  if (issuePath.startsWith(kanbanScratchBase)) {
+    relPath = issuePath.slice(kanbanScratchBase.length);
+  } else if (issuePath.startsWith(projectScratchBase)) {
+    relPath = issuePath.slice(projectScratchBase.length);
   }
 
   const args = [
@@ -305,7 +271,9 @@ function tick() {
   pruneExited();
 
   const currentForemen = [...runningForemen.keys()].map((p) => ({ issuePath: p }));
-  const issueTree = scanIssueTree(feature, project);
+  // Scan from process.cwd() — the launcher spawns the Kanban with
+  // cwd: kanbanWorktreePath, where the feature branch is checked out.
+  const issueTree = scanIssueTree(feature, process.cwd());
 
   if (issueTree.length === 0) {
     // Issues directory missing or empty — idle silently
