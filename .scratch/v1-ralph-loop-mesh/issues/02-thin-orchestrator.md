@@ -1,4 +1,5 @@
 Status: ready-for-agent
+Claimed-by: claude-sonnet-issue-02
 
 # Thin Orchestrator (minimum to make issues appear)
 
