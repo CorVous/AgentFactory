@@ -69,13 +69,15 @@ A peer's submission target; the peer that receives and applies the worker's arti
 ### Human Surface
 
 **TUI**:
-Launcher-level interactive surface; the human's only interface to a running **Mesh**. Owns a launcher-bound bus socket so peers can `escalate` decisions to it. Renders the **Focused Peer**'s session in the main pane and a **Decisions Queue** side-panel of pinned items. The human is *not* a peer — there is no `human-relay` peer in this model.
+Launcher-level interactive surface; the human's only interface to a running **Mesh**. Each peer runs in its own PTY with a full pi TUI alive; the launcher multiplexes — the **Focused Peer**'s PTY is rendered live in the main pane, off-screen peers render to virtual buffers. Launcher chrome (peers list, **Decisions Queue**) lives in a right rail. Slash commands (`/focus`, `/pin`, `/tail`, …) registered by a baseline `launcher-bridge` extension on every peer are the human's command channel; they emit control envelopes to a launcher-bound socket. The human is *not* a peer — there is no `human-relay` peer in this model.
 
 **Focused Peer**:
 The peer whose pi session the **TUI** is currently bound to. Human keystrokes inject as user-messages into this peer's pi process via stdin. Movable at runtime; the topology may declare an initial default focus.
 
 **Intercept**:
-When the **TUI** is the **Focused Peer** for X and X is about to invoke `respond_to_request` on an inbound `submission` / `approval-request`, the rail cancels X's LLM turn and surfaces the prompt to the human. The human's pick goes on the wire as if it were the LLM's. Free-flow `message` envelopes are unaffected by focus.
+When the **TUI** is the **Focused Peer** for X and X is about to invoke `respond_to_request` on an inbound `submission` / `approval-request`, the rail on X cancels X's LLM turn and surfaces the prompt via X's own `ctx.ui.confirm` — pi's TUI renders the dialog in the same pane the human is already watching. The human's pick goes on the wire as if it were the LLM's. Free-flow `message` envelopes are unaffected by focus.
+
+A focus change from X→Y is a **hard cancel** on X: any in-flight `ctx.ui.confirm` on X is dismissed and the original prompt is re-injected to X's LLM as a fresh `respond_to_request` turn. The exception is **pin** — a pinned decision survives focus shifts and is never returned to the LLM.
 
 **Decisions Queue**:
 Side-panel of pending human decisions surfaced by **Intercept** or by `escalate` from the **Top Supervisor**. Default lifecycle is **fluid**: shifting focus away from a transient intercept dialog re-injects the original prompt to the peer's LLM (fresh turn). The human can **pin** a decision to make it sticky — it stays in the queue across focus changes and the LLM does not resume.
