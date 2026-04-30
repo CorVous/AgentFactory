@@ -1,4 +1,5 @@
 Status: ready-for-human
+Claimed-by: claude-sonnet-issue-03
 
 # AFK trunk end-to-end
 
