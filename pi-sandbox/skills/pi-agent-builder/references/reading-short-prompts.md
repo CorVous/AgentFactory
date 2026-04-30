@@ -76,7 +76,7 @@ Apply every always-on rail from `defaults.md` on top — in particular the
 progress `notify` calls at every tool-call boundary, the sandbox-root
 path check, and the `MAX_FILES_PROMOTABLE` / `MAX_CONTENT_BYTES` caps
 even though the prompt didn't call any of them out by name. A real
-implementation is committed at `.pi/extensions/deferred-writer.ts`
+implementation is committed at `.pi/extensions/deferred/deferred-write.ts`
 (plus the child-only tool at `.pi/child-tools/stage-write.ts`) in the
 AgentFactory repo.
 

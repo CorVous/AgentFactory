@@ -20,7 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { getHabitat } from "./_lib/habitat";
+import { getHabitat } from "../_lib/habitat";
 
 const STATIC_CREATE_ONLY_TOOLS = ["write", "deferred_write"];
 const CONTENT_KEYS = ["content", "text", "body"];

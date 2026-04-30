@@ -25,7 +25,7 @@ nodes:
     type: relay
 
   - name: authority
-    recipe: mesh-authority
+    recipe: deferred/mesh-authority
     sandbox: /tmp/pi-mesh-authority/authority
     task: |
       You are the authority in this mesh. Your peers are: analyst, writer, human.
@@ -36,7 +36,7 @@ nodes:
       You can also proactively spawn or delegate to nodes with mesh_spawn or delegate.
 
   - name: analyst
-    recipe: mesh-node
+    recipe: deferred/mesh-node
     sandbox: /tmp/pi-mesh-authority/analyst
     task: |
       You are the analyst peer in a mesh. Your name is "analyst".
@@ -47,7 +47,7 @@ nodes:
       You can also use agent_call to ask the writer or authority for help.
 
   - name: writer
-    recipe: mesh-writer
+    recipe: deferred/mesh-writer
     sandbox: /tmp/pi-mesh-authority/writer
     task: |
       You are the writer peer in a mesh. Your name is "writer".

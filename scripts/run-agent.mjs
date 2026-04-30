@@ -17,12 +17,12 @@ const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
 const BASELINE_EXTENSIONS = [
   // Must be first — materialises the Habitat before any rail reads it.
   "habitat",
-  "sandbox",
+  "deferred/sandbox",
   "no-startup-help",
   "agent-header",
   "agent-footer",
   "hide-extensions-list",
-  "deferred-confirm",
+  "deferred/deferred-confirm",
   // Bus binding is a baseline now: atomic-delegate, supervisor rail,
   // and the deferred-* submission flow all need a bound bus socket.
   // The agent_send / agent_inbox / agent_list / agent_call tools stay
@@ -75,17 +75,27 @@ function printHelp() {
   );
 }
 
-function listAgents() {
+function collectAgentNames(dir, prefix) {
+  const names = [];
   let entries;
   try {
-    entries = readdirSync(AGENTS_DIR);
-  } catch (e) {
-    die(`failed to read ${AGENTS_DIR}: ${e.message}`);
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return names;
   }
-  const names = entries
-    .filter((f) => f.endsWith(".yaml"))
-    .map((f) => f.slice(0, -".yaml".length))
-    .sort();
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      names.push(...collectAgentNames(path.join(dir, e.name), prefix ? `${prefix}/${e.name}` : e.name));
+    } else if (e.name.endsWith(".yaml")) {
+      const stem = e.name.slice(0, -".yaml".length);
+      names.push(prefix ? `${prefix}/${stem}` : stem);
+    }
+  }
+  return names;
+}
+
+function listAgents() {
+  const names = collectAgentNames(AGENTS_DIR, "").sort();
   const rel = path.relative(REPO_ROOT, AGENTS_DIR) || AGENTS_DIR;
   if (names.length === 0) {
     process.stdout.write(`No agents found in ${rel}\n`);
@@ -129,9 +139,9 @@ function applyAgentsField(recipe, name) {
   const DELEGATE_TOOLS = ["delegate"];
 
   if (declared.length === 0) {
-    if (explicitExts.includes("atomic-delegate")) {
+    if (explicitExts.includes("deferred/atomic-delegate")) {
       die(
-        `recipe ${name} loads extension 'atomic-delegate' but has no 'agents:' list — ` +
+        `recipe ${name} loads extension 'deferred/atomic-delegate' but has no 'agents:' list — ` +
           `declare which child recipes are allowed (or drop the extension)`,
       );
     }
@@ -152,9 +162,9 @@ function applyAgentsField(recipe, name) {
     }
   }
 
-  const extensions = explicitExts.includes("atomic-delegate")
+  const extensions = explicitExts.includes("deferred/atomic-delegate")
     ? explicitExts
-    : [...explicitExts, "atomic-delegate"];
+    : [...explicitExts, "deferred/atomic-delegate"];
   const tools = explicitTools.slice();
   for (const t of DELEGATE_TOOLS) if (!tools.includes(t)) tools.push(t);
   return { allowed: declared, extensions, tools };
@@ -241,12 +251,16 @@ function resolveSkillPaths(names) {
 // is only relevant when at least one `deferred-*` tool extension is
 // loaded.
 function loadPromptFragments(extensionNames) {
-  const hasDeferredTool = extensionNames.some(
-    (n) => n.startsWith("deferred-") && n !== "deferred-confirm",
-  );
+  // A "deferred tool" is any deferred-* extension except deferred-confirm itself.
+  // Names may now be subdirectory-qualified (e.g. "deferred/deferred-write").
+  const hasDeferredTool = extensionNames.some((n) => {
+    const base = n.includes("/") ? n.split("/").pop() : n;
+    return base.startsWith("deferred-") && base !== "deferred-confirm";
+  });
   const fragments = [];
   for (const name of extensionNames) {
-    if (name === "deferred-confirm" && !hasDeferredTool) continue;
+    const base = name.includes("/") ? name.split("/").pop() : name;
+    if (base === "deferred-confirm" && !hasDeferredTool) continue;
     const p = path.join(EXTENSIONS_DIR, `${name}.prompt.md`);
     if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
   }

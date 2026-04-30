@@ -16,7 +16,7 @@ All phases through Phase 5 merged to main. `npm test` passes (192 tests). The br
 
 - `docs/phases/_notes-for-phase-3.md` and `_notes-for-phase-4.md` — most of these items are documented there.
 - `pi-sandbox/.pi/extensions/supervisor.ts` and `_lib/supervisor-inbox.ts` — items #1, #2, #3, #6 live here.
-- `pi-sandbox/.pi/extensions/_lib/submission-apply.ts` and `pi-sandbox/.pi/extensions/deferred-edit.ts` — item #4.
+- `pi-sandbox/.pi/extensions/_lib/submission-apply.ts` and `pi-sandbox/.pi/extensions/deferred/deferred-edit.ts` — item #4.
 - `pi-sandbox/.pi/extensions/_lib/submission-emit.ts` and `agent-bus.ts` — item #5.
 - `CONTEXT.md` — item #7.
 
@@ -68,7 +68,7 @@ If unused outside its own definition: delete the method + its tests. If used: le
 
 ### Item 4 — Extract `applyUnique` to shared `_lib/string-edit.ts`
 
-**Where:** `_lib/submission-apply.ts` and `pi-sandbox/.pi/extensions/deferred-edit.ts` both have a copy.
+**Where:** `_lib/submission-apply.ts` and `pi-sandbox/.pi/extensions/deferred/deferred-edit.ts` both have a copy.
 
 **Tests first** in `_lib/string-edit.test.ts`:
 - Empty `oldString` → error.

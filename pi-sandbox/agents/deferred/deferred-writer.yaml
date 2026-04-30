@@ -20,5 +20,5 @@ tools:
   - deferred_write
 
 extensions:
-  - deferred-write
-  - no-edit
+  - deferred/deferred-write
+  - deferred/no-edit

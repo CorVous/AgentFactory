@@ -10,8 +10,16 @@
 - `docs/` — this folder. Long-form docs split out of `AGENTS.md`.
 - `pi-sandbox/` — pi's content lives here.
   - `pi-sandbox/agents/` — YAML recipes consumed by `npm run agent`.
-  - `pi-sandbox/.pi/extensions/` — project-local pi extensions. Includes
-    the `sandbox` baseline applied to every agent.
+    - `pi-sandbox/agents/deferred/` — recipes for the deferred-* mutation stack
+      (`deferred-writer`, `deferred-author`, `writer-foreman`, `delegator`,
+      `peer-chatter`, `mesh-*`). Use `deferred/<name>` as the recipe name.
+  - `pi-sandbox/.pi/extensions/` — project-local pi extensions.
+    - `pi-sandbox/.pi/extensions/deferred/` — extensions for the deferred-* stack:
+      `sandbox`, `no-edit`, `atomic-delegate`, `deferred-write`, `deferred-edit`,
+      `deferred-move`, `deferred-delete`, `deferred-confirm`. Use `deferred/<name>`
+      in recipe `extensions:` lists; the runner resolves subdirectory-qualified names.
+    - `pi-sandbox/.pi/extensions/_lib/` — shared TypeScript helpers (bus, habitat,
+      supervisor-inbox, etc.); never moved.
   - `pi-sandbox/.pi/scratch/` — throwaway prompt files, raw pi output,
     anything you don't want to check in. Gitignored.
   - `pi-sandbox/skills/pi-agent-builder/` — pi skill that teaches pi how

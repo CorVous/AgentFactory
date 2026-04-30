@@ -8,7 +8,7 @@ installed as a regular npm dependency so the `pi` CLI is available via
 ```sh
 npm install
 set -a; source models.env; set +a
-npm run agent -- deferred-writer            # focused agent, sandboxed to $PWD
+npm run agent -- deferred/deferred-writer            # focused agent, sandboxed to $PWD
 npm run pi                                  # raw pi session for exploration
 ```
 
@@ -32,7 +32,7 @@ npm run pi                                  # raw pi session for exploration
 ## More docs
 
 - [`docs/agents.md`](./docs/agents.md) — `npm run agent` recipe shape,
-  sandbox baseline, deferred-writer worked example, sub-agent rails.
+  deferred/sandbox baseline, deferred/deferred-writer worked example, sub-agent rails.
 - [`docs/model-tiers.md`](./docs/model-tiers.md) — tier → model-ID table.
 - [`docs/pi-direct.md`](./docs/pi-direct.md) — running raw pi, the
   `pi-agent-builder` skill, scripted (`-p`) gotchas.

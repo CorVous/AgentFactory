@@ -37,7 +37,7 @@ tools:
   - deferred_delete
 
 extensions:
-  - deferred-write
-  - deferred-edit
-  - deferred-move
-  - deferred-delete
+  - deferred/deferred-write
+  - deferred/deferred-edit
+  - deferred/deferred-move
+  - deferred/deferred-delete

@@ -19,7 +19,7 @@ import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { registerDeferredHandler, type PrepareResult } from "./deferred-confirm";
-import { buildWriteArtifact } from "./_lib/submission-emit";
+import { buildWriteArtifact } from "../_lib/submission-emit";
 
 const MAX_FILES_PER_TURN = 50;
 const MAX_BYTES_PER_FILE = 2_000_000;
