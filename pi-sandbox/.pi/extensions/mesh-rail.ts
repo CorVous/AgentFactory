@@ -6,12 +6,17 @@
 // placement: "aboveEditor" })`, so it sits in the layout flow directly above
 // the input area rather than floating as an overlay.
 //
-// This slice (#90) ships static placeholder content. Real signals from the
-// launcher (peer-state, decisions count) land in #91.
+// Signals from the launcher (peer-state, decisions count) are received via the
+// `launcher-bridge` onMeshRailUpdate subscription and drive live re-renders.
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { getHabitat } from "./_lib/habitat";
-import { createMeshRailComponent } from "./_lib/mesh-rail";
+import {
+  createMeshRailComponent,
+  setMeshRailHandle,
+  clearMeshRailHandle,
+} from "./_lib/mesh-rail";
+import { onMeshRailUpdate } from "./launcher-bridge";
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
@@ -26,10 +31,34 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    const handle = createMeshRailComponent({ peerName });
+    setMeshRailHandle(handle);
+
+    // Subscribe to launcher broadcasts. On each update, patch the component
+    // state and trigger a re-render via the invalidate callback.
+    onMeshRailUpdate((env: any) => {
+      if (!env || !Array.isArray(env.peers)) return;
+      handle.update({
+        peers: env.peers,
+        decisionCount: typeof env.decisionCount === "number" ? env.decisionCount : 0,
+      });
+    });
+
     ctx.ui.setWidget(
       "mesh-rail",
-      () => createMeshRailComponent({ peerName }),
+      (tui) => {
+        // Inject the invalidate callback so component.update() can trigger
+        // an active re-render rather than waiting for the next natural frame.
+        (handle as any)._setInvalidate(() =>
+          (tui as unknown as { requestRender?: () => void }).requestRender?.(),
+        );
+        return handle;
+      },
       { placement: "aboveEditor" },
     );
+  });
+
+  pi.on("session_end", async () => {
+    clearMeshRailHandle();
   });
 }

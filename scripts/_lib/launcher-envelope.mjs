@@ -8,6 +8,8 @@
  *   - focus-changed: launcher tells peers which peer is now focused.
  *   - signal: generic control signal.
  *   - tail-toggle: launcher tells a peer to start/stop bus-tail emission.
+ *   - mesh-rail-update: launcher broadcasts a renderable snapshot of peer states and decisions
+ *       count so every connected peer's mesh-rail widget can update in real time.
  *
  * Envelope kinds (peer → launcher):
  *   - focus-request: peer asks the launcher to focus a target peer.
@@ -25,7 +27,15 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump"} EnvelopeKind
+ * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump" | "mesh-rail-update"} EnvelopeKind
+ */
+
+/**
+ * @typedef {{
+ *   name: string;
+ *   state: string;
+ *   decisionPending: boolean;
+ * }} MeshRailPeer
  */
 
 /**
@@ -241,6 +251,27 @@ export function makeDecisionsJumpEnvelope(args) {
     kind: "decisions-jump",
     ts: Date.now(),
     from: args.from,
+  };
+}
+
+/**
+ * Create a `mesh-rail-update` envelope (launcher → all peers).
+ *
+ * Carries a renderable snapshot of the current peer states and the launcher's
+ * decisions-queue count. Broadcast on every state-mutating event so the
+ * mesh-rail widget stays current in real time.
+ *
+ * @param {{ peers: Array<{name: string, state: string, decisionPending: boolean}>, decisionCount: number }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeMeshRailUpdateEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "mesh-rail-update",
+    ts: Date.now(),
+    peers: args.peers,
+    decisionCount: args.decisionCount,
   };
 }
 

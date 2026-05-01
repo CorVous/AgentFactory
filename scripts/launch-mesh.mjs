@@ -286,6 +286,9 @@ pool.on("crash", (/** @type {import('./_lib/pty-pool.mjs').CrashEvent} */ ev) =>
   const { peer, exitCode, signal } = ev;
   // Override state to "crashed" (exit handler set "exited" first).
   peerEntries.set(peer, { name: peer, state: "crashed", exitCode, exitSignal: signal });
+  // Sync the crashed state into focus-controller so the mesh-rail broadcast
+  // emitted by handleCrash below carries "crashed" for this peer.
+  focusController.setPeerState(peer, "crashed");
   process.stderr.write(
     `launch-mesh: peer "${peer}" crashed (code=${exitCode} signal=${signal})\n`,
   );

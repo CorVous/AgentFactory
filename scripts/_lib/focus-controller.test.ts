@@ -326,3 +326,134 @@ describe("FocusController — handleCrash: crash on top supervisor itself", () =
     expect((notices[0] as any).shiftedTo).toBeNull();
   });
 });
+
+// ── mesh-rail-update broadcast (AC-2 coverage) ────────────────────────────────
+
+describe("FocusController — setBroadcast / _broadcastRailUpdate", () => {
+  it("does not throw before setBroadcast is called", () => {
+    const fc = createFocusController();
+    expect(() => fc.registerPeer("peer-a")).not.toThrow();
+  });
+
+  it("setBroadcast causes registerPeer to emit a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.registerPeer("peer-a");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+    expect(Array.isArray(emitted[0].peers)).toBe(true);
+    expect(emitted[0].peers).toHaveLength(1);
+    expect(emitted[0].peers[0].name).toBe("peer-a");
+  });
+
+  it("setBroadcast causes unregisterPeer to emit a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.registerPeer("peer-a");
+    emitted.length = 0; // clear registerPeer emission
+
+    fc.unregisterPeer("peer-a");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+    expect(emitted[0].peers).toHaveLength(0);
+  });
+
+  it("setBroadcast causes setFocus to emit a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    fc.registerPeer("peer-a");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.setFocus("peer-a");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+  });
+
+  it("setFocus no-op does NOT emit a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    fc.registerPeer("peer-a");
+    fc.setFocus("peer-a");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.setFocus("peer-a"); // no-op
+
+    expect(emitted).toHaveLength(0);
+  });
+
+  it("handleCrash on non-focused peer emits a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.handleCrash("supervisor", "supervisor");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+  });
+
+  it("handleCrash on focused peer emits a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.handleCrash("entry", "supervisor");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+  });
+
+  it("mesh-rail-update envelope carries decisionCount from injected getter", () => {
+    const fc = createFocusController();
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env), () => 7);
+
+    fc.registerPeer("peer-a");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].decisionCount).toBe(7);
+  });
+
+  it("setPeerState emits a mesh-rail-update envelope with updated state", () => {
+    const fc = createFocusController();
+    fc.registerPeer("peer-a");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.setPeerState("peer-a", "crashed");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+    const peer = emitted[0].peers.find((p: any) => p.name === "peer-a");
+    expect(peer).toBeDefined();
+    expect(peer.state).toBe("crashed");
+  });
+
+  it("setPeerDecisionPending emits a mesh-rail-update envelope", () => {
+    const fc = createFocusController();
+    fc.registerPeer("peer-a");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.setPeerDecisionPending("peer-a", true);
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+    const peer = emitted[0].peers.find((p: any) => p.name === "peer-a");
+    expect(peer).toBeDefined();
+    expect(peer.decisionPending).toBe(true);
+  });
+});

@@ -18,6 +18,7 @@
  */
 
 import { EventEmitter } from "node:events";
+import { makeMeshRailUpdateEnvelope } from "./launcher-envelope.mjs";
 
 /**
  * @typedef {{
@@ -49,15 +50,71 @@ export class FocusController extends EventEmitter {
     this._focused = null;
     /** @type {string | null} — persists until next focus change or user input */
     this._autoShiftNotice = null;
+    /**
+     * Peer state map: name → state string (e.g. "spawning", "running", "crashed", "exited").
+     * @type {Map<string, string>}
+     */
+    this._peerStates = new Map();
+    /**
+     * Peer decisionPending map: name → boolean.
+     * @type {Map<string, boolean>}
+     */
+    this._peerDecisionPending = new Map();
+    /**
+     * Optional broadcast callback. When set, _broadcastRailUpdate() fires on
+     * every state-mutating call. Injected by the launcher to avoid a socket
+     * dependency in this pure module.
+     *
+     * @type {((env: import('./launcher-envelope.mjs').LauncherEnvelope) => void) | null}
+     */
+    this._broadcast = null;
+    /**
+     * Callback to retrieve the current decisions count for the rail update.
+     * Injected by the launcher alongside _broadcast.
+     *
+     * @type {(() => number) | null}
+     */
+    this._getDecisionCount = null;
+  }
+
+  /**
+   * Inject a broadcast function and an optional decisions-count getter.
+   * Once set, every state-mutating method broadcasts a `mesh-rail-update` envelope.
+   *
+   * @param {(env: import('./launcher-envelope.mjs').LauncherEnvelope) => void} broadcastFn
+   * @param {() => number} [getDecisionCount]
+   */
+  setBroadcast(broadcastFn, getDecisionCount = () => 0) {
+    this._broadcast = broadcastFn;
+    this._getDecisionCount = getDecisionCount;
+  }
+
+  /**
+   * Build and broadcast a `mesh-rail-update` envelope to all connected peers.
+   * No-op when no broadcast function has been injected.
+   */
+  _broadcastRailUpdate() {
+    if (!this._broadcast) return;
+    const peers = [...this._peers].map((name) => ({
+      name,
+      state: this._peerStates.get(name) ?? "running",
+      decisionPending: this._peerDecisionPending.get(name) ?? false,
+    }));
+    const decisionCount = this._getDecisionCount ? this._getDecisionCount() : 0;
+    this._broadcast(makeMeshRailUpdateEnvelope({ peers, decisionCount }));
   }
 
   /**
    * Register a peer so it can be focused. Must be called before setFocus.
    *
    * @param {string} name
+   * @param {string} [initialState]
    */
-  registerPeer(name) {
+  registerPeer(name, initialState = "spawning") {
     this._peers.add(name);
+    this._peerStates.set(name, initialState);
+    this._peerDecisionPending.set(name, false);
+    this._broadcastRailUpdate();
   }
 
   /**
@@ -67,11 +124,39 @@ export class FocusController extends EventEmitter {
    */
   unregisterPeer(name) {
     this._peers.delete(name);
+    this._peerStates.delete(name);
+    this._peerDecisionPending.delete(name);
     if (this._focused === name) {
       const prev = this._focused;
       this._focused = null;
       this.emit("focus-changed", { focused: null, prev });
     }
+    this._broadcastRailUpdate();
+  }
+
+  /**
+   * Update the state string for a registered peer.
+   * Common state strings: "spawning", "running", "crashed", "exited".
+   *
+   * @param {string} name
+   * @param {string} state
+   */
+  setPeerState(name, state) {
+    if (!this._peers.has(name)) return;
+    this._peerStates.set(name, state);
+    this._broadcastRailUpdate();
+  }
+
+  /**
+   * Update the decisionPending flag for a registered peer.
+   *
+   * @param {string} name
+   * @param {boolean} pending
+   */
+  setPeerDecisionPending(name, pending) {
+    if (!this._peers.has(name)) return;
+    this._peerDecisionPending.set(name, pending);
+    this._broadcastRailUpdate();
   }
 
   /**
@@ -127,6 +212,7 @@ export class FocusController extends EventEmitter {
     // Clear auto-shift notice on manual focus change.
     this._autoShiftNotice = null;
     this.emit("focus-changed", { focused: name, prev });
+    this._broadcastRailUpdate();
     return { ok: true };
   }
 
@@ -154,6 +240,7 @@ export class FocusController extends EventEmitter {
       /** @type {CrashNoticeEvent} */
       const notice = { peerName, shiftedTo: null, topSupervisor, wasTopSupervisor: isTopSupervisor };
       this.emit("crash-notice", notice);
+      this._broadcastRailUpdate();
       return;
     }
 
@@ -163,6 +250,7 @@ export class FocusController extends EventEmitter {
       /** @type {CrashNoticeEvent} */
       const notice = { peerName, shiftedTo: null, topSupervisor, wasTopSupervisor: true };
       this.emit("crash-notice", notice);
+      this._broadcastRailUpdate();
       return;
     }
 
@@ -185,6 +273,7 @@ export class FocusController extends EventEmitter {
     /** @type {CrashNoticeEvent} */
     const notice = { peerName, shiftedTo, topSupervisor, wasTopSupervisor: false };
     this.emit("crash-notice", notice);
+    this._broadcastRailUpdate();
   }
 }
 

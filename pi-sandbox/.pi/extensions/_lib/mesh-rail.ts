@@ -4,22 +4,119 @@
 
 import { truncateToWidth, type Component } from "@mariozechner/pi-tui";
 
+export interface MeshRailPeer {
+  name: string;
+  state: string;
+  decisionPending: boolean;
+}
+
+export interface MeshRailState {
+  peerName: string;
+  peers: MeshRailPeer[];
+  decisionCount: number;
+}
+
+export interface MeshRailPatch {
+  peers?: MeshRailPeer[];
+  decisionCount?: number;
+}
+
+export interface MeshRailComponentHandle extends Component {
+  /** Partially update live state; missing keys leave existing state unchanged. */
+  update(patch: MeshRailPatch): void;
+  /** Return a copy of the current state. */
+  getState(): MeshRailState;
+}
+
 export interface MeshRailComponentOptions {
   peerName: string;
+  initialPeers?: MeshRailPeer[];
+  initialDecisionCount?: number;
 }
 
 const SEPARATOR = "  ·  ";
 
-export function createMeshRailComponent(opts: MeshRailComponentOptions): Component {
-  return {
+/** Icon shown next to a peer name, keyed by state string. */
+const STATE_ICON: Record<string, string> = {
+  spawning: "⏳",
+  running: "●",
+  crashed: "✗",
+  exited: "○",
+};
+
+function stateIcon(state: string): string {
+  return STATE_ICON[state] ?? "?";
+}
+
+export function createMeshRailComponent(opts: MeshRailComponentOptions): MeshRailComponentHandle {
+  const state: MeshRailState = {
+    peerName: opts.peerName,
+    peers: opts.initialPeers ?? [],
+    decisionCount: opts.initialDecisionCount ?? 0,
+  };
+
+  /** Invalidation callback injected by pi-tui when the widget is mounted. */
+  let _invalidate: (() => void) | null = null;
+
+  const component: MeshRailComponentHandle = {
     render(width: number): string[] {
-      // Single-line, borderless layout: fields joined by a middle-dot separator.
-      const line = [opts.peerName, "0 peers", "0 decisions"].join(SEPARATOR);
+      const peerCount = state.peers.length;
+      const peerSummary =
+        peerCount === 0
+          ? "0 peers"
+          : state.peers.map((p) => `${stateIcon(p.state)} ${p.name}`).join(", ");
+
+      const decisionSummary =
+        state.decisionCount === 1
+          ? "1 decision"
+          : `${state.decisionCount} decisions`;
+
+      const line = [state.peerName, peerSummary, decisionSummary].join(SEPARATOR);
       return [truncateToWidth(line, width, "…")];
     },
+
     invalidate(): void {
-      // Static placeholder content; nothing to invalidate yet.
-      // Real signal-driven re-renders land in the follow-up slice (#91).
+      // Called by pi-tui when the widget should be re-rendered.
+      if (_invalidate) _invalidate();
+    },
+
+    update(patch: MeshRailPatch): void {
+      if (patch.peers !== undefined) state.peers = patch.peers;
+      if (patch.decisionCount !== undefined) state.decisionCount = patch.decisionCount;
+      // Trigger pi-tui re-render by calling the stored invalidate callback.
+      if (_invalidate) _invalidate();
+    },
+
+    getState(): MeshRailState {
+      return { ...state, peers: [...state.peers] };
     },
   };
+
+  // Expose setter so the extension wrapper can inject the tui invalidate fn.
+  (component as any)._setInvalidate = (fn: () => void) => { _invalidate = fn; };
+
+  return component;
+}
+
+// ── Handle stash (globalThis, survives jiti module isolation) ─────────────────
+
+interface MeshRailHandleStash {
+  handle: MeshRailComponentHandle | null;
+}
+
+function getStash(): MeshRailHandleStash {
+  const g = globalThis as { __pi_mesh_rail__?: MeshRailHandleStash };
+  return (g.__pi_mesh_rail__ ??= { handle: null });
+}
+
+export function setMeshRailHandle(handle: MeshRailComponentHandle): void {
+  getStash().handle = handle;
+}
+
+export function getMeshRailHandle(): MeshRailComponentHandle | null {
+  return getStash().handle;
+}
+
+export function clearMeshRailHandle(): void {
+  getStash().handle = null;
 }

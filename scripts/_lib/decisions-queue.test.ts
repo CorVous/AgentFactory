@@ -176,3 +176,77 @@ describe("createDecisionsQueue — decoupling from focus-controller", () => {
     expect(q2.count()).toBe(0);
   });
 });
+
+// ── onCountChange callback (AC-2 coverage) ────────────────────────────────────
+
+describe("createDecisionsQueue — onCountChange", () => {
+  it("onCountChange callback is called with count 1 after enqueue", () => {
+    const q = createDecisionsQueue();
+    const counts: number[] = [];
+    q.onCountChange((n) => counts.push(n));
+
+    q.enqueue({ msg_id: "a", peer: "p", kind: "k", summary: "s" });
+
+    expect(counts).toHaveLength(1);
+    expect(counts[0]).toBe(1);
+  });
+
+  it("onCountChange callback is called with decremented count after dismiss", () => {
+    const q = createDecisionsQueue();
+    q.enqueue({ msg_id: "a", peer: "p", kind: "k", summary: "s" });
+
+    const counts: number[] = [];
+    q.onCountChange((n) => counts.push(n));
+
+    q.dismiss("a");
+
+    expect(counts).toHaveLength(1);
+    expect(counts[0]).toBe(0);
+  });
+
+  it("onCountChange is NOT called when dismiss returns false (item not found)", () => {
+    const q = createDecisionsQueue();
+    const counts: number[] = [];
+    q.onCountChange((n) => counts.push(n));
+
+    q.dismiss("nonexistent");
+
+    expect(counts).toHaveLength(0);
+  });
+
+  it("multiple onCountChange listeners are all notified", () => {
+    const q = createDecisionsQueue();
+    const a: number[] = [];
+    const b: number[] = [];
+    q.onCountChange((n) => a.push(n));
+    q.onCountChange((n) => b.push(n));
+
+    q.enqueue({ msg_id: "x", peer: "p", kind: "k", summary: "s" });
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+  });
+
+  it("pin/unpin do NOT trigger onCountChange (count unchanged)", () => {
+    const q = createDecisionsQueue();
+    q.enqueue({ msg_id: "a", peer: "p", kind: "k", summary: "s" });
+
+    const counts: number[] = [];
+    q.onCountChange((n) => counts.push(n));
+
+    q.pin("a");
+    q.unpin("a");
+
+    // pin and unpin don't change the count, so the callback should not fire.
+    expect(counts).toHaveLength(0);
+  });
+
+  it("onCountChange callback error does not break the queue", () => {
+    const q = createDecisionsQueue();
+    q.onCountChange(() => { throw new Error("boom"); });
+
+    // enqueue should complete despite listener error
+    expect(() => q.enqueue({ msg_id: "a", peer: "p", kind: "k", summary: "s" })).not.toThrow();
+    expect(q.count()).toBe(1);
+  });
+});

@@ -40,11 +40,36 @@ import { randomUUID } from "node:crypto";
  *   unpin(msg_id: string): boolean;
  *   list(): DecisionItem[];
  *   count(): number;
+ *   onCountChange(cb: (count: number) => void): void;
  * }}
  */
 export function createDecisionsQueue() {
   /** @type {Map<string, DecisionItem>} */
   const items = new Map();
+
+  /** @type {Array<(count: number) => void>} */
+  const countChangeListeners = [];
+
+  /**
+   * Register a callback invoked whenever the queue count changes.
+   * Callers use this to trigger a `mesh-rail-update` broadcast without
+   * creating a socket dependency in this pure module.
+   *
+   * @param {(count: number) => void} cb
+   */
+  function onCountChange(cb) {
+    countChangeListeners.push(cb);
+  }
+
+  /**
+   * Fire all count-change listeners with the current count.
+   */
+  function _notifyCountChange() {
+    const n = items.size;
+    for (const cb of countChangeListeners) {
+      try { cb(n); } catch { /* listener errors must not break the queue */ }
+    }
+  }
 
   /**
    * Enqueue a new (non-pinned) decision item.
@@ -63,6 +88,7 @@ export function createDecisionsQueue() {
       pinned: false,
     };
     items.set(full.msg_id, full);
+    _notifyCountChange();
     return full;
   }
 
@@ -74,7 +100,9 @@ export function createDecisionsQueue() {
    * @returns {boolean}
    */
   function dismiss(msg_id) {
-    return items.delete(msg_id);
+    const removed = items.delete(msg_id);
+    if (removed) _notifyCountChange();
+    return removed;
   }
 
   /**
@@ -124,5 +152,5 @@ export function createDecisionsQueue() {
     return items.size;
   }
 
-  return { enqueue, dismiss, pin, unpin, list, count };
+  return { enqueue, dismiss, pin, unpin, list, count, onCountChange };
 }

@@ -29,6 +29,7 @@ interface BridgeState {
   focusState: ReturnType<typeof createFocusState>;
   ready: boolean;
   signalHandlers: Array<(env: any) => void>;
+  meshRailUpdateHandlers: Array<(env: any) => void>;
 }
 
 function getBridgeState(): BridgeState {
@@ -38,6 +39,7 @@ function getBridgeState(): BridgeState {
     focusState: createFocusState(),
     ready: false,
     signalHandlers: [],
+    meshRailUpdateHandlers: [],
   });
 }
 
@@ -57,6 +59,15 @@ export function sendControl(env: Record<string, unknown>): boolean {
 export function onSignal(handler: (env: any) => void): void {
   const state = getBridgeState();
   state.signalHandlers.push(handler);
+}
+
+/**
+ * Subscribe to mesh-rail-update envelopes from the launcher.
+ * The handler receives the full envelope (peers array + decisionCount).
+ */
+export function onMeshRailUpdate(handler: (env: any) => void): void {
+  const state = getBridgeState();
+  state.meshRailUpdateHandlers.push(handler);
 }
 
 /**
@@ -108,6 +119,12 @@ export default function (pi: ExtensionAPI) {
         }
         case "signal": {
           for (const handler of state.signalHandlers) {
+            try { handler(env); } catch { /* ignore handler errors */ }
+          }
+          break;
+        }
+        case "mesh-rail-update": {
+          for (const handler of state.meshRailUpdateHandlers) {
             try { handler(env); } catch { /* ignore handler errors */ }
           }
           break;
