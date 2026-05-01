@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
+import { createPtyPool } from "./_lib/pty-pool.mjs";
+import { createMultiplexer } from "./_lib/multiplexer.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = path.join(REPO_ROOT, "pi-sandbox");
@@ -408,13 +409,95 @@ piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 
-const child = spawn(PI_BIN, piArgs, {
-  cwd: sandboxRoot,
-  stdio: "inherit",
-  env: { ...process.env },
-});
+// ── PTY pool + multiplexer (slice 2: single-peer launcher TUI) ───────────────
+//
+// Spawn pi in a PTY so the full interactive TUI renders (agent-header,
+// agent-footer, deferred-confirm dialogs) and pipe its output through a
+// VirtualBuffer before painting to the launcher's terminal.
+//
+// In interactive mode (stdio is a TTY) we use PTY-based rendering.
+// In non-interactive mode (piped stdout, CI, -p passthrough) we fall back to
+// the plain child_process.spawn path with inherited stdio so scripts that
+// capture stdout keep working.
+//
+// TODO(manual-tmux-check): verify full TUI fidelity with:
+//   set -a; source models.env; set +a
+//   tmux new-session -d -s run-agent-test -x 220 -y 50 \
+//     'npm run agent -- deferred-writer'
+//   sleep 5
+//   tmux capture-pane -t run-agent-test -p
+//   # expect: agent-header strip, agent-footer four-line block visible
+//   tmux send-keys -t run-agent-test '/quit' Enter
+//   sleep 2
+//   # expect: clean exit, no orphan pi processes
+//   tmux kill-session -t run-agent-test
 
-child.on("exit", (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
-  else process.exit(code ?? 0);
-});
+const isTTY = Boolean(process.stdout.isTTY);
+const isPrintMode = args.passthrough.includes("-p") || args.passthrough.includes("--print");
+
+if (isTTY && !isPrintMode) {
+  // Interactive launcher path: PTY + virtual buffer + multiplexer.
+  const cols = process.stdout.columns || 220;
+  const rows = process.stdout.rows || 50;
+
+  const pool = createPtyPool();
+  const mux = createMultiplexer({ out: process.stdout });
+
+  pool.spawn({
+    name: agentName,
+    cmd: PI_BIN,
+    args: piArgs,
+    cols,
+    rows,
+    cwd: sandboxRoot,
+    env: { ...process.env },
+  });
+
+  mux.attachPool(pool);
+  mux.setFocus(agentName);
+  mux.attachResizeHandler(pool);
+
+  // Forward stdin to the focused peer's PTY so the user can type.
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    // Ctrl-C in raw mode sends \x03; translate to SIGINT for the peer.
+    if (chunk === "\x03") {
+      pool.kill(agentName).then(() => process.exit(0));
+      return;
+    }
+    pool.write(agentName, chunk);
+  });
+
+  // Coordinated teardown.
+  function shutdownAgent(signal) {
+    mux.detach();
+    pool.kill(agentName).then(() => process.exit(0));
+    void signal;
+  }
+
+  process.once("SIGINT", () => shutdownAgent("SIGINT"));
+  process.once("SIGTERM", () => shutdownAgent("SIGTERM"));
+
+  pool.on("exit", (name, code, signal) => {
+    if (name !== agentName) return;
+    mux.detach();
+    // Restore terminal state before exit.
+    process.stdout.write("\x1b[?25h\x1b[0m"); // show cursor + reset attrs
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+} else {
+  // Non-interactive path: plain spawn with inherited stdio (original behaviour).
+  const { spawn } = await import("node:child_process");
+  const child = spawn(PI_BIN, piArgs, {
+    cwd: sandboxRoot,
+    stdio: "inherit",
+    env: { ...process.env },
+  });
+
+  child.on("exit", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+}

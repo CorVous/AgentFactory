@@ -21,7 +21,6 @@
 // NOTE: type:relay nodes are no longer supported (see ADR-0004); the validator
 //       will reject any topology that still declares them.
 
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,10 +30,11 @@ import { parseTopology, resolveNode } from "../pi-sandbox/.pi/extensions/_lib/to
 import { validateTopology } from "../pi-sandbox/.pi/extensions/_lib/topology-validator.mjs";
 import { resolveEntry } from "../pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
+import { createPtyPool } from "./_lib/pty-pool.mjs";
+import { createMultiplexer } from "./_lib/multiplexer.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
-const RELAY = path.join(REPO_ROOT, "scripts", "human-relay.mjs");
 
 function die(msg) {
   process.stderr.write(`launch-mesh: ${msg}\n`);
@@ -143,62 +143,40 @@ function makePrefix(name, idx) {
   return `${COLORS[idx % COLORS.length]}[${name}]${RESET} `;
 }
 
-// Extract a short human-readable summary from a pi RPC JSON event line.
-// Returns a string to display, or null to suppress the line.
-function formatRpcLine(line) {
-  let ev;
-  try { ev = JSON.parse(line); } catch { return null; }
-  if (!ev || typeof ev !== "object") return null;
-  switch (ev.type) {
-    case "turn_start":    return "(thinking…)";
-    case "turn_end":      return null;
-    case "agent_start":   return null;
-    case "agent_end":     return null;
-    case "message_end": {
-      const msg = ev.message;
-      if (!msg || msg.role !== "assistant") return null;
-      const parts = [];
-      for (const c of (msg.content ?? [])) {
-        if (c.type === "text" && c.text) parts.push(c.text.trim());
-      }
-      return parts.length > 0 ? parts.join(" ") : null;
-    }
-    case "extension_error":
-      return `[extension error] ${ev.event}: ${ev.error}`;
-    default:
-      return null;
-  }
-}
 
-function attachPrefixedOutput(child, prefix) {
-  let stdoutBuf = "";
-  child.stdout?.setEncoding("utf8");
-  child.stdout?.on("data", (chunk) => {
-    stdoutBuf += chunk;
-    let nl;
-    while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
-      const line = stdoutBuf.slice(0, nl);
-      stdoutBuf = stdoutBuf.slice(nl + 1);
-      const formatted = formatRpcLine(line);
-      if (formatted !== null) process.stdout.write(prefix + formatted + "\n");
-    }
-  });
+// ── PTY pool + multiplexer (slice 2: single-peer focused rendering) ──────────
+//
+// Every pi-agent node is spawned via node-pty into a VirtualBuffer.
+// The entry peer's buffer is rendered live to the launcher's terminal.
+// Off-screen peers accumulate output in their buffers (slice 3 adds focus
+// switching to bring them into view).
+//
+// TODO(manual-tmux-check): verify full TUI fidelity and clean teardown with:
+//   set -a; source models.env; set +a
+//   tmux new-session -d -s mesh-test -x 220 -y 50 \
+//     'npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml'
+//   sleep 5
+//   tmux capture-pane -t mesh-test -p
+//   # expect: entry peer's agent-header / agent-footer rendered in launcher pane
+//   tmux send-keys -t mesh-test 'C-c'
+//   sleep 2
+//   # expect: all peers cleaned up, no orphan pi processes
 
-  let stderrBuf = "";
-  child.stderr?.setEncoding("utf8");
-  child.stderr?.on("data", (chunk) => {
-    stderrBuf += chunk;
-    let nl;
-    while ((nl = stderrBuf.indexOf("\n")) !== -1) {
-      process.stderr.write(prefix + stderrBuf.slice(0, nl) + "\n");
-      stderrBuf = stderrBuf.slice(nl + 1);
-    }
-  });
+const isTTY = Boolean(process.stdout.isTTY);
+const cols = isTTY ? (process.stdout.columns || 220) : 220;
+const rows = isTTY ? (process.stdout.rows || 50) : 50;
+
+const pool = createPtyPool();
+const mux = isTTY ? createMultiplexer({ out: process.stdout }) : null;
+
+if (mux) {
+  mux.attachPool(pool);
+  mux.attachResizeHandler(pool);
 }
 
 // ── Spawn all nodes ───────────────────────────────────────────────────────────
 
-const children = [];
+const nodeNames = [];
 
 for (let i = 0; i < topology.nodes.length; i++) {
   const node = topology.nodes[i];
@@ -207,16 +185,8 @@ for (let i = 0; i < topology.nodes.length; i++) {
   const prefix = makePrefix(name, i);
 
   if (type === "relay") {
-    // Human relay — thin REPL on the bus, no LLM
-    if (!existsSync(RELAY)) die(`human-relay.mjs not found at ${RELAY}`);
-    const child = spawn(process.execPath, [RELAY, "--name", name, "--bus-root", busRoot], {
-      cwd: REPO_ROOT,
-      stdio: ["inherit", "inherit", "inherit"], // relay gets full terminal access
-    });
-    child.on("exit", (code, signal) => {
-      process.stderr.write(`${prefix}relay exited (code=${code} signal=${signal})\n`);
-    });
-    children.push({ name, child });
+    // Human relay — deprecated; validator should have rejected this, but handle gracefully.
+    process.stderr.write(`${prefix}relay nodes are deprecated (see ADR-0004); skipping\n`);
     continue;
   }
 
@@ -229,75 +199,103 @@ for (let i = 0; i < topology.nodes.length; i++) {
   mkdirSync(sandbox, { recursive: true });
 
   const overlay = nodeOverlays.get(name);
-  const args = [
+
+  // Non-entry peers run in --mode rpc so the entry peer's PTY gets full terminal.
+  // The entry peer runs interactively (no --mode rpc) so pi's TUI renders.
+  const isEntry = name === entryPeer;
+  const peerArgs = [
     RUNNER,
     recipe,
     "--sandbox", sandbox,
     "--agent-bus", busRoot,
     "--",
     "--agent-name", name,
-    "--mode", "rpc",
     "--topology-overlay", JSON.stringify(overlay),
   ];
 
-  const child = spawn(process.execPath, args, {
-    cwd: REPO_ROOT,
-    stdio: ["pipe", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      PI_AGENT_NAME: name,
-      PI_AGENT_BUS_ROOT: busRoot,
-    },
-  });
-
-  // Send the initial task as the first RPC prompt command.
-  if (task) {
-    child.stdin.write(JSON.stringify({ type: "prompt", message: task }) + "\n");
+  if (!isEntry) {
+    // Non-entry peers run headless (RPC mode); their output goes into a virtual
+    // buffer for slice-3 focus switching but isn't painted to the launcher's terminal.
+    peerArgs.push("--mode", "rpc");
   }
 
-  attachPrefixedOutput(child, prefix);
-  child.on("exit", (code, signal) => {
-    process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
+  const peerEnv = {
+    ...process.env,
+    PI_AGENT_NAME: name,
+    PI_AGENT_BUS_ROOT: busRoot,
+  };
+
+  pool.spawn({
+    name,
+    cmd: process.execPath,
+    args: peerArgs,
+    cols,
+    rows,
+    cwd: REPO_ROOT,
+    env: peerEnv,
   });
-  children.push({ name, child });
+
+  // For non-entry RPC peers: send the initial task as the first RPC prompt.
+  if (!isEntry && task) {
+    // Use pool.write() to inject the JSON prompt into the PTY stdin.
+    pool.write(name, JSON.stringify({ type: "prompt", message: task }) + "\n");
+  }
+
+  pool.on("exit", (exitedName, code, signal) => {
+    if (exitedName === name) {
+      process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
+    }
+  });
+
+  nodeNames.push(name);
+}
+
+// Focus the entry peer (renders its buffer to the launcher's terminal).
+if (mux && entryPeer && nodeNames.includes(entryPeer)) {
+  mux.setFocus(entryPeer);
+
+  // Forward stdin to the focused peer's PTY so the user can type.
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    if (!mux.getFocus()) return;
+    // Ctrl-C in raw mode: initiate teardown.
+    if (chunk === "\x03") {
+      shutdown("SIGINT");
+      return;
+    }
+    pool.write(mux.getFocus(), chunk);
+  });
 }
 
 // ── Coordinated teardown ──────────────────────────────────────────────────────
 
 function shutdown(signal) {
   process.stderr.write(`\nlaunch-mesh: ${signal} — stopping all nodes\n`);
-  for (const { name, child } of children) {
-    if (child.exitCode === null && !child.killed) {
-      process.stderr.write(`launch-mesh: sending SIGTERM to ${name}\n`);
-      try { child.kill("SIGTERM"); } catch { /* noop */ }
-    }
-  }
-  setTimeout(() => {
-    for (const { child } of children) {
-      if (child.exitCode === null && !child.killed) {
-        try { child.kill("SIGKILL"); } catch { /* noop */ }
-      }
-    }
+  if (mux) mux.detach();
+  pool.killAll().then(() => {
+    // Restore terminal state.
+    if (isTTY) process.stdout.write("\x1b[?25h\x1b[0m");
     process.exit(0);
-  }, 3000);
+  });
 }
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 
-// Exit when all children are done
+// Exit when all nodes have exited naturally.
 let exited = 0;
-for (const { child } of children) {
-  child.once("exit", () => {
-    exited++;
-    if (exited === children.length) {
-      process.stderr.write("launch-mesh: all nodes exited\n");
-      process.exit(0);
-    }
-  });
-}
+pool.on("exit", () => {
+  exited++;
+  if (exited >= nodeNames.length) {
+    process.stderr.write("launch-mesh: all nodes exited\n");
+    if (mux) mux.detach();
+    if (isTTY) process.stdout.write("\x1b[?25h\x1b[0m");
+    process.exit(0);
+  }
+});
 
 process.stderr.write(
-  `launch-mesh: started ${children.length} node(s) — bus_root=${busRoot}\n` +
-  `             Press Ctrl+C to stop all.\n`,
+  `launch-mesh: started ${nodeNames.length} node(s) — bus_root=${busRoot}\n` +
+  `             Entry peer: ${entryPeer ?? "(none)"} — Press Ctrl+C to stop all.\n`,
 );
