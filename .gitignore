@@ -6,3 +6,4 @@ npm-debug.log*
 dist/
 pi-sandbox/.pi/scratch/
 .claude/worktrees/
+.ralph-worktrees/
