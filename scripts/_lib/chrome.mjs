@@ -3,7 +3,8 @@
  *
  * Renders a vertical strip showing:
  *   - Mesh metadata header (bus_root, node count).
- *   - Per-peer row: state icon + focus indicator + peer name.
+ *   - Per-peer row: state icon + focus indicator + peer name (+ exit info for crashed peers).
+ *   - Auto-shift notice when a focused peer crash triggers a focus shift.
  *
  * Output is plain ANSI text, no third-party TUI library required. The
  * rendering is deterministic for fixed input, making it straightforward
@@ -13,9 +14,11 @@
  *   ● running (green)
  *   ○ spawning (yellow)
  *   ✗ exited  (red/dim)
+ *   ✗ crashed (red bold) — non-zero exit code or signal
  *   ? unknown (dim)
  *
  * The focused peer's row is rendered with a bold accent color; others are dim.
+ * Crashed peers show their exit code/signal next to the name.
  */
 
 // ANSI escape helpers
@@ -30,13 +33,15 @@ const CYAN = "\x1b[36m";
 const WHITE = "\x1b[37m";
 
 /**
- * @typedef {"spawning" | "running" | "exiting" | "exited" | "unknown"} PeerState
+ * @typedef {"spawning" | "running" | "exiting" | "exited" | "crashed" | "unknown"} PeerState
  */
 
 /**
  * @typedef {{
  *   name: string;
  *   state: PeerState;
+ *   exitCode?: number | null;
+ *   exitSignal?: string | null;
  * }} PeerEntry
  */
 
@@ -46,6 +51,7 @@ const WHITE = "\x1b[37m";
  *   focused: string | null;
  *   busRoot?: string;
  *   meshName?: string;
+ *   autoShiftNotice?: string | null;
  * }} ChromeOpts
  */
 
@@ -54,6 +60,7 @@ const STATE_ICONS = {
   spawning: `${YELLOW}○${RESET}`,
   exiting: `${YELLOW}↓${RESET}`,
   exited: `${DIM}✗${RESET}`,
+  crashed: `${BOLD}${RED}✗${RESET}`,
   unknown: `${DIM}?${RESET}`,
 };
 
@@ -65,7 +72,7 @@ const STATE_ICONS = {
  * @returns {string}
  */
 export function renderChrome(opts) {
-  const { peers, focused, busRoot, meshName } = opts;
+  const { peers, focused, busRoot, meshName, autoShiftNotice } = opts;
   const lines = [];
 
   // Header
@@ -83,13 +90,13 @@ export function renderChrome(opts) {
 
   // Peer rows
   for (const peer of peers) {
-    const icon = STATE_ICONS[peer.state] ?? STATE_ICONS.unknown;
-    const isFocused = peer.name === focused;
-    const focusMark = isFocused ? `${BOLD}${CYAN}▶${RESET} ` : "  ";
-    const nameStr = isFocused
-      ? `${BOLD}${WHITE}${peer.name}${RESET}`
-      : `${DIM}${peer.name}${RESET}`;
-    lines.push(`${focusMark}${icon} ${nameStr}`);
+    lines.push(renderPeerRow(peer, peer.name === focused));
+  }
+
+  // Auto-shift notice (persists until next focus change or user input).
+  if (autoShiftNotice) {
+    lines.push(""); // blank separator before notice
+    lines.push(`${YELLOW}${BOLD}!${RESET} ${DIM}${autoShiftNotice}${RESET}`);
   }
 
   return lines.join("\n") + "\n";
@@ -99,6 +106,8 @@ export function renderChrome(opts) {
  * Render a single peer row without surrounding chrome.
  * Useful for partial updates.
  *
+ * Crashed peers show their exit code/signal next to the name.
+ *
  * @param {PeerEntry} peer
  * @param {boolean} isFocused
  * @returns {string}
@@ -106,10 +115,26 @@ export function renderChrome(opts) {
 export function renderPeerRow(peer, isFocused) {
   const icon = STATE_ICONS[peer.state] ?? STATE_ICONS.unknown;
   const focusMark = isFocused ? `${BOLD}${CYAN}▶${RESET} ` : "  ";
-  const nameStr = isFocused
-    ? `${BOLD}${WHITE}${peer.name}${RESET}`
-    : `${DIM}${peer.name}${RESET}`;
-  return `${focusMark}${icon} ${nameStr}`;
+
+  let namePart;
+  if (peer.state === "crashed") {
+    // Show exit code or signal for crashed peers.
+    const codeStr =
+      peer.exitSignal
+        ? `SIG${peer.exitSignal}`
+        : peer.exitCode != null
+        ? `exit=${peer.exitCode}`
+        : "crashed";
+    namePart = isFocused
+      ? `${BOLD}${WHITE}${peer.name}${RESET} ${RED}(${codeStr})${RESET}`
+      : `${DIM}${peer.name}${RESET} ${RED}(${codeStr})${RESET}`;
+  } else {
+    namePart = isFocused
+      ? `${BOLD}${WHITE}${peer.name}${RESET}`
+      : `${DIM}${peer.name}${RESET}`;
+  }
+
+  return `${focusMark}${icon} ${namePart}`;
 }
 
 /**

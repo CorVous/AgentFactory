@@ -148,3 +148,181 @@ describe("FocusController — null focus", () => {
     expect(fc.getFocus()).toBeNull();
   });
 });
+
+// ── handleCrash — crash auto-shift to top supervisor ─────────────────────────
+
+describe("FocusController — handleCrash: crash on non-focused peer is a no-op for focus", () => {
+  it("does not change focus when a non-focused peer crashes", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+
+    const focusEvents: Array<{ focused: string | null; prev: string | null }> = [];
+    fc.on("focus-changed", (e: { focused: string | null; prev: string | null }) => focusEvents.push(e));
+
+    // Crash on supervisor (not focused)
+    fc.handleCrash("supervisor", "supervisor");
+
+    expect(focusEvents).toHaveLength(0);
+    expect(fc.getFocus()).toBe("entry");
+  });
+
+  it("emits crash-notice for non-focused peer crash", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+
+    const notices: unknown[] = [];
+    fc.on("crash-notice", (e: unknown) => notices.push(e));
+
+    fc.handleCrash("supervisor", "supervisor");
+
+    expect(notices).toHaveLength(1);
+    expect((notices[0] as any).peerName).toBe("supervisor");
+    expect((notices[0] as any).shiftedTo).toBeNull();
+  });
+});
+
+describe("FocusController — handleCrash: crash on focused peer triggers shift to top", () => {
+  it("shifts focus to top supervisor when the focused peer crashes", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+
+    const focusEvents: Array<{ focused: string | null; prev: string | null }> = [];
+    fc.on("focus-changed", (e: { focused: string | null; prev: string | null }) => focusEvents.push(e));
+
+    fc.handleCrash("entry", "supervisor");
+
+    expect(focusEvents).toHaveLength(1);
+    expect(focusEvents[0].focused).toBe("supervisor");
+    expect(focusEvents[0].prev).toBe("entry");
+    expect(fc.getFocus()).toBe("supervisor");
+  });
+
+  it("sets auto-shift notice after shift", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+
+    fc.handleCrash("entry", "supervisor");
+
+    const notice = fc.getAutoShiftNotice();
+    expect(notice).not.toBeNull();
+    expect(notice).toContain("entry");
+    expect(notice).toContain("supervisor");
+  });
+
+  it("emits crash-notice with shiftedTo=supervisor", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+
+    const notices: unknown[] = [];
+    fc.on("crash-notice", (e: unknown) => notices.push(e));
+
+    fc.handleCrash("entry", "supervisor");
+
+    expect(notices).toHaveLength(1);
+    expect((notices[0] as any).peerName).toBe("entry");
+    expect((notices[0] as any).shiftedTo).toBe("supervisor");
+    expect((notices[0] as any).wasTopSupervisor).toBe(false);
+  });
+
+  it("clears focus to null if top supervisor is not registered (already crashed)", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    // supervisor NOT registered (crashed before focus shift)
+    fc.setFocus("entry");
+
+    const focusEvents: Array<{ focused: string | null }> = [];
+    fc.on("focus-changed", (e: { focused: string | null }) => focusEvents.push(e));
+
+    fc.handleCrash("entry", "supervisor");
+
+    expect(focusEvents).toHaveLength(1);
+    expect(focusEvents[0].focused).toBeNull();
+    expect(fc.getFocus()).toBeNull();
+  });
+
+  it("clears auto-shift notice on next setFocus call", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.registerPeer("other");
+    fc.setFocus("entry");
+
+    fc.handleCrash("entry", "supervisor");
+    expect(fc.getAutoShiftNotice()).not.toBeNull();
+
+    // Manual focus change should clear the notice.
+    fc.setFocus("other");
+    expect(fc.getAutoShiftNotice()).toBeNull();
+  });
+
+  it("clearAutoShiftNotice clears the notice", () => {
+    const fc = createFocusController();
+    fc.registerPeer("entry");
+    fc.registerPeer("supervisor");
+    fc.setFocus("entry");
+
+    fc.handleCrash("entry", "supervisor");
+    expect(fc.getAutoShiftNotice()).not.toBeNull();
+
+    fc.clearAutoShiftNotice();
+    expect(fc.getAutoShiftNotice()).toBeNull();
+  });
+});
+
+describe("FocusController — handleCrash: crash on top supervisor itself", () => {
+  it("does not shift focus when the top supervisor crashes while focused", () => {
+    const fc = createFocusController();
+    fc.registerPeer("supervisor");
+    fc.registerPeer("worker");
+    fc.setFocus("supervisor"); // supervisor is the focused peer
+
+    const focusEvents: unknown[] = [];
+    fc.on("focus-changed", (e: unknown) => focusEvents.push(e));
+
+    // The supervisor crashes; it IS the top supervisor.
+    fc.handleCrash("supervisor", "supervisor");
+
+    expect(focusEvents).toHaveLength(0);
+    // Focus stays on supervisor (it's already the top — no shift target).
+    // (focus-changed was not emitted)
+    expect(fc.getFocus()).toBe("supervisor");
+  });
+
+  it("sets a clear notice (not a shift notice) when top supervisor crashes", () => {
+    const fc = createFocusController();
+    fc.registerPeer("supervisor");
+    fc.setFocus("supervisor");
+
+    fc.handleCrash("supervisor", "supervisor");
+
+    const notice = fc.getAutoShiftNotice();
+    expect(notice).not.toBeNull();
+    expect(notice).toContain("top supervisor");
+    expect(notice).toContain("supervisor");
+  });
+
+  it("emits crash-notice with wasTopSupervisor=true when top supervisor crashes", () => {
+    const fc = createFocusController();
+    fc.registerPeer("supervisor");
+    fc.setFocus("supervisor");
+
+    const notices: unknown[] = [];
+    fc.on("crash-notice", (e: unknown) => notices.push(e));
+
+    fc.handleCrash("supervisor", "supervisor");
+
+    expect(notices).toHaveLength(1);
+    expect((notices[0] as any).wasTopSupervisor).toBe(true);
+    expect((notices[0] as any).shiftedTo).toBeNull();
+  });
+});

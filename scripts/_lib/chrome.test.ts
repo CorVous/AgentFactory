@@ -173,3 +173,99 @@ describe("renderChrome — output format", () => {
     expect(renderChrome(opts)).toBe(renderChrome(opts));
   });
 });
+
+// ── crashed peer state ────────────────────────────────────────────────────────
+
+describe("renderPeerRow — crashed state", () => {
+  it("shows state icon ✗ (bold red) for crashed", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "crashed" }, false);
+    expect(stripAnsi(row)).toContain("✗");
+    expect(stripAnsi(row)).toContain("peer-a");
+  });
+
+  it("shows exit code in parentheses for crashed peer with exitCode", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "crashed", exitCode: 1, exitSignal: null }, false);
+    expect(stripAnsi(row)).toContain("exit=1");
+    expect(stripAnsi(row)).toContain("peer-a");
+  });
+
+  it("shows SIG<name> when killed by signal", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "crashed", exitCode: null, exitSignal: "KILL" }, false);
+    expect(stripAnsi(row)).toContain("SIGKILL");
+    expect(stripAnsi(row)).toContain("peer-a");
+  });
+
+  it("shows 'crashed' fallback when no code or signal", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "crashed" }, false);
+    expect(stripAnsi(row)).toContain("crashed");
+  });
+
+  it("shows exit code when focused", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "crashed", exitCode: 2, exitSignal: null }, true);
+    const plain = stripAnsi(row);
+    expect(plain).toContain("▶");
+    expect(plain).toContain("exit=2");
+  });
+});
+
+describe("renderChrome — crashed peer in peers list", () => {
+  it("renders crashed peer with exit code in the peers list", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "entry", state: "crashed", exitCode: 1, exitSignal: null },
+        { name: "supervisor", state: "running" },
+      ],
+      focused: "supervisor",
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("entry");
+    expect(plain).toContain("exit=1");
+    expect(plain).toContain("✗");
+  });
+});
+
+// ── auto-shift notice ─────────────────────────────────────────────────────────
+
+describe("renderChrome — auto-shift notice", () => {
+  it("renders the notice when autoShiftNotice is set", () => {
+    const output = renderChrome({
+      peers: [{ name: "supervisor", state: "running" }],
+      focused: "supervisor",
+      autoShiftNotice: 'entry peer "entry" exited; focus moved to "supervisor"',
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("entry");
+    expect(plain).toContain("supervisor");
+    expect(plain).toContain("focus moved");
+  });
+
+  it("does not render notice section when autoShiftNotice is null", () => {
+    const output = renderChrome({
+      peers: [{ name: "supervisor", state: "running" }],
+      focused: "supervisor",
+      autoShiftNotice: null,
+    });
+    const plain = stripAnsi(output);
+    expect(plain).not.toContain("focus moved");
+  });
+
+  it("does not render notice section when autoShiftNotice is undefined", () => {
+    const output = renderChrome({
+      peers: [{ name: "supervisor", state: "running" }],
+      focused: "supervisor",
+    });
+    const plain = stripAnsi(output);
+    expect(plain).not.toContain("focus moved");
+  });
+
+  it("shows ! marker in the notice", () => {
+    const output = renderChrome({
+      peers: [],
+      focused: null,
+      autoShiftNotice: "top supervisor crashed; no peer to shift focus to",
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("!");
+    expect(plain).toContain("top supervisor");
+  });
+});

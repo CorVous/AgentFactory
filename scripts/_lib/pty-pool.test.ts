@@ -201,6 +201,87 @@ describe("exit event", () => {
   });
 });
 
+// ── crash event ───────────────────────────────────────────────────────────────
+
+describe("crash event", () => {
+  it("fires 'crash' event with typed payload when PTY exits with non-zero code", () => {
+    const { pool, mockPtys } = buildPool();
+    const { pty } = spawnPeer(pool, mockPtys, "peer-a");
+
+    const crashes: Array<{ peer: string; exitCode: number | null; signal: string | null }> = [];
+    pool.on("crash", (ev: { peer: string; exitCode: number | null; signal: string | null }) => {
+      crashes.push(ev);
+    });
+
+    pty.simulateExit(1, "");
+
+    expect(crashes).toHaveLength(1);
+    expect(crashes[0].peer).toBe("peer-a");
+    expect(crashes[0].exitCode).toBe(1);
+    expect(crashes[0].signal).toBeNull();
+  });
+
+  it("fires 'crash' event with typed payload when PTY exits with a signal", () => {
+    const { pool, mockPtys } = buildPool();
+    const { pty } = spawnPeer(pool, mockPtys, "peer-a");
+
+    const crashes: Array<{ peer: string; exitCode: number | null; signal: string | null }> = [];
+    pool.on("crash", (ev: { peer: string; exitCode: number | null; signal: string | null }) => {
+      crashes.push(ev);
+    });
+
+    pty.simulateExit(0, "SIGTERM");
+
+    expect(crashes).toHaveLength(1);
+    expect(crashes[0].peer).toBe("peer-a");
+    expect(crashes[0].signal).toBe("SIGTERM");
+  });
+
+  it("does NOT fire 'crash' event when PTY exits cleanly (code=0, no signal)", () => {
+    const { pool, mockPtys } = buildPool();
+    const { pty } = spawnPeer(pool, mockPtys, "peer-a");
+
+    const crashes: unknown[] = [];
+    pool.on("crash", (ev: unknown) => crashes.push(ev));
+
+    pty.simulateExit(0, "");
+
+    expect(crashes).toHaveLength(0);
+  });
+
+  it("crash event payload has peer, exitCode, signal fields", () => {
+    const { pool, mockPtys } = buildPool();
+    const { pty } = spawnPeer(pool, mockPtys, "peer-a");
+
+    let crashEvent: { peer: string; exitCode: number | null; signal: string | null } | null = null;
+    pool.on("crash", (ev: { peer: string; exitCode: number | null; signal: string | null }) => {
+      crashEvent = ev;
+    });
+
+    pty.simulateExit(2, "SIGKILL");
+
+    expect(crashEvent).not.toBeNull();
+    expect(crashEvent!.peer).toBe("peer-a");
+    expect(crashEvent!.exitCode).toBe(2);
+    expect(crashEvent!.signal).toBe("SIGKILL");
+  });
+
+  it("crash event still fires 'exit' event too (both always emitted on crash)", () => {
+    const { pool, mockPtys } = buildPool();
+    const { pty } = spawnPeer(pool, mockPtys, "peer-a");
+
+    const exits: unknown[] = [];
+    const crashes: unknown[] = [];
+    pool.on("exit", (name: string) => exits.push(name));
+    pool.on("crash", (ev: unknown) => crashes.push(ev));
+
+    pty.simulateExit(1, "");
+
+    expect(exits).toHaveLength(1);
+    expect(crashes).toHaveLength(1);
+  });
+});
+
 // ── resize ────────────────────────────────────────────────────────────────────
 
 describe("resize", () => {

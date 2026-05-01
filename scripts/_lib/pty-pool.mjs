@@ -64,11 +64,20 @@ const _require = createRequire(import.meta.url);
 const SIGKILL_GRACE_MS = 3000;
 
 /**
+ * @typedef {{
+ *   peer: string;
+ *   exitCode: number | null;
+ *   signal: string | null;
+ * }} CrashEvent
+ */
+
+/**
  * PtyPool — manages a set of named PTY processes.
  *
  * Events:
  *   "output"  (name: string, data: string) — PTY stdout data for a peer.
  *   "exit"    (name: string, code: number|null, signal: string|null) — peer exited.
+ *   "crash"   (CrashEvent) — typed crash event: peer exited with non-zero code or signal.
  *   "error"   (name: string, err: Error) — PTY spawn error.
  */
 export class PtyPool extends EventEmitter {
@@ -144,9 +153,20 @@ export class PtyPool extends EventEmitter {
 
     ptyProcess.onExit(({ exitCode, signal }) => {
       status.state = "exited";
-      status.exitCode = exitCode ?? null;
-      status.exitSignal = signal ?? null;
-      this.emit("exit", name, exitCode ?? null, signal ?? null);
+      // Normalize: empty string signal → null (node-pty may send "" for no signal).
+      const code = exitCode ?? null;
+      const sig = (signal != null && signal !== "") ? signal : null;
+      status.exitCode = code;
+      status.exitSignal = sig;
+      this.emit("exit", name, code, sig);
+      // Emit a typed crash event when the process exits abnormally
+      // (non-zero exit code, or killed by a non-empty signal).
+      const isCrash = (code !== null && code !== 0) || sig !== null;
+      if (isCrash) {
+        /** @type {CrashEvent} */
+        const crashEvent = { peer: name, exitCode: code, signal: sig };
+        this.emit("crash", crashEvent);
+      }
     });
 
     this._peers.set(name, { pty: ptyProcess, vb, status });

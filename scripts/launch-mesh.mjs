@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { parseTopology, resolveNode } from "../pi-sandbox/.pi/extensions/_lib/topology.mjs";
 import { validateTopology } from "../pi-sandbox/.pi/extensions/_lib/topology-validator.mjs";
-import { resolveEntry } from "../pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs";
+import { resolveEntry, crashAutoShiftTarget } from "../pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
@@ -149,28 +149,28 @@ function makePrefix(name, idx) {
 
 // ── Right-rail chrome state ──────────────────────────────────────────────────
 //
-// peerStates tracks the lifecycle state of each node so the chrome can render
-// accurate state icons. Updated on pool.on("exit") and re-rendered whenever
-// focus changes or a peer exits.
+// peerEntries tracks the full PeerEntry for each node so the chrome can render
+// accurate state icons and crash info. Updated on pool.on("exit") /
+// pool.on("crash") and re-rendered whenever focus changes or a peer exits/crashes.
 //
 // Chrome is written to stderr (separate from the peer pane on stdout) and
-// redrawn on every focus or state change. Full column-split layout (rendering
-// the strip inline alongside the peer pane on stdout) is slice 4 work.
+// redrawn on every focus or state change.
 
-/** @type {Map<string, import('./_lib/chrome.mjs').PeerState>} */
-const peerStates = new Map();
+/** @type {Map<string, import('./_lib/chrome.mjs').PeerEntry>} */
+const peerEntries = new Map();
 
 /**
  * Render and emit the right-rail chrome to stderr.
  * Called on every focus change and peer state transition.
  */
 function repaintChrome() {
-  const peers = [...peerStates.entries()].map(([name, state]) => ({ name, state }));
+  const peers = [...peerEntries.values()];
   const chrome = renderChrome({
     peers,
     focused: focusController.getFocus(),
     busRoot,
     meshName: path.basename(meshPath, ".yaml"),
+    autoShiftNotice: focusController.getAutoShiftNotice(),
   });
   process.stderr.write(chrome);
 }
@@ -231,6 +231,55 @@ focusController.on("focus-changed", ({ focused }) => {
     mux.setFocus(null);
   }
   repaintChrome();
+});
+
+// ── Crash auto-shift (slice 4) ───────────────────────────────────────────────
+//
+// When a peer's PTY exits abnormally (non-zero code or signal), the pool emits
+// a typed "crash" event. We:
+//   1. Mark the peer as "crashed" in peerEntries (with exit code / signal).
+//   2. Call focusController.handleCrash() to auto-shift focus to the top
+//      supervisor if the crashed peer was the focused one.
+//   3. Repaint the chrome so the crashed indicator and auto-shift notice show.
+//
+// The top supervisor is resolved once from the topology. If it can't be resolved
+// uniquely (zero or multiple candidates), crashTarget is null and handleCrash
+// will clear focus rather than shift it.
+//
+// Ordering: pool emits "exit" then "crash" synchronously in the same onExit
+// callback. The exit handler defers unregisterPeer for crashed peers so that
+// handleCrash (in the crash handler) can see the focused state before it's
+// cleared by unregisterPeer. The crash handler calls handleCrash then
+// unregisterPeer.
+
+const crashTarget = crashAutoShiftTarget(topology);
+
+pool.on("crash", (/** @type {import('./_lib/pty-pool.mjs').CrashEvent} */ ev) => {
+  const { peer, exitCode, signal } = ev;
+  // Override state to "crashed" (exit handler set "exited" first).
+  peerEntries.set(peer, { name: peer, state: "crashed", exitCode, exitSignal: signal });
+  process.stderr.write(
+    `launch-mesh: peer "${peer}" crashed (code=${exitCode} signal=${signal})\n`,
+  );
+  // Auto-shift focus if needed (before unregistering so handleCrash sees focused state).
+  focusController.handleCrash(peer, crashTarget);
+  // Unregister after handleCrash: focus already shifted away so unregisterPeer
+  // won't trigger the fallback "clear focus" path for the now-shifted focus.
+  focusController.unregisterPeer(peer);
+  repaintChrome();
+});
+
+// crash-notice event: emitted by handleCrash — log it for debugging.
+focusController.on("crash-notice", (/** @type {any} */ notice) => {
+  if (notice.wasTopSupervisor) {
+    process.stderr.write(
+      `launch-mesh: top supervisor "${notice.peerName}" crashed — no auto-shift possible\n`,
+    );
+  } else if (notice.shiftedTo) {
+    process.stderr.write(
+      `launch-mesh: auto-shifted focus from "${notice.peerName}" to "${notice.shiftedTo}"\n`,
+    );
+  }
 });
 
 // Dispatch inbound envelopes from peers.
@@ -314,19 +363,28 @@ for (let i = 0; i < topology.nodes.length; i++) {
     env: peerEnv,
   });
 
-  // Track this peer as spawning; updated to exited on exit.
-  peerStates.set(name, "spawning");
+  // Track this peer as spawning; updated to crashed/exited on exit.
+  peerEntries.set(name, { name, state: "spawning" });
 
   // Register the peer with the focus controller so setFocus can validate names.
   focusController.registerPeer(name);
 
   // Unregister when the peer exits so focus falls back gracefully.
+  // For crashed peers (non-zero code or signal), we defer unregistration to the
+  // crash handler so that handleCrash can inspect focused state before it's
+  // cleared by unregisterPeer. Clean exits unregister immediately.
   pool.on("exit", (exitedName, code, signal) => {
     if (exitedName === name) {
-      peerStates.set(name, "exited");
-      focusController.unregisterPeer(name);
+      const isCrash = (code !== null && code !== 0) || (signal !== null && signal !== "");
+      peerEntries.set(name, { name, state: "exited", exitCode: code, exitSignal: signal });
       process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
-      repaintChrome();
+      if (!isCrash) {
+        // Clean exit: unregister immediately so focus falls back.
+        focusController.unregisterPeer(name);
+        repaintChrome();
+      }
+      // For crash exits: the "crash" handler fires next (synchronously) and will
+      // handle unregistration and auto-shift, then repaint.
     }
   });
 
@@ -350,6 +408,11 @@ if (entryPeer && nodeNames.includes(entryPeer)) {
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
     const focused = focusController.getFocus() ?? mux?.getFocus();
+    // Clear auto-shift notice on first user input after a crash auto-shift.
+    if (focusController.getAutoShiftNotice()) {
+      focusController.clearAutoShiftNotice();
+      repaintChrome();
+    }
     if (!focused) return;
     // Ctrl-C in raw mode: initiate teardown.
     if (chunk === "\x03") {
