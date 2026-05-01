@@ -17,6 +17,10 @@ Inbound `submission` and `approval-request` envelopes reach the supervisor's LLM
 ## Consequences
 
 - Every supervisor pays a model turn per inbound submission. Tier choice (`LEAD_HARE_MODEL` vs `TASK_RABBIT_MODEL`) matters when a supervisor handles many submissions; supervisors meant to be cheap routers should pick a small model and constrain their prompts.
-- `requestHumanApproval`'s "no UI → forward to parent" fallback collapses. UI presence is no longer a trigger; the rail at the top of the escalation chain (typically a `human-relay` peer) is the only place a human dialog renders, and only if the chain decided to escalate that far.
+- `requestHumanApproval`'s "no UI → forward to parent" fallback collapses. UI presence is no longer a trigger; the escalation chain bottoms out at whoever decides to render (`escalate` from the Top Supervisor surfaces to the human via the launcher TUI rather than a `human-relay` peer).
 - A loop guardrail caps revisions per thread (initial: 3 rounds); on cap, the rail forces a final approve / reject from the supervisor on the next round.
 - Mid-revision escalation forwards the *whole* chain (original submission + revision notes + re-submissions) to the higher-up supervisor as a single payload so context isn't lost across hops.
+
+---
+
+> **Note (ADR-0004):** `human-relay` was retired by ADR-0004; cross-agent escalation flows over the bus to the launcher socket as well as between peers.

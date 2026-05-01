@@ -4,7 +4,7 @@
  * Rules exercised:
  *   - required `entry:` field
  *   - exactly one node with unset supervisor: (top supervisor)
- *   - type: relay node rejection with deprecation pointer
+ *   - unknown node type rejection (any type: other than undefined)
  *   - @group ref to undefined group
  *   - acceptedFrom / peers referencing undeclared node
  *   - top-supervisor TASK_RABBIT_MODEL warning (not error)
@@ -18,7 +18,7 @@ import { validateTopology } from "./topology-validator.mjs";
 type TopologyNode = {
   name: string;
   recipe?: string;
-  type?: "relay";
+  type?: string;
   supervisor?: string;
   acceptedFrom?: string[];
   peers?: string[];
@@ -139,10 +139,10 @@ describe("entry: field", () => {
   });
 });
 
-// ── type: relay rejection ─────────────────────────────────────────────────────
+// ── unknown node type rejection ───────────────────────────────────────────────
 
-describe("type: relay rejection", () => {
-  it("rejects a node with type: relay", () => {
+describe("unknown node type rejection", () => {
+  it("rejects a node with an unknown type (e.g. type: relay)", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
@@ -151,25 +151,30 @@ describe("type: relay rejection", () => {
       ],
     };
     const result = validateTopology(topo);
-    const relayErrors = result.errors.filter((e) => /relay/i.test(e));
-    expect(relayErrors).toHaveLength(1);
-    expect(relayErrors[0]).toContain("human");
-    // Deprecation pointer must reference ADR-0004
-    expect(relayErrors[0]).toMatch(/ADR-0004|deprecated|launcher/i);
+    const typeErrors = result.errors.filter((e) => /unknown node type|human/i.test(e));
+    expect(typeErrors).toHaveLength(1);
+    expect(typeErrors[0]).toContain("human");
+    // Must mention the unknown type value
+    expect(typeErrors[0]).toMatch(/relay/i);
   });
 
-  it("rejects multiple relay nodes (one error per relay node)", () => {
+  it("rejects multiple nodes with unknown types (one error per node)", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "human", type: "relay" },
-        { name: "human2", type: "relay" },
+        { name: "bot", type: "legacy-relay" },
       ],
     };
     const result = validateTopology(topo);
-    const relayErrors = result.errors.filter((e) => /relay/i.test(e));
-    expect(relayErrors).toHaveLength(2);
+    const typeErrors = result.errors.filter((e) => /unknown node type/i.test(e));
+    expect(typeErrors).toHaveLength(2);
+  });
+
+  it("does not reject a node with no type set", () => {
+    const result = validateTopology(minimalTopo());
+    expect(result.errors.filter((e) => /unknown node type/i.test(e))).toHaveLength(0);
   });
 });
 

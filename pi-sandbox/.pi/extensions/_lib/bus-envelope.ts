@@ -2,9 +2,8 @@
 // discriminated `payload` union. v:1 envelopes are not accepted —
 // both ends update atomically.
 //
-// Used by both the TypeScript bus extension (agent-bus.ts) and any
-// agent that talks the bus protocol. The plain-JS human-relay
-// duplicates this shape inline; keep them in sync.
+// Used by the TypeScript bus extension (agent-bus.ts) and any agent
+// that talks the bus protocol directly.
 
 import { randomUUID } from "node:crypto";
 

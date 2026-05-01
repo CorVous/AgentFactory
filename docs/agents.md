@@ -496,28 +496,42 @@ rail handles — but the recipe-level affordances differ enough that
 keeping them as two independent extensions is what lets recipes mix
 exactly the relationship they need.
 
-### Verifying the multi-agent rails under tmux
+### Verifying the multi-agent rails
 
-Same pattern as the rails-debug section above. Two panes — note the
-explicit `-- --agent-name <override>` on each, which is what lets the
-two peers find each other by a stable role name. Without the override
-each instance would get a unique generated slug (`<breed>-chatter`),
-fine for distinguishing instances in logs but useless for `agent_send`
-targeting:
+The preferred way to run and observe a live multi-agent mesh is via the
+launcher TUI (`npm run mesh`). The launcher multiplexes every peer's pi
+session into one terminal: the focused peer's PTY is rendered live in
+the main pane; the right rail shows all peers, the decisions queue, and
+bus-tail output. The human is not a peer — there is no `human-relay`
+process; the launcher is the human's sole interface.
 
 ```sh
 set -a; source models.env; set +a
-tmux new-session -d -s bus-test -x 200 -y 50 \
-  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p1 -- --agent-name planner'
-tmux split-window -t bus-test \
-  'PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p2 -- --agent-name worker-a'
-sleep 5
-tmux send-keys -t bus-test:0.0 'call agent_list, then agent_send to worker-a with body "ping"' Enter
-sleep 30
-tmux capture-pane -t bus-test:0.1 -p   # expect "[from planner] ping" on next user turn
-tmux send-keys -t bus-test:0.0 '/quit' Enter
-tmux send-keys -t bus-test:0.1 '/quit' Enter
+# Write a minimal two-peer topology (planner + worker-a) and launch it:
+cat > /tmp/chat-mesh.yaml <<'EOF'
+entry: planner
+nodes:
+  - name: planner
+    recipe: peer-chatter
+    sandbox: /tmp/p1
+    peers: [worker-a]
+  - name: worker-a
+    recipe: peer-chatter
+    sandbox: /tmp/p2
+    supervisor: planner
+    peers: [planner]
+EOF
+npm run mesh -- /tmp/chat-mesh.yaml
+# The launcher opens with "planner" focused.
+# Use /focus worker-a  to switch to the worker's pane.
+# Use /tail             to stream the inter-peer bus traffic.
+# Type a message in any peer pane; it lands in that peer's pi session.
 ```
+
+The launcher wire format is documented in
+`scripts/_lib/launcher-envelope.mjs` — consult that file when writing
+extensions that emit control envelopes (focus-request, pin-request,
+decisions-jump, tail-event, etc.).
 
 To exercise the **atomic delegate** end-to-end, drive
 `writer-foreman` (single file):
@@ -678,9 +692,6 @@ nodes:
     recipe: mesh-authority      # pi-sandbox/agents/<recipe>.yaml
     sandbox: /tmp/mesh/auth     # optional; auto-created under /tmp if omitted
     task: "..."                 # optional; sent as the first RPC prompt
-
-  - name: human
-    type: relay                 # spawns human-relay.mjs; no LLM
 
   # Habitat-overlay fields — override recipe + group_bindings values:
   - name: w1

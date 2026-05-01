@@ -6,7 +6,7 @@
  *   ERRORS (block launch):
  *   - Missing required `entry:` field at the topology root
  *   - Zero or multiple peers with unset `supervisor:` (exactly one top supervisor required)
- *   - `type: relay` nodes (deprecated; now rejected)
+ *   - Nodes with an unknown `type:` value (the only valid nodes are pi-agent nodes with no `type:` set)
  *   - `@group` references to undefined groups (in per-node and group_binding arrays)
  *   - `acceptedFrom` / `peers` fields referencing node names not in the topology
  *
@@ -22,7 +22,7 @@
  * @typedef {{
  *   name: string;
  *   recipe?: string;
- *   type?: "relay";
+ *   type?: string;
  *   supervisor?: string;
  *   acceptedFrom?: string[];
  *   peers?: string[];
@@ -116,12 +116,12 @@ export function validateTopology(topo, recipeModelLoader) {
     );
   }
 
-  // ── Rule 2: type: relay deprecation ────────────────────────────────────────
+  // ── Rule 2: unknown node type ──────────────────────────────────────────────
   for (const node of topo.nodes) {
-    if (node.type === "relay") {
+    if (node.type !== undefined) {
       errors.push(
-        `node '${node.name}' uses 'type: relay' which is deprecated and no longer supported — ` +
-          `delete the node and replace human interaction with the launcher TUI (see ADR-0004)`,
+        `node '${node.name}' has unknown node type '${node.type}' — ` +
+          `the only supported node kind is a pi-agent node (omit the 'type:' field)`,
       );
     }
   }
@@ -129,7 +129,7 @@ export function validateTopology(topo, recipeModelLoader) {
   // ── Rule 3: exactly one peer with unset supervisor: ────────────────────────
   const topCandidates = [];
   for (const node of topo.nodes) {
-    if (node.type === "relay") continue;
+    if (node.type !== undefined) continue;
 
     let effectiveSupervisor;
 
