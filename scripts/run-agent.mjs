@@ -32,7 +32,7 @@ const BASELINE_EXTENSIONS = [
   "agent-bus",
 ];
 
-// When launched under the mesh launcher (MESH_PEER=1), load the launcher
+// When launched under the mesh launcher (PI_MESH_PEER=1), load the launcher
 // bridge, focus-state, and slash-commands extensions as additional baselines.
 // These are silent no-ops when the launcher socket is absent (standalone mode).
 const MESH_PEER_EXTENSIONS = [
@@ -281,12 +281,12 @@ const wiredAgents = applyAgentsField(recipe, args.name);
 const wiredSupervisor = applySupervisorField(recipe, args.name, wiredAgents.extensions, wiredAgents.tools);
 const wired = { ...wiredAgents, extensions: wiredSupervisor.extensions, tools: wiredSupervisor.tools };
 
-// MESH_PEER=1 is set by launch-mesh.mjs for all non-entry peers. It signals
+// PI_MESH_PEER=1 is set by launch-mesh.mjs for all peers. It signals
 // run-agent.mjs to load the launcher-bridge + slash-commands baseline extensions
 // so peers can receive focus-changed signals and send /focus requests.
-// When run standalone via `npm run agent`, MESH_PEER is unset (or "0"),
+// When run standalone via `npm run agent`, PI_MESH_PEER is unset,
 // so the launcher extensions degrade gracefully (socket not found = no-op).
-const isMeshPeer = process.env.MESH_PEER === "1";
+const isMeshPeer = process.env.PI_MESH_PEER === "1";
 
 const extensionPaths = resolveExtensionPaths(wired.extensions, isMeshPeer);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
@@ -457,7 +457,7 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const isTTY = Boolean(process.stdout.isTTY);
 const isPrintMode = args.passthrough.includes("-p") || args.passthrough.includes("--print");
 
-// PTY-in-PTY fix (slice 3): when run-agent.mjs is launched as a MESH_PEER=1
+// PTY-in-PTY fix (slice 3): when run-agent.mjs is launched as a PI_MESH_PEER=1
 // child of launch-mesh.mjs, its stdout is already inside the launcher's managed
 // PTY. Creating another PTY here would cause PTY-in-PTY nesting and break
 // terminal rendering. In that case, fall through to the inherited-stdio path so

@@ -11,7 +11,7 @@
 // When the launcher broadcasts a `focus-changed` envelope, the bridge
 // updates the in-peer FocusState so the peer knows whether it is on-screen.
 //
-// Auto-loaded by run-agent.mjs when MESH_PEER=1 or --launcher-sock is set.
+// Auto-loaded by run-agent.mjs when PI_MESH_PEER=1 or --launcher-sock is set.
 // Silent no-op when the socket is absent.
 
 import path from "node:path";

@@ -147,6 +147,34 @@ function makePrefix(name, idx) {
   return `${COLORS[idx % COLORS.length]}[${name}]${RESET} `;
 }
 
+// ── Right-rail chrome state ──────────────────────────────────────────────────
+//
+// peerStates tracks the lifecycle state of each node so the chrome can render
+// accurate state icons. Updated on pool.on("exit") and re-rendered whenever
+// focus changes or a peer exits.
+//
+// Chrome is written to stderr (separate from the peer pane on stdout) and
+// redrawn on every focus or state change. Full column-split layout (rendering
+// the strip inline alongside the peer pane on stdout) is slice 4 work.
+
+/** @type {Map<string, import('./_lib/chrome.mjs').PeerState>} */
+const peerStates = new Map();
+
+/**
+ * Render and emit the right-rail chrome to stderr.
+ * Called on every focus change and peer state transition.
+ */
+function repaintChrome() {
+  const peers = [...peerStates.entries()].map(([name, state]) => ({ name, state }));
+  const chrome = renderChrome({
+    peers,
+    focused: focusController.getFocus(),
+    busRoot,
+    meshName: path.basename(meshPath, ".yaml"),
+  });
+  process.stderr.write(chrome);
+}
+
 
 // ── PTY pool + multiplexer + launcher socket (slice 3: multi-peer focus) ──────
 //
@@ -154,7 +182,7 @@ function makePrefix(name, idx) {
 // The focused peer's buffer is rendered live to the launcher's terminal.
 // Focus can be switched by a peer sending a focus-request to the launcher socket.
 //
-// PTY-in-PTY fix (slice 3): run-agent.mjs checks MESH_PEER=1 and uses
+// PTY-in-PTY fix (slice 3): run-agent.mjs checks PI_MESH_PEER=1 and uses
 // inherited stdio when its own stdout is already inside a managed PTY,
 // preventing the PTY-in-PTY nesting that slice 2 had for non-entry peers.
 //
@@ -193,7 +221,7 @@ const launcherSock = createLauncherSocket();
 await launcherSock.bind(busRoot);
 
 // When the focus controller changes focus, broadcast focus-changed to all
-// connected peers and repaint the multiplexer.
+// connected peers, repaint the multiplexer, and redraw the chrome.
 focusController.on("focus-changed", ({ focused }) => {
   const env = makeFocusChangedEnvelope({ focused });
   launcherSock.broadcast(env);
@@ -202,6 +230,7 @@ focusController.on("focus-changed", ({ focused }) => {
   } else if (mux && !focused) {
     mux.setFocus(null);
   }
+  repaintChrome();
 });
 
 // Dispatch inbound envelopes from peers.
@@ -266,13 +295,13 @@ for (let i = 0; i < topology.nodes.length; i++) {
     ...process.env,
     PI_AGENT_NAME: name,
     PI_AGENT_BUS_ROOT: busRoot,
-    // MESH_PEER=1 signals run-agent.mjs to:
+    // PI_MESH_PEER=1 signals run-agent.mjs to:
     //   1. Load the launcher-bridge + slash-commands baseline extensions.
     //   2. Use inherited stdio (not a nested PTY) when spawning pi — this
     //      fixes the PTY-in-PTY nesting issue from slice 2 where each peer
     //      spawned its own PTY even though its stdout was already inside the
     //      launcher's managed PTY.
-    MESH_PEER: "1",
+    PI_MESH_PEER: "1",
   };
 
   pool.spawn({
@@ -285,14 +314,19 @@ for (let i = 0; i < topology.nodes.length; i++) {
     env: peerEnv,
   });
 
+  // Track this peer as spawning; updated to exited on exit.
+  peerStates.set(name, "spawning");
+
   // Register the peer with the focus controller so setFocus can validate names.
   focusController.registerPeer(name);
 
   // Unregister when the peer exits so focus falls back gracefully.
   pool.on("exit", (exitedName, code, signal) => {
     if (exitedName === name) {
+      peerStates.set(name, "exited");
       focusController.unregisterPeer(name);
       process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
+      repaintChrome();
     }
   });
 
@@ -355,14 +389,10 @@ pool.on("exit", () => {
   }
 });
 
-// Paint the initial right-rail chrome to stderr (informational, even in non-TTY mode).
-const initialChrome = renderChrome({
-  peers: nodeNames.map((n) => ({ name: n, state: "spawning" })),
-  focused: entryPeer ?? null,
-  busRoot,
-  meshName: path.basename(meshPath, ".yaml"),
-});
-process.stderr.write(initialChrome);
+// Paint the initial right-rail chrome to stderr (and re-paint on every focus /
+// state change via repaintChrome() — wired above in the focus-changed handler
+// and pool.on("exit") handlers).
+repaintChrome();
 
 process.stderr.write(
   `launch-mesh: started ${nodeNames.length} node(s) — bus_root=${busRoot}\n` +

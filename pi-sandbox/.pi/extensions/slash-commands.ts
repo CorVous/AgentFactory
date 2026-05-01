@@ -7,7 +7,7 @@
 // `launcher-bridge`. If the bridge is not connected (standalone mode),
 // the command prints a warning.
 //
-// Auto-loaded by run-agent.mjs when MESH_PEER=1 or alongside launcher-bridge.
+// Auto-loaded by run-agent.mjs when PI_MESH_PEER=1 or alongside launcher-bridge.
 // Silent no-op when the launcher socket is absent.
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
