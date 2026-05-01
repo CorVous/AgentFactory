@@ -107,6 +107,23 @@ describe("spawn", () => {
     ).toThrow("peer-a");
   });
 
+  it("emits 'error' event with (name, err) when the spawnFn throws", () => {
+    const bindingError = new Error("native binding mismatch");
+    const spawnFn = () => { throw bindingError; };
+    const pool = createPtyPool({ spawnFn });
+
+    const errors: Array<{ name: string; err: Error }> = [];
+    pool.on("error", (name: string, err: Error) => errors.push({ name, err }));
+
+    expect(() =>
+      pool.spawn({ name: "peer-x", cmd: "/bin/pi", args: [], cols: 80, rows: 24 })
+    ).toThrow("native binding mismatch");
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].name).toBe("peer-x");
+    expect(errors[0].err).toBe(bindingError);
+  });
+
   it("registers the peer in listPeers()", () => {
     const { pool, mockPtys } = buildPool();
     spawnPeer(pool, mockPtys, "alpha");

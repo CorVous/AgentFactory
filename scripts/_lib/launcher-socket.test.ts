@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdirSync, rmdirSync } from "node:fs";
+import { mkdirSync, rmdirSync, existsSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -61,6 +61,33 @@ describe("LauncherSocket — bind", () => {
     await server.bind(busRoot);
     await server.bind(busRoot); // should not throw
     expect(server.getSockPath()).not.toBeNull();
+  });
+
+  it("recovers from a stale sock (no live owner) by unlinking and retrying", async () => {
+    const busRoot = makeTmpDir();
+    const sockPath = path.join(busRoot, `${LAUNCHER_SOCK_NAME}.sock`);
+    // Plant a stale socket file with no listener — a leftover from a previous crash.
+    writeFileSync(sockPath, "");
+    expect(existsSync(sockPath)).toBe(true);
+
+    const server = createLauncherSocket();
+    cleanup.push(() => server.close());
+
+    await server.bind(busRoot);
+    expect(server.getSockPath()).toBe(sockPath);
+    expect(existsSync(sockPath)).toBe(true); // re-bound by us
+  });
+
+  it("refuses to bind when a live owner already holds the sock", async () => {
+    const busRoot = makeTmpDir();
+
+    const first = createLauncherSocket();
+    cleanup.push(() => first.close());
+    await first.bind(busRoot);
+
+    const second = createLauncherSocket();
+    cleanup.push(() => second.close());
+    await expect(second.bind(busRoot)).rejects.toThrow(/already held by a live launcher/);
   });
 });
 

@@ -228,6 +228,18 @@ if (mux) {
   mux.attachResizeHandler(pool);
 }
 
+// PtyPool emits "error" when node-pty's spawn throws (e.g. native binding
+// mismatch on a too-new Node release). Without a listener Node crashes the
+// process with ERR_UNHANDLED_ERROR; instead, log and shut down cleanly.
+pool.on("error", (peer, err) => {
+  process.stderr.write(
+    `launch-mesh: failed to spawn peer "${peer}": ${err?.message ?? err}\n` +
+    `             (often caused by node-pty's native binding being incompatible\n` +
+    `              with this Node version — try \`npm rebuild node-pty\`)\n`,
+  );
+  shutdown("spawn-error");
+});
+
 // ── Launcher socket ──────────────────────────────────────────────────────────
 //
 // Binds ${BUS_ROOT}/__launcher__.sock. Peers that load launcher-bridge connect

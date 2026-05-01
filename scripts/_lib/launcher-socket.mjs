@@ -16,9 +16,33 @@
  */
 
 import net from "node:net";
+import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { encodeEnvelope, tryDecodeEnvelope } from "./launcher-envelope.mjs";
+
+/**
+ * Probe a socket path to see if a live peer is listening. Mirrors
+ * agent-bus.ts's probeSocketLive.
+ *
+ * @param {string} sockPath
+ * @param {typeof net.connect} connectFn
+ * @param {number} [timeoutMs]
+ * @returns {Promise<boolean>}
+ */
+function probeSocketLive(sockPath, connectFn, timeoutMs = 200) {
+  return new Promise((resolve) => {
+    const sock = connectFn(sockPath);
+    const done = (live) => {
+      sock.removeAllListeners();
+      sock.destroy();
+      resolve(live);
+    };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    sock.once("connect", () => { clearTimeout(timer); done(true); });
+    sock.once("error", () => { clearTimeout(timer); done(false); });
+  });
+}
 
 export const LAUNCHER_SOCK_NAME = "__launcher__";
 
@@ -37,12 +61,18 @@ export class LauncherSocket extends EventEmitter {
   /**
    * @param {{
    *   createServer?: typeof net.createServer;
+   *   connect?: typeof net.connect;
+   *   unlinkSync?: typeof fs.unlinkSync;
    * }} [opts]
    */
   constructor(opts = {}) {
     super();
     /** @type {typeof net.createServer} */
     this._createServer = opts.createServer ?? net.createServer.bind(net);
+    /** @type {typeof net.connect} */
+    this._connect = opts.connect ?? net.connect.bind(net);
+    /** @type {typeof fs.unlinkSync} */
+    this._unlinkSync = opts.unlinkSync ?? fs.unlinkSync.bind(fs);
     /** @type {net.Server | null} */
     this._server = null;
     /** @type {string | null} */
@@ -59,57 +89,79 @@ export class LauncherSocket extends EventEmitter {
    * @param {string} busRoot
    * @returns {Promise<void>} resolves when the server is listening.
    */
-  bind(busRoot) {
-    if (this._server) return Promise.resolve();
+  async bind(busRoot) {
+    if (this._server) return;
     const sockPath = path.join(busRoot, `${LAUNCHER_SOCK_NAME}.sock`);
     this._sockPath = sockPath;
 
-    return new Promise((resolve, reject) => {
-      const server = this._createServer((socket) => {
-        const clientId = String(this._nextClientId++);
-        this._clients.set(clientId, socket);
-        this.emit("client-connected", clientId);
+    const connectionHandler = (socket) => {
+      const clientId = String(this._nextClientId++);
+      this._clients.set(clientId, socket);
+      this.emit("client-connected", clientId);
 
-        let buf = "";
-        socket.setEncoding("utf8");
-        socket.on("data", (chunk) => {
-          buf += chunk;
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            const { env, versionMismatch } = tryDecodeEnvelope(line);
-            if (env) {
-              this.emit("envelope", env);
-            } else if (versionMismatch) {
-              process.stderr.write(
-                `launcher-socket: dropped envelope with wrong version: ${line.slice(0, 120)}\n`,
-              );
-            }
-            // else: malformed JSON — silently drop
+      let buf = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => {
+        buf += chunk;
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const { env, versionMismatch } = tryDecodeEnvelope(line);
+          if (env) {
+            this.emit("envelope", env);
+          } else if (versionMismatch) {
+            process.stderr.write(
+              `launcher-socket: dropped envelope with wrong version: ${line.slice(0, 120)}\n`,
+            );
           }
-        });
-
-        socket.on("close", () => {
-          this._clients.delete(clientId);
-          this.emit("client-disconnected", clientId);
-        });
-
-        socket.on("error", () => {
-          // Individual client errors don't kill the server.
-          this._clients.delete(clientId);
-        });
+          // else: malformed JSON — silently drop
+        }
       });
 
-      this._server = server;
-
-      server.on("error", (err) => {
-        this.emit("error", err);
-        reject(err);
+      socket.on("close", () => {
+        this._clients.delete(clientId);
+        this.emit("client-disconnected", clientId);
       });
 
-      server.listen(sockPath, () => resolve());
+      socket.on("error", () => {
+        // Individual client errors don't kill the server.
+        this._clients.delete(clientId);
+      });
+    };
+
+    const tryListen = () => new Promise((resolve, reject) => {
+      const server = this._createServer(connectionHandler);
+      const onError = (err) => { server.removeListener("listening", onListening); reject(err); };
+      const onListening = () => { server.removeListener("error", onError); this._server = server; resolve(); };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(sockPath);
     });
+
+    try {
+      await tryListen();
+    } catch (e) {
+      if (e.code !== "EADDRINUSE") {
+        this.emit("error", e);
+        throw e;
+      }
+      const live = await probeSocketLive(sockPath, this._connect);
+      if (live) {
+        const err = new Error(
+          `launcher-socket: ${sockPath} is already held by a live launcher — refusing to bind`,
+        );
+        this.emit("error", err);
+        throw err;
+      }
+      this._unlinkSync(sockPath);
+      try {
+        await tryListen();
+      } catch (e2) {
+        this.emit("error", e2);
+        throw e2;
+      }
+    }
   }
 
   /**
