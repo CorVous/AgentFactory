@@ -7,17 +7,19 @@
 //   npm run mesh -- <mesh.yaml>
 //
 // Topology YAML schema:
+//   entry: authority              # required; peer the launcher TUI focuses on first
 //   bus_root: /tmp/pi-mesh-demo   # optional; auto-derived from filename
 //   nodes:
 //     - name: authority           # instance name (--agent-name)
 //       recipe: mesh-authority    # recipe in pi-sandbox/agents/
 //       sandbox: /tmp/mesh/auth   # optional; auto-created
 //       task: "..."               # optional; if set, passes -p (non-interactive)
-//     - name: human
-//       type: relay               # spawns human-relay.mjs instead of a pi agent
 //     - name: analyst
 //       recipe: mesh-node
+//       supervisor: authority     # all non-root nodes must declare a supervisor
 //       task: "wait for requests"
+// NOTE: type:relay nodes are no longer supported (see ADR-0004); the validator
+//       will reject any topology that still declares them.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
