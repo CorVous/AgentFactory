@@ -147,7 +147,19 @@ async function bindServer(state: BusState, ctx: { ui: { notify: (m: string, l?: 
   state.server = server;
 }
 
+function notifyBusTailObserver(env: Envelope, direction: "in" | "out") {
+  const observer = (
+    globalThis as { __pi_bus_tail_observe__?: (env: Envelope, direction: "in" | "out") => void }
+  ).__pi_bus_tail_observe__;
+  if (observer) {
+    try { observer(env, direction); } catch { /* ignore observer errors */ }
+  }
+}
+
 function handleIncoming(state: BusState, env: Envelope) {
+  // Notify the bus-tail observer (if installed by bus-tail-emitter extension).
+  notifyBusTailObserver(env, "in");
+
   // If this is a reply to a pending agent_call, resolve or reject it
   // directly — don't route to inbox, the caller is already waiting for it.
   if (env.in_reply_to) {
@@ -240,6 +252,8 @@ async function sendEnvelope(state: BusState, env: Envelope): Promise<{ delivered
     const dest = path.join(state.busRoot, `${env.to}.sock`);
     try { fs.unlinkSync(dest); } catch { /* noop */ }
   }
+  // Notify the bus-tail observer on successful outbound delivery.
+  if (result.delivered) notifyBusTailObserver(env, "out");
   return result;
 }
 

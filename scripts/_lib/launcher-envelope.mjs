@@ -7,10 +7,12 @@
  * Envelope kinds (launcher → peer):
  *   - focus-changed: launcher tells peers which peer is now focused.
  *   - signal: generic control signal.
+ *   - tail-toggle: launcher tells a peer to start/stop bus-tail emission.
  *
  * Envelope kinds (peer → launcher):
  *   - focus-request: peer asks the launcher to focus a target peer.
  *   - heartbeat: peer announces it is alive.
+ *   - tail-event: peer forwards a bus envelope for the launcher's tail overlay.
  *
  * All fields are plain strings / booleans — no complex sub-objects — so
  * JSON.parse + JSON.stringify is sufficient for encoding/decoding.
@@ -19,7 +21,7 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat"} EnvelopeKind
+ * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle"} EnvelopeKind
  */
 
 /**
@@ -96,6 +98,57 @@ export function makeHeartbeatEnvelope(args) {
     kind: "heartbeat",
     ts: Date.now(),
     from: args.from,
+  };
+}
+
+/**
+ * Create a `tail-toggle` envelope (launcher → peer).
+ *
+ * Tells the focused peer to start (`on: true`) or stop (`on: false`)
+ * forwarding bus envelopes to the launcher as `tail-event` envelopes.
+ * An optional `filter` restricts which envelope kinds are forwarded.
+ *
+ * @param {{ on: boolean; filter?: string }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeTailToggleEnvelope(args) {
+  const env = {
+    v: 1,
+    id: randomUUID(),
+    kind: "tail-toggle",
+    ts: Date.now(),
+    on: args.on,
+  };
+  if (args.filter !== undefined) env.filter = args.filter;
+  return env;
+}
+
+/**
+ * Create a `tail-event` envelope (peer → launcher).
+ *
+ * Forwards a single bus envelope observation to the launcher for display
+ * in the bus-tail overlay.
+ *
+ * @param {{
+ *   from: string;
+ *   sender: string;
+ *   recipient: string;
+ *   envKind: string;
+ *   body: string;
+ * }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeTailEventEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "tail-event",
+    ts: Date.now(),
+    from: args.from,
+    sender: args.sender,
+    recipient: args.recipient,
+    envKind: args.envKind,
+    body: args.body,
   };
 }
 

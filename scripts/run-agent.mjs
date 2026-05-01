@@ -38,6 +38,7 @@ const BASELINE_EXTENSIONS = [
 const MESH_PEER_EXTENSIONS = [
   "launcher-bridge",
   "slash-commands",
+  "bus-tail-emitter",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
