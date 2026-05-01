@@ -10,6 +10,8 @@ import {
   makeFocusRequestEnvelope,
   makeSignalEnvelope,
   makeHeartbeatEnvelope,
+  makeTailToggleEnvelope,
+  makeTailEventEnvelope,
   encodeEnvelope,
   tryDecodeEnvelope,
 } from "./launcher-envelope.mjs";
@@ -62,6 +64,54 @@ describe("makeHeartbeatEnvelope", () => {
   });
 });
 
+describe("makeTailToggleEnvelope", () => {
+  it("produces a tail-toggle envelope with on:true", () => {
+    const env = makeTailToggleEnvelope({ on: true });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("tail-toggle");
+    expect(env.on).toBe(true);
+    expect("filter" in env).toBe(false);
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("produces a tail-toggle envelope with on:false", () => {
+    const env = makeTailToggleEnvelope({ on: false });
+    expect(env.on).toBe(false);
+  });
+
+  it("includes filter when provided", () => {
+    const env = makeTailToggleEnvelope({ on: true, filter: "message" });
+    expect(env.filter).toBe("message");
+  });
+
+  it("omits filter when not provided", () => {
+    const env = makeTailToggleEnvelope({ on: true });
+    expect("filter" in env).toBe(false);
+  });
+});
+
+describe("makeTailEventEnvelope", () => {
+  it("produces a tail-event envelope with all required fields", () => {
+    const env = makeTailEventEnvelope({
+      from: "peer-a",
+      sender: "agent-x",
+      recipient: "agent-y",
+      envKind: "message",
+      body: "hello",
+    });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("tail-event");
+    expect(env.from).toBe("peer-a");
+    expect(env.sender).toBe("agent-x");
+    expect(env.recipient).toBe("agent-y");
+    expect(env.envKind).toBe("message");
+    expect(env.body).toBe("hello");
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+});
+
 describe("encodeEnvelope", () => {
   it("produces a newline-terminated JSON string", () => {
     const env = makeFocusChangedEnvelope({ focused: "peer-a" });
@@ -108,6 +158,14 @@ describe("tryDecodeEnvelope", () => {
       makeFocusRequestEnvelope({ from: "peer-a", target: "peer-b" }),
       makeSignalEnvelope({ signal: "reload" }),
       makeHeartbeatEnvelope({ from: "peer-a" }),
+      makeTailToggleEnvelope({ on: true, filter: "message" }),
+      makeTailEventEnvelope({
+        from: "peer-a",
+        sender: "agent-x",
+        recipient: "agent-y",
+        envKind: "submission",
+        body: "2 artifacts",
+      }),
     ];
     for (const env of envelopes) {
       const result = tryDecodeEnvelope(encodeEnvelope(env));

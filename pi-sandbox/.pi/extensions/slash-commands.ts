@@ -24,6 +24,17 @@ function getLauncherEnvelopePath(): string {
   return path.resolve(__dirname, "../../../../scripts/_lib/launcher-envelope.mjs");
 }
 
+// Per-peer tail state, stashed on globalThis so it survives jiti module isolation.
+interface TailState {
+  on: boolean;
+  filter: string | undefined;
+}
+
+function getTailState(): TailState {
+  const g = globalThis as { __pi_slash_tail_state__?: TailState };
+  return (g.__pi_slash_tail_state__ ??= { on: false, filter: undefined });
+}
+
 export default function (pi: ExtensionAPI) {
   // Register /focus <peer> as a slash command.
   // pi.registerCommand registers a command that is invoked when the user types
@@ -82,6 +93,79 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(
           `/focus: launcher not connected. Cannot switch focus to ${target}.`,
           "warning",
+        );
+      }
+    },
+  });
+
+  // Register /tail [filter] as a slash command.
+  // Toggles the launcher's bus-tail overlay. An optional filter restricts the
+  // overlay to a specific envelope kind (e.g. "message", "submission").
+  pi.registerCommand("tail", {
+    description:
+      "Toggle the launcher bus-tail overlay. Usage: /tail [filter] " +
+      "(filter: message/messages, submission/submissions, approval-request, …)",
+    handler: async (args: string, ctx) => {
+      const filter = args.trim() || undefined;
+
+      // Load the launcher-bridge module to send the tail-toggle envelope.
+      let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
+      try {
+        const bridge = _require(
+          path.resolve(__dirname, "launcher-bridge"),
+        ) as { sendControl?: (env: Record<string, unknown>) => boolean };
+        sendControl = bridge.sendControl;
+      } catch {
+        // launcher-bridge not loaded or not available.
+      }
+
+      if (!sendControl) {
+        ctx.ui.notify(
+          "/tail: launcher-bridge not active (standalone mode). Cannot toggle bus-tail.",
+          "warning",
+        );
+        return;
+      }
+
+      // Build a tail-toggle envelope.
+      let makeTailToggleEnvelope:
+        | ((args: { on: boolean; filter?: string }) => Record<string, unknown>)
+        | undefined;
+      try {
+        const envMod = _require(getLauncherEnvelopePath()) as {
+          makeTailToggleEnvelope: (args: { on: boolean; filter?: string }) => Record<string, unknown>;
+        };
+        makeTailToggleEnvelope = envMod.makeTailToggleEnvelope;
+      } catch {
+        ctx.ui.notify("/tail: launcher-envelope module not found.", "warning");
+        return;
+      }
+
+      const tailState = getTailState();
+      const turningOn = !tailState.on;
+      tailState.on = turningOn;
+      tailState.filter = turningOn ? filter : undefined;
+
+      const envArgs: { on: boolean; filter?: string } = { on: turningOn };
+      if (turningOn && filter) envArgs.filter = filter;
+
+      const env = makeTailToggleEnvelope(envArgs);
+      const sent = sendControl(env);
+
+      if (turningOn) {
+        const filterNote = filter ? ` (filter: ${filter})` : "";
+        ctx.ui.notify(
+          sent
+            ? `/tail: bus-tail overlay enabled${filterNote}.`
+            : `/tail: launcher not connected; tail state updated locally.`,
+          sent ? "info" : "warning",
+        );
+      } else {
+        ctx.ui.notify(
+          sent
+            ? `/tail: bus-tail overlay disabled.`
+            : `/tail: launcher not connected; tail state updated locally.`,
+          sent ? "info" : "warning",
         );
       }
     },

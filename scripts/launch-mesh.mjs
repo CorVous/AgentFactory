@@ -33,9 +33,10 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
 import { createLauncherSocket } from "./_lib/launcher-socket.mjs";
-import { makeFocusChangedEnvelope } from "./_lib/launcher-envelope.mjs";
+import { makeFocusChangedEnvelope, makeTailToggleEnvelope } from "./_lib/launcher-envelope.mjs";
 import { createFocusController } from "./_lib/focus-controller.mjs";
 import { renderChrome } from "./_lib/chrome.mjs";
+import { createBusTailBuffer, renderBusTailOverlay } from "./_lib/bus-tail.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
@@ -160,6 +161,10 @@ function makePrefix(name, idx) {
 /** @type {Map<string, import('./_lib/chrome.mjs').PeerState>} */
 const peerStates = new Map();
 
+// Bus-tail overlay state — buffer of observed envelopes and toggle state.
+const busTailBuffer = createBusTailBuffer();
+const busTailState = { on: false, filter: undefined };
+
 /**
  * Render and emit the right-rail chrome to stderr.
  * Called on every focus change and peer state transition.
@@ -172,7 +177,13 @@ function repaintChrome() {
     busRoot,
     meshName: path.basename(meshPath, ".yaml"),
   });
-  process.stderr.write(chrome);
+  const tailEntries = busTailBuffer.getEntries(busTailState.filter);
+  const tailOutput = renderBusTailOverlay({
+    entries: tailEntries,
+    active: busTailState.on,
+    filter: busTailState.filter,
+  });
+  process.stderr.write(tailOutput + chrome);
 }
 
 
@@ -242,6 +253,32 @@ launcherSock.on("envelope", (env) => {
       if (!result.ok) {
         process.stderr.write(`launch-mesh: focus-request rejected: ${result.reason}\n`);
       }
+    }
+  } else if (env.kind === "tail-toggle") {
+    // A peer sent a tail-toggle; update the launcher's tail state and
+    // re-broadcast to ALL peers so each peer's emitter can self-gate on focus.
+    busTailState.on = Boolean(env.on);
+    busTailState.filter = typeof env.filter === "string" ? env.filter : undefined;
+    if (!busTailState.on) busTailBuffer.clear();
+    // Re-broadcast so all peers (not just the sender) receive the toggle.
+    const broadcast = makeTailToggleEnvelope({
+      on: busTailState.on,
+      ...(busTailState.filter !== undefined ? { filter: busTailState.filter } : {}),
+    });
+    launcherSock.broadcast(broadcast);
+    repaintChrome();
+  } else if (env.kind === "tail-event") {
+    // A focused peer forwarded a bus envelope observation.
+    if (busTailState.on) {
+      busTailBuffer.push({
+        ts: typeof env.ts === "number" ? env.ts : Date.now(),
+        sender: typeof env.sender === "string" ? env.sender : "?",
+        recipient: typeof env.recipient === "string" ? env.recipient : "?",
+        envKind: typeof env.envKind === "string" ? env.envKind : "?",
+        body: typeof env.body === "string" ? env.body : "",
+        direction: "in",
+      });
+      repaintChrome();
     }
   }
 });
