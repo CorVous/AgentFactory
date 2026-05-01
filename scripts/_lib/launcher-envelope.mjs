@@ -13,6 +13,7 @@
  *   - focus-request: peer asks the launcher to focus a target peer.
  *   - heartbeat: peer announces it is alive.
  *   - tail-event: peer forwards a bus envelope for the launcher's tail overlay.
+ *   - decision-pending: Top Supervisor peer signals an open/resolved local escalation dialog.
  *
  * All fields are plain strings / booleans — no complex sub-objects — so
  * JSON.parse + JSON.stringify is sufficient for encoding/decoding.
@@ -21,7 +22,7 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle"} EnvelopeKind
+ * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending"} EnvelopeKind
  */
 
 /**
@@ -149,6 +150,28 @@ export function makeTailEventEnvelope(args) {
     recipient: args.recipient,
     envKind: args.envKind,
     body: args.body,
+  };
+}
+
+/**
+ * Create a `decision-pending` envelope (peer → launcher).
+ *
+ * Emitted by the Top Supervisor peer when it opens (`on: true`) or resolves
+ * (`on: false`) a local escalation dialog. The launcher uses this to show a
+ * "decisions pending" badge next to the peer in the chrome when the human is
+ * focused elsewhere.
+ *
+ * @param {{ peer: string; on: boolean }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeDecisionPendingEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "decision-pending",
+    ts: Date.now(),
+    peer: args.peer,
+    on: args.on,
   };
 }
 

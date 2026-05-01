@@ -815,6 +815,176 @@ describe("respondToRequest — escalate", () => {
       expect(sent.payload.note).toBe("Denied");
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Top Supervisor local-escalate path (no supervisor above — route to human)
+  // ---------------------------------------------------------------------------
+
+  it("calls localEscalate when no supervisor is configured (Top Supervisor path)", async () => {
+    setHabitat({ ...BASE_HABITAT, supervisor: undefined });
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "Needs human review",
+      summary: "A submission requires human attention",
+      preview: "preview text",
+    });
+    inbox.dispatchEnvelope(env, vi.fn());
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+    const localEscalate = vi.fn().mockResolvedValue({ approved: true, note: "approved by human" });
+
+    const result = await inbox.respondToRequest({
+      msg_id: env.msg_id,
+      action: "escalate",
+      sendEnvelope,
+      agentName: "supervisor",
+      localEscalate,
+    });
+
+    expect(result.ok).toBe(true);
+    // localEscalate was called with the request details
+    expect(localEscalate).toHaveBeenCalledOnce();
+    const [req] = localEscalate.mock.calls[0] as [{ title: string; summary: string; preview: string }];
+    expect(req.title).toBe("Needs human review");
+    expect(req.summary).toBe("A submission requires human attention");
+    expect(req.preview).toBe("preview text");
+    // Result is relayed back to the original sender as an approval-result
+    expect(sendEnvelope).toHaveBeenCalledOnce();
+    const [sent] = sendEnvelope.mock.calls[0] as [InboundEnvelope];
+    expect(sent.to).toBe("worker-a");
+    expect(sent.payload.kind).toBe("approval-result");
+    if (sent.payload.kind === "approval-result") {
+      expect(sent.payload.approved).toBe(true);
+      expect(sent.payload.note).toBe("approved by human");
+    }
+    expect(inbox.pendingCount()).toBe(0);
+  });
+
+  it("relays approved:false when localEscalate rejects (Top Supervisor path)", async () => {
+    setHabitat({ ...BASE_HABITAT, supervisor: undefined });
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "T",
+      summary: "S",
+      preview: "P",
+    });
+    inbox.dispatchEnvelope(env, vi.fn());
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+    const localEscalate = vi.fn().mockResolvedValue({ approved: false, note: "human rejected" });
+
+    const result = await inbox.respondToRequest({
+      msg_id: env.msg_id,
+      action: "escalate",
+      sendEnvelope,
+      agentName: "supervisor",
+      localEscalate,
+    });
+
+    expect(result.ok).toBe(true);
+    const [sent] = sendEnvelope.mock.calls[0] as [InboundEnvelope];
+    expect(sent.payload.kind).toBe("approval-result");
+    if (sent.payload.kind === "approval-result") {
+      expect(sent.payload.approved).toBe(false);
+      expect(sent.payload.note).toBe("human rejected");
+    }
+    expect(inbox.pendingCount()).toBe(0);
+  });
+
+  it("builds req from submission envelope for localEscalate (Top Supervisor path)", async () => {
+    setHabitat({ ...BASE_HABITAT, supervisor: undefined });
+    const inbox = createSupervisorInbox();
+    const env = makeSubmissionEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+      summary: "Created hello.txt",
+    });
+    inbox.dispatchEnvelope(env, vi.fn());
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+    const localEscalate = vi.fn().mockResolvedValue({ approved: true });
+
+    const result = await inbox.respondToRequest({
+      msg_id: env.msg_id,
+      action: "escalate",
+      sendEnvelope,
+      agentName: "supervisor",
+      localEscalate,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(localEscalate).toHaveBeenCalledOnce();
+    const [req] = localEscalate.mock.calls[0] as [{ title: string; summary: string; preview: string }];
+    // Title should mention the sender
+    expect(req.title).toContain("worker-a");
+    // Summary should include the submission summary
+    expect(req.summary).toContain("Created hello.txt");
+    // Preview should be a rendered string (non-empty)
+    expect(typeof req.preview).toBe("string");
+    expect(req.preview.length).toBeGreaterThan(0);
+  });
+
+  it("returns error when no supervisor AND no localEscalate (Top Supervisor must provide localEscalate)", async () => {
+    setHabitat({ ...BASE_HABITAT, supervisor: undefined });
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "T",
+      summary: "S",
+      preview: "P",
+    });
+    inbox.dispatchEnvelope(env, vi.fn());
+
+    const sendEnvelope = vi.fn();
+    const result = await inbox.respondToRequest({
+      msg_id: env.msg_id,
+      action: "escalate",
+      sendEnvelope,
+      agentName: "supervisor",
+      // No localEscalate provided
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no supervisor/i);
+    expect(sendEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("uses escalateToSupervisor (not localEscalate) when supervisor is configured", async () => {
+    setHabitat({ ...BASE_HABITAT, supervisor: "lead-hare" });
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "T",
+      summary: "S",
+      preview: "P",
+    });
+    inbox.dispatchEnvelope(env, vi.fn());
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+    const localEscalate = vi.fn();
+    const escalateToSupervisor = vi.fn().mockResolvedValue({ approved: true });
+
+    const result = await inbox.respondToRequest({
+      msg_id: env.msg_id,
+      action: "escalate",
+      sendEnvelope,
+      agentName: "supervisor",
+      localEscalate,
+      escalateToSupervisor,
+    });
+
+    expect(result.ok).toBe(true);
+    // When supervisor is configured, localEscalate must NOT be called
+    expect(localEscalate).not.toHaveBeenCalled();
+    // escalateToSupervisor must be called instead
+    expect(escalateToSupervisor).toHaveBeenCalledOnce();
+  });
 });
 
 // ---------------------------------------------------------------------------

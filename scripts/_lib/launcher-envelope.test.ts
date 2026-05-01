@@ -12,6 +12,7 @@ import {
   makeHeartbeatEnvelope,
   makeTailToggleEnvelope,
   makeTailEventEnvelope,
+  makeDecisionPendingEnvelope,
   encodeEnvelope,
   tryDecodeEnvelope,
 } from "./launcher-envelope.mjs";
@@ -112,6 +113,33 @@ describe("makeTailEventEnvelope", () => {
   });
 });
 
+describe("makeDecisionPendingEnvelope", () => {
+  it("produces a v:1 decision-pending envelope with on:true (dialog opened)", () => {
+    const env = makeDecisionPendingEnvelope({ peer: "authority", on: true });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("decision-pending");
+    expect(env.peer).toBe("authority");
+    expect(env.on).toBe(true);
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("produces a v:1 decision-pending envelope with on:false (dialog resolved)", () => {
+    const env = makeDecisionPendingEnvelope({ peer: "authority", on: false });
+    expect(env.on).toBe(false);
+    expect(env.peer).toBe("authority");
+  });
+
+  it("round-trips through encodeEnvelope / tryDecodeEnvelope", () => {
+    const env = makeDecisionPendingEnvelope({ peer: "top-supervisor", on: true });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("decision-pending");
+    expect(result.env?.peer).toBe("top-supervisor");
+    expect(result.env?.on).toBe(true);
+  });
+});
+
 describe("encodeEnvelope", () => {
   it("produces a newline-terminated JSON string", () => {
     const env = makeFocusChangedEnvelope({ focused: "peer-a" });
@@ -166,6 +194,7 @@ describe("tryDecodeEnvelope", () => {
         envKind: "submission",
         body: "2 artifacts",
       }),
+      makeDecisionPendingEnvelope({ peer: "authority", on: true }),
     ];
     for (const env of envelopes) {
       const result = tryDecodeEnvelope(encodeEnvelope(env));

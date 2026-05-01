@@ -224,6 +224,75 @@ describe("renderChrome — crashed peer in peers list", () => {
   });
 });
 
+// ── decisions pending badge ───────────────────────────────────────────────────
+
+describe("renderPeerRow — decisions pending badge", () => {
+  it("shows 'decisions pending' badge for non-focused peer with decisionPending:true", () => {
+    const row = renderPeerRow({ name: "authority", state: "running", decisionPending: true }, false);
+    expect(stripAnsi(row)).toContain("decisions pending");
+    expect(stripAnsi(row)).toContain("authority");
+  });
+
+  it("does NOT show badge for focused peer even when decisionPending:true", () => {
+    // Focused peer shows the dialog itself; badge is unnecessary.
+    const row = renderPeerRow({ name: "authority", state: "running", decisionPending: true }, true);
+    expect(stripAnsi(row)).not.toContain("decisions pending");
+    expect(stripAnsi(row)).toContain("▶");
+  });
+
+  it("does NOT show badge when decisionPending is false", () => {
+    const row = renderPeerRow({ name: "authority", state: "running", decisionPending: false }, false);
+    expect(stripAnsi(row)).not.toContain("decisions pending");
+  });
+
+  it("does NOT show badge when decisionPending is undefined", () => {
+    const row = renderPeerRow({ name: "authority", state: "running" }, false);
+    expect(stripAnsi(row)).not.toContain("decisions pending");
+  });
+});
+
+describe("renderChrome — decisions pending badge in peer list", () => {
+  it("shows badge for non-focused peer with pending decision", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "authority", state: "running", decisionPending: true },
+        { name: "worker", state: "running" },
+      ],
+      focused: "worker",
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("decisions pending");
+    expect(plain).toContain("authority");
+  });
+
+  it("does NOT show badge for the focused peer even if decisionPending is set", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "authority", state: "running", decisionPending: true },
+        { name: "worker", state: "running" },
+      ],
+      focused: "authority",
+    });
+    const plain = stripAnsi(output);
+    // Badge should not appear when that peer IS focused
+    const lines = plain.split("\n").filter(Boolean);
+    const authorityLine = lines.find((l) => l.includes("authority"));
+    expect(authorityLine).toBeDefined();
+    expect(authorityLine).not.toContain("decisions pending");
+  });
+
+  it("shows no badge when no peer has decisionPending set", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "authority", state: "running" },
+        { name: "worker", state: "running" },
+      ],
+      focused: "worker",
+    });
+    expect(stripAnsi(output)).not.toContain("decisions pending");
+  });
+});
+
 // ── auto-shift notice ─────────────────────────────────────────────────────────
 
 describe("renderChrome — auto-shift notice", () => {

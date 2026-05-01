@@ -329,6 +329,19 @@ launcherSock.on("envelope", (env) => {
       });
       repaintChrome();
     }
+  } else if (env.kind === "decision-pending") {
+    // Top Supervisor opened (on:true) or resolved (on:false) a local escalation dialog.
+    // Update the peer's decisionPending flag and repaint so the badge appears/disappears.
+    const peerName = typeof env.peer === "string" ? env.peer : null;
+    const on = Boolean(env.on);
+    if (peerName && peerEntries.has(peerName)) {
+      const entry = peerEntries.get(peerName);
+      peerEntries.set(peerName, { ...entry, decisionPending: on });
+      process.stderr.write(
+        `launch-mesh: decision-pending from "${peerName}": ${on ? "opened" : "resolved"}\n`,
+      );
+      repaintChrome();
+    }
   }
 });
 

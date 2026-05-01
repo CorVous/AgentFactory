@@ -42,6 +42,7 @@ const WHITE = "\x1b[37m";
  *   state: PeerState;
  *   exitCode?: number | null;
  *   exitSignal?: string | null;
+ *   decisionPending?: boolean;
  * }} PeerEntry
  */
 
@@ -107,6 +108,7 @@ export function renderChrome(opts) {
  * Useful for partial updates.
  *
  * Crashed peers show their exit code/signal next to the name.
+ * Non-focused peers with a pending decision show a "decisions pending" badge.
  *
  * @param {PeerEntry} peer
  * @param {boolean} isFocused
@@ -134,7 +136,14 @@ export function renderPeerRow(peer, isFocused) {
       : `${DIM}${peer.name}${RESET}`;
   }
 
-  return `${focusMark}${icon} ${namePart}`;
+  // Show "decisions pending" badge for non-focused peers with an open dialog.
+  // Focused peers show the dialog itself, so no badge needed.
+  const badge =
+    !isFocused && peer.decisionPending
+      ? ` ${YELLOW}${BOLD}[decisions pending]${RESET}`
+      : "";
+
+  return `${focusMark}${icon} ${namePart}${badge}`;
 }
 
 /**
