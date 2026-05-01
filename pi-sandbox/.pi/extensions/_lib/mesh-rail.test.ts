@@ -1,154 +1,66 @@
 /**
- * mesh-rail.test.ts — hermetic unit tests for mesh-rail overlay state, render, and handle.
+ * mesh-rail.test.ts — hermetic unit tests for the mesh-rail widget component.
  *
  * Contract: no I/O, no network, no env from models.env, no real pi runtime.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
-import {
-  getMeshRailHandle,
-  setMeshRailHandle,
-  clearMeshRailHandle,
-  createMeshRailComponent,
-  meshRailOverlayOptions,
-} from "./mesh-rail";
-
-describe("mesh-rail handle stash (globalThis)", () => {
-  beforeEach(() => {
-    clearMeshRailHandle();
-  });
-
-  it("getMeshRailHandle() returns undefined before any handle is registered", () => {
-    expect(getMeshRailHandle()).toBeUndefined();
-  });
-
-  it("setMeshRailHandle(h) makes getMeshRailHandle() return that handle", () => {
-    const fakeHandle = {
-      hide: () => {},
-      setHidden: (_: boolean) => {},
-      isHidden: () => false,
-      focus: () => {},
-      unfocus: () => {},
-      isFocused: () => false,
-    };
-    setMeshRailHandle(fakeHandle);
-    expect(getMeshRailHandle()).toBe(fakeHandle);
-  });
-
-  it("clearMeshRailHandle() resets the stash", () => {
-    const fakeHandle = {
-      hide: () => {},
-      setHidden: (_: boolean) => {},
-      isHidden: () => false,
-      focus: () => {},
-      unfocus: () => {},
-      isFocused: () => false,
-    };
-    setMeshRailHandle(fakeHandle);
-    clearMeshRailHandle();
-    expect(getMeshRailHandle()).toBeUndefined();
-  });
-});
+import { describe, it, expect } from "vitest";
+import { visibleWidth } from "@mariozechner/pi-tui";
+import { createMeshRailComponent } from "./mesh-rail";
 
 describe("createMeshRailComponent — placeholder content", () => {
-  it("renders a header line containing the peer name", () => {
+  it("renders the peer name", () => {
     const component = createMeshRailComponent({ peerName: "cottontail-writer" });
-    const lines = component.render(40);
-    const all = lines.join("\n");
-    expect(all).toContain("cottontail-writer");
+    const lines = component.render(80);
+    expect(lines.join("\n")).toContain("cottontail-writer");
   });
 
-  it("renders a line containing '0 peers'", () => {
+  it("renders '0 peers'", () => {
     const component = createMeshRailComponent({ peerName: "any-peer" });
-    const lines = component.render(40);
-    const all = lines.join("\n");
-    expect(all).toContain("0 peers");
+    expect(component.render(80).join("\n")).toContain("0 peers");
   });
 
-  it("renders a line containing '0 decisions'", () => {
+  it("renders '0 decisions'", () => {
     const component = createMeshRailComponent({ peerName: "any-peer" });
-    const lines = component.render(40);
-    const all = lines.join("\n");
-    expect(all).toContain("0 decisions");
+    expect(component.render(80).join("\n")).toContain("0 decisions");
   });
 
   it("returned component implements the pi-tui Component interface (render + invalidate)", () => {
     const component = createMeshRailComponent({ peerName: "any-peer" });
     expect(typeof component.render).toBe("function");
     expect(typeof component.invalidate).toBe("function");
-    // Sanity: render returns an array of strings.
-    const lines = component.render(40);
+    const lines = component.render(80);
     expect(Array.isArray(lines)).toBe(true);
     for (const line of lines) expect(typeof line).toBe("string");
   });
 
-  it("draws a left-anchored frame: rounded top-left, left bars, rounded bottom-left, open right", () => {
+  it("renders fields horizontally on a single line", () => {
     const component = createMeshRailComponent({ peerName: "any-peer" });
-    const lines = component.render(30);
-    // Top: rounded top-left corner followed by horizontals to the right edge.
-    expect(lines[0]).toMatch(/^╭─+$/);
-    // Bottom: rounded bottom-left corner followed by horizontals to the right edge.
-    expect(lines[lines.length - 1]).toMatch(/^╰─+$/);
-    // Middle: left bar only — right side is intentionally open (overlay sits
-    // against the terminal's right edge, so a right border would be wasted).
-    for (let i = 1; i < lines.length - 1; i++) {
-      expect(lines[i].startsWith("│")).toBe(true);
-      expect(lines[i].endsWith("│")).toBe(false);
+    const lines = component.render(80);
+    expect(lines).toHaveLength(1);
+    // peer-name appears before peer-count; peer-count appears before decisions-count.
+    const line = lines[0];
+    const iName = line.indexOf("any-peer");
+    const iPeers = line.indexOf("0 peers");
+    const iDecisions = line.indexOf("0 decisions");
+    expect(iName).toBeGreaterThanOrEqual(0);
+    expect(iPeers).toBeGreaterThan(iName);
+    expect(iDecisions).toBeGreaterThan(iPeers);
+  });
+
+  it("uses no box-drawing characters (no border)", () => {
+    const component = createMeshRailComponent({ peerName: "any-peer" });
+    const all = component.render(80).join("");
+    for (const ch of ["╭", "╮", "╰", "╯", "│", "─", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼"]) {
+      expect(all).not.toContain(ch);
     }
   });
 
-  it("does not use any corner character on the right side", () => {
-    const component = createMeshRailComponent({ peerName: "any-peer" });
-    const all = component.render(30).join("");
-    expect(all).not.toContain("╮");
-    expect(all).not.toContain("╯");
-  });
-
-  it("pads each rendered line to the same visible width (so the underline extends across)", () => {
-    const component = createMeshRailComponent({ peerName: "any-peer" });
-    const lines = component.render(30);
-    // visibleWidth is character count; box-drawing chars are single-width.
-    const widths = new Set(lines.map((l) => [...l].length));
-    expect(widths.size).toBe(1);
-  });
-});
-
-describe("meshRailOverlayOptions", () => {
-  it("anchors the overlay to top-right", () => {
-    expect(meshRailOverlayOptions().anchor).toBe("top-right");
-  });
-
-  it("sets width to '30%'", () => {
-    expect(meshRailOverlayOptions().width).toBe("30%");
-  });
-
-  it("is non-capturing so the editor keeps focus", () => {
-    expect(meshRailOverlayOptions().nonCapturing).toBe(true);
-  });
-
-  it("sets a top margin of 1 to clear the agent header", () => {
-    const opts = meshRailOverlayOptions();
-    const margin = opts.margin;
-    if (typeof margin === "number") {
-      expect(margin).toBeGreaterThanOrEqual(1);
-    } else {
-      expect(margin?.top).toBe(1);
-    }
-  });
-
-  it("sets a bounded maxHeight (caps growth so chat below is not obscured)", () => {
-    const { maxHeight } = meshRailOverlayOptions();
-    expect(maxHeight).toBeDefined();
-    // Bounded: either a small absolute number of rows or a percentage cap.
-    if (typeof maxHeight === "number") {
-      expect(maxHeight).toBeGreaterThan(0);
-      expect(maxHeight).toBeLessThanOrEqual(20);
-    } else {
-      // Percentage like "30%": parse and assert it's a real cap (< 100%).
-      expect(maxHeight).toMatch(/^\d+%$/);
-      const pct = Number((maxHeight as string).slice(0, -1));
-      expect(pct).toBeGreaterThan(0);
-      expect(pct).toBeLessThan(100);
-    }
+  it("does not exceed the column budget (truncates with ellipsis when narrower than content)", () => {
+    const component = createMeshRailComponent({ peerName: "very-long-peer-name" });
+    const narrow = 12;
+    const lines = component.render(narrow);
+    expect(lines).toHaveLength(1);
+    expect(visibleWidth(lines[0])).toBeLessThanOrEqual(narrow);
   });
 });

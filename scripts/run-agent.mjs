@@ -36,8 +36,8 @@ const BASELINE_EXTENSIONS = [
 // bridge, focus-state, and slash-commands extensions as additional baselines.
 // These are silent no-ops when the launcher socket is absent (standalone mode).
 //
-// mesh-rail renders the top-right mesh-status overlay; only meaningful under
-// the launcher. Like the others, it degrades silently if hasUI is false
+// mesh-rail renders the mesh-status widget above the editor; only meaningful
+// under the launcher. Like the others, it degrades silently if hasUI is false
 // (print mode / no TUI).
 const MESH_PEER_EXTENSIONS = [
   "launcher-bridge",
