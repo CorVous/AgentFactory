@@ -501,9 +501,12 @@ exactly the relationship they need.
 The preferred way to run and observe a live multi-agent mesh is via the
 launcher TUI (`npm run mesh`). The launcher multiplexes every peer's pi
 session into one terminal: the focused peer's PTY is rendered live in
-the main pane; the right rail shows all peers, the decisions queue, and
-bus-tail output. The human is not a peer — there is no `human-relay`
-process; the launcher is the human's sole interface.
+the main pane, with a single-line mesh-status widget (peer name, peer
+count, decisions count) pinned directly above the input editor by the
+auto-loaded `mesh-rail` baseline extension. Bus-tail output and the
+decisions queue surface via slash commands (`/tail`, `/decisions`) — the
+launcher itself emits no chrome. The human is not a peer — there is no
+`human-relay` process; the launcher is the human's sole interface.
 
 ```sh
 set -a; source models.env; set +a

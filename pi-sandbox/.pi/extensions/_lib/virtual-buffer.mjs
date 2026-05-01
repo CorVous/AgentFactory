@@ -40,6 +40,99 @@ function moveTo(row, col) {
 /** Reset all SGR attributes. */
 const RESET_ATTRS = `${CSI}0m`;
 
+/**
+ * Build an SGR escape string for the attributes of a cell.
+ * Returns an empty string when all attributes are default.
+ *
+ * Emits: bold (1), italic (3), underline (4), foreground color, background color.
+ * Colors: palette via 256-color syntax (38;5;n / 48;5;n), RGB via (38;2;r;g;b / 48;2;r;g;b).
+ *
+ * @param {import('@xterm/headless').IBufferCell} cell
+ * @returns {string} SGR escape sequence or empty string
+ */
+function cellSgr(cell) {
+  if (cell.isAttributeDefault()) return "";
+
+  const codes = [];
+
+  if (cell.isBold()) codes.push(1);
+  if (cell.isDim()) codes.push(2);
+  if (cell.isItalic()) codes.push(3);
+  if (cell.isUnderline()) codes.push(4);
+  if (cell.isBlink()) codes.push(5);
+  if (cell.isInverse()) codes.push(7);
+  if (cell.isInvisible()) codes.push(8);
+  if (cell.isStrikethrough()) codes.push(9);
+
+  // Foreground
+  if (!cell.isFgDefault()) {
+    if (cell.isFgPalette()) {
+      const n = cell.getFgColor();
+      if (n < 8) {
+        codes.push(30 + n);
+      } else if (n < 16) {
+        codes.push(90 + n - 8);
+      } else {
+        codes.push(38, 5, n);
+      }
+    } else if (cell.isFgRGB()) {
+      const rgb = cell.getFgColor();
+      const r = (rgb >> 16) & 0xff;
+      const g = (rgb >> 8) & 0xff;
+      const b = rgb & 0xff;
+      codes.push(38, 2, r, g, b);
+    }
+  }
+
+  // Background
+  if (!cell.isBgDefault()) {
+    if (cell.isBgPalette()) {
+      const n = cell.getBgColor();
+      if (n < 8) {
+        codes.push(40 + n);
+      } else if (n < 16) {
+        codes.push(100 + n - 8);
+      } else {
+        codes.push(48, 5, n);
+      }
+    } else if (cell.isBgRGB()) {
+      const rgb = cell.getBgColor();
+      const r = (rgb >> 16) & 0xff;
+      const g = (rgb >> 8) & 0xff;
+      const b = rgb & 0xff;
+      codes.push(48, 2, r, g, b);
+    }
+  }
+
+  if (codes.length === 0) return "";
+  return `${CSI}${codes.join(";")}m`;
+}
+
+/**
+ * Returns true if two cells share the same display attributes (for run compression).
+ *
+ * @param {import('@xterm/headless').IBufferCell} a
+ * @param {import('@xterm/headless').IBufferCell} b
+ * @returns {boolean}
+ */
+function sameAttrs(a, b) {
+  return (
+    a.isAttributeDefault() === b.isAttributeDefault() &&
+    a.getFgColorMode() === b.getFgColorMode() &&
+    a.getFgColor() === b.getFgColor() &&
+    a.getBgColorMode() === b.getBgColorMode() &&
+    a.getBgColor() === b.getBgColor() &&
+    a.isBold() === b.isBold() &&
+    a.isDim() === b.isDim() &&
+    a.isItalic() === b.isItalic() &&
+    a.isUnderline() === b.isUnderline() &&
+    a.isBlink() === b.isBlink() &&
+    a.isInverse() === b.isInverse() &&
+    a.isInvisible() === b.isInvisible() &&
+    a.isStrikethrough() === b.isStrikethrough()
+  );
+}
+
 /** Hide / show cursor escape sequences. */
 const HIDE_CURSOR = `${CSI}?25l`;
 const SHOW_CURSOR = `${CSI}?25h`;
@@ -134,7 +227,11 @@ export class VirtualBuffer {
 
     const buf = this._term.buffer.active;
     const rows = this._rows;
+    const cols = this._cols;
     const parts = [HIDE_CURSOR, CLEAR_SCREEN];
+
+    // Reuse a single cell object across getCell() calls to avoid repeated allocation.
+    const reuseCell = buf.getNullCell();
 
     for (let r = 0; r < rows; r++) {
       const line = buf.getLine(r);
@@ -143,16 +240,62 @@ export class VirtualBuffer {
         continue;
       }
 
-      // Translate the line to a plain string (strips ANSI, just text).
-      // For full fidelity we'd reconstruct per-cell SGR attributes.
-      // The xterm API exposes translateToString() for plain text.
-      // We use it for now; a future iteration can add attribute reconstruction.
-      const text = line.translateToString(true /* trimRight */);
       parts.push(moveTo(r + 1, 1));
-      parts.push(text);
+      // Reset attributes at the start of each row so SGR runs are absolute.
+      parts.push(RESET_ATTRS);
+
+      // Walk cells and emit per-run SGR + text.
+      // A "run" is a maximal sequence of cells sharing the same attributes.
+      let runText = "";
+      /** @type {import('@xterm/headless').IBufferCell | null} */
+      let runCell = null;
+
+      const flushRun = () => {
+        if (runText.length === 0) return;
+        if (runCell) {
+          const sgr = cellSgr(runCell);
+          if (sgr) parts.push(sgr);
+        }
+        parts.push(runText);
+        runText = "";
+        runCell = null;
+      };
+
+      for (let c = 0; c < cols; c++) {
+        const cell = line.getCell(c, reuseCell);
+        if (!cell) continue;
+
+        // Skip continuation cells of wide characters (width 0 after wide).
+        if (cell.getWidth() === 0) continue;
+
+        if (runCell === null) {
+          // Start a new run: snapshot this cell's attributes as the template.
+          runCell = buf.getNullCell();
+          line.getCell(c, runCell);
+          runText = cell.getChars() || " ";
+        } else if (sameAttrs(runCell, cell)) {
+          // Same attributes — extend the run.
+          runText += cell.getChars() || " ";
+        } else {
+          // Attributes changed — flush current run, start a new one.
+          flushRun();
+          runCell = buf.getNullCell();
+          line.getCell(c, runCell);
+          runText = cell.getChars() || " ";
+        }
+      }
+      flushRun();
+
+      // Reset at end of row.
+      parts.push(RESET_ATTRS);
     }
 
-    parts.push(RESET_ATTRS);
+    // Emit cursor position derived from xterm's tracked cursor state.
+    // cursorX/Y are 0-based; CUP (CSI row;colH) is 1-based.
+    const cursorRow = buf.cursorY + 1;
+    const cursorCol = buf.cursorX + 1;
+    parts.push(moveTo(cursorRow, cursorCol));
+
     parts.push(SHOW_CURSOR);
 
     this._cachedPaint = parts.join("");

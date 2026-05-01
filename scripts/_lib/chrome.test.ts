@@ -154,10 +154,14 @@ describe("renderPeerRow", () => {
 });
 
 describe("renderChrome — output format", () => {
-  it("is a multi-line string terminated with newline", () => {
+  it("is a multi-line string that contains newlines, wrapped in DECSC/DECRC", () => {
     const output = renderChrome({ peers: [], focused: null });
-    expect(output.endsWith("\n")).toBe(true);
-    expect(output.split("\n").length).toBeGreaterThan(1);
+    // Output is wrapped in DECSC/DECRC; the inner content still contains newlines.
+    expect(output.startsWith("\x1b7")).toBe(true);
+    expect(output.endsWith("\x1b8")).toBe(true);
+    // Strip DECSC/DECRC and verify multi-line content inside.
+    const inner = output.slice(2, -2); // remove \x1b7 prefix and \x1b8 suffix
+    expect(inner.split("\n").length).toBeGreaterThan(1);
   });
 
   it("is deterministic for the same input", () => {
@@ -443,6 +447,36 @@ describe("renderDecisionsPanel — non-empty queue", () => {
     const lines = renderDecisionsPanel([submissionItem], BASE_TS);
     const plain = lines.map(stripAnsi).join("\n");
     expect(plain).toContain("submit");
+  });
+});
+
+// ── DECSC / DECRC cursor save-restore wrapper ─────────────────────────────────
+
+describe("renderChrome — DECSC/DECRC cursor save-restore wrapper", () => {
+  it("renderChrome output begins with DECSC (\\x1b7)", () => {
+    const output = renderChrome({ peers: [], focused: null });
+    expect(output.startsWith("\x1b7")).toBe(true);
+  });
+
+  it("renderChrome output ends with DECRC (\\x1b8)", () => {
+    const output = renderChrome({ peers: [], focused: null });
+    expect(output.endsWith("\x1b8")).toBe(true);
+  });
+
+  it("renderChrome with peers also begins with DECSC and ends with DECRC", () => {
+    const output = renderChrome({
+      peers: [{ name: "peer-a", state: "running" }],
+      focused: "peer-a",
+    });
+    expect(output.startsWith("\x1b7")).toBe(true);
+    expect(output.endsWith("\x1b8")).toBe(true);
+  });
+
+  it("renderPeerRow output is NOT wrapped in DECSC/DECRC (wrapper is at chrome level)", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "running" }, true);
+    // renderPeerRow is a building block — no save/restore
+    expect(row.startsWith("\x1b7")).toBe(false);
+    expect(row.endsWith("\x1b8")).toBe(false);
   });
 });
 

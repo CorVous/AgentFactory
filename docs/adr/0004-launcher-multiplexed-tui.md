@@ -71,18 +71,18 @@ This amendment relocates the rail into pi rather than continuing to fight the in
 
 ### Mesh status surface
 
-- A new in-peer baseline extension `mesh-rail` (auto-loaded under the launcher) renders mesh status as a `nonCapturing` overlay anchored `top-right`, sized `width: "30%"` with bounded `maxHeight`, via `ctx.ui.custom({ overlay: true, overlayOptions: { ... nonCapturing: true } })`. Pi's overlay system composites the rail into the focused peer's TUI; the launcher emits no chrome of its own.
-- Slash command `/decisions` opens a rich centered overlay (focus-capturing) for full peer detail and pin/dismiss affordances. The `mesh-rail` overlay hides while it is open via `OverlayHandle.setHidden(true)` and reappears on close. Other overlays (intercept's `ctx.ui.confirm`, future `/peers`) leave the rail stacked — the rail's ambient mesh-state context remains useful while the human picks an intercept action.
+- A new in-peer baseline extension `mesh-rail` (auto-loaded under the launcher) renders mesh status as a single-line widget pinned directly above the input editor, via `ctx.ui.setWidget(name, factory, { placement: "aboveEditor" })`. The widget sits in the layout flow — it is not a floating overlay. The launcher emits no chrome of its own.
+- Slash command `/decisions` opens a rich centered overlay (focus-capturing) for full peer detail and pin/dismiss affordances. The `mesh-rail` widget continues to render underneath while `/decisions` is open — the widget is informational and ambient, and pi's overlay system handles input focus on its own. Other overlays (intercept's `ctx.ui.confirm`, future `/peers`) likewise leave the widget in place.
 - `mesh-rail` subscribes to launcher signals via the existing `launcher-bridge` extension. The launcher's `decisions-queue.mjs` and `focus-controller.mjs` modules continue to own state but stop holding render code; they broadcast renderable summaries to peers instead.
 - `scripts/_lib/chrome.mjs` and its tests are removed. `launch-mesh.mjs` stops writing peer-state chrome to stderr.
 
 ### Decomposition diff
 
-- **Add to in-peer baseline extensions:** `mesh-rail` — *Renders the mesh-status overlay (peers list, decisions count) and exposes a hide/show handle for slash-command handlers. Subscribes to launcher signals via `launcher-bridge`.*
+- **Add to in-peer baseline extensions:** `mesh-rail` — *Renders the mesh-status widget (peers list, decisions count) above the input editor. Subscribes to launcher signals via `launcher-bridge`.*
 - **Remove from launcher modules:** `chrome` (deleted).
 - **Amend `decisions-queue` row:** *Pending-decisions state; pin/dismiss; broadcasts renderable summaries to `mesh-rail` peers* (no longer renders into `chrome`).
 
 ### Trade-offs accepted
 
-- **Chat lines wider than `termWidth - rail_width` clip in the rail's row range** (top-right corner only). Pi's overlay compositor floats; it does not reflow base content (`pi-tui/dist/tui.js:611` — `compositeLineAt` splices the overlay column-range into the base line). The editor and footer sit outside the rail's row range (rail's `maxHeight` is bounded so it never extends down into them) and are unaffected. The latest visible chat (where the human is looking) sits below the rail; only the oldest visible lines on the right are at risk.
-- A follow-up tracks an upstream pi-tui PR for `TUI.setReservedRight(cols)` which would let base components render at `(termWidth - reservedRight)` while overlays still composite in full-`termWidth` coordinates. When that lands, clipping disappears with no other change in this repo. Until then this is acknowledged-cosmetic.
+- **The widget consumes one row of vertical space above the editor** in every peer's pi TUI when running under the launcher. Chat content is reflowed by pi's normal layout engine — there is no overlay-vs-base clipping to worry about (this was an issue under the floating-overlay approach considered earlier; abandoning it in favor of `aboveEditor` placement removes the clipping concern entirely).
+- **Single-line, borderless layout** keeps the row count fixed and predictable. Multi-line variants (e.g. one row per peer when peer count grows) can be revisited when peer counts justify it; for v1 a compact "name · N peers · M decisions" line is enough.

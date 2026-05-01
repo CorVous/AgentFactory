@@ -79,9 +79,16 @@ export class Multiplexer extends EventEmitter {
       this._pool?.off("output", this._poolOutputListener);
     }
     this._pool = pool;
-    this._poolOutputListener = (name) => {
+    this._poolOutputListener = (name, data) => {
       if (name === this._focused) {
-        this._repaint();
+        // Pass-through: write raw PTY chunks directly to output without a
+        // full repaint.  The buffer still accumulates the data (the pool's
+        // VirtualBuffer.write() is called by the pool itself); we just
+        // forward the bytes so the focused peer's TUI renders without
+        // per-keystroke flicker or full-screen reprint.
+        if (data !== undefined) {
+          this._out.write(data);
+        }
       }
     };
     pool.on("output", this._poolOutputListener);
