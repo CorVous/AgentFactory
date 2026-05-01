@@ -16,6 +16,7 @@ import {
   makePinRequestEnvelope,
   makePinnedResolvedEnvelope,
   makeDecisionsJumpEnvelope,
+  makeMeshRailUpdateEnvelope,
   encodeEnvelope,
   tryDecodeEnvelope,
 } from "./launcher-envelope.mjs";
@@ -237,6 +238,45 @@ describe("makeDecisionsJumpEnvelope", () => {
   });
 });
 
+describe("makeMeshRailUpdateEnvelope", () => {
+  it("produces a v:1 mesh-rail-update envelope with peers array and decisionCount", () => {
+    const env = makeMeshRailUpdateEnvelope({
+      peers: [
+        { name: "peer-a", state: "running", decisionPending: false },
+        { name: "peer-b", state: "crashed", decisionPending: true },
+      ],
+      decisionCount: 3,
+    });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("mesh-rail-update");
+    expect(env.decisionCount).toBe(3);
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+    expect(Array.isArray(env.peers)).toBe(true);
+    expect((env.peers as any)[0]).toEqual({ name: "peer-a", state: "running", decisionPending: false });
+    expect((env.peers as any)[1]).toEqual({ name: "peer-b", state: "crashed", decisionPending: true });
+  });
+
+  it("accepts an empty peers array", () => {
+    const env = makeMeshRailUpdateEnvelope({ peers: [], decisionCount: 0 });
+    expect(env.kind).toBe("mesh-rail-update");
+    expect((env.peers as any)).toHaveLength(0);
+    expect(env.decisionCount).toBe(0);
+  });
+
+  it("round-trips through encodeEnvelope / tryDecodeEnvelope", () => {
+    const env = makeMeshRailUpdateEnvelope({
+      peers: [{ name: "alpha", state: "running", decisionPending: false }],
+      decisionCount: 1,
+    });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("mesh-rail-update");
+    expect(result.env?.decisionCount).toBe(1);
+    expect((result.env as any)?.peers[0].name).toBe("alpha");
+  });
+});
+
 describe("encodeEnvelope", () => {
   it("produces a newline-terminated JSON string", () => {
     const env = makeFocusChangedEnvelope({ focused: "peer-a" });
@@ -295,6 +335,7 @@ describe("tryDecodeEnvelope", () => {
       makePinRequestEnvelope({ msg_id: "m1", peer: "p1", kind: "approval-request", summary: "s" }),
       makePinnedResolvedEnvelope({ msg_id: "m2", action: "approve" }),
       makeDecisionsJumpEnvelope({ from: "peer-a" }),
+      makeMeshRailUpdateEnvelope({ peers: [{ name: "p", state: "running", decisionPending: false }], decisionCount: 0 }),
     ];
     for (const env of envelopes) {
       const result = tryDecodeEnvelope(encodeEnvelope(env));
