@@ -169,13 +169,20 @@ function applyAgentsField(recipe, name) {
   return { allowed: declared, extensions, tools };
 }
 
-// Implicit-wire the supervisor extension and respond_to_request tool when a
-// recipe sets any of the supervisor-related peer fields (acceptedFrom,
-// supervisor, submitTo).
+// Implicit-wire the supervisor extension, the intercept extension, and the
+// respond_to_request tool when a recipe sets any of the supervisor-related
+// peer fields (acceptedFrom, supervisor, submitTo).
 //
-// Inverse rejection: if a recipe explicitly lists 'supervisor' in extensions
-// or 'respond_to_request' in tools without setting any supervisory field,
-// that's a misconfiguration — fail loudly.
+// Intercept is always auto-loaded alongside supervisor — it decorates the
+// supervisor dispatch hook and is a silent no-op when no supervisor inbound
+// rail is active (empty acceptedFrom).
+//
+// supervisor must appear before intercept in the extension list so that
+// intercept can wrap supervisor's globalThis dispatch hook at session_start.
+//
+// Inverse rejection: if a recipe explicitly lists 'supervisor' or 'intercept'
+// in extensions or 'respond_to_request' in tools without setting any
+// supervisory field, that's a misconfiguration — fail loudly.
 function applySupervisorField(recipe, name, extensions, tools) {
   const supervisoryFields =
     (Array.isArray(recipe.acceptedFrom) && recipe.acceptedFrom.length > 0) ||
@@ -183,12 +190,19 @@ function applySupervisorField(recipe, name, extensions, tools) {
     (typeof recipe.submitTo === "string" && recipe.submitTo);
 
   const explicitExt = extensions.includes("supervisor");
+  const explicitInterceptExt = extensions.includes("intercept");
   const explicitTool = tools.includes("respond_to_request");
 
   if (!supervisoryFields) {
     if (explicitExt) {
       die(
         `recipe ${name} loads extension 'supervisor' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
+          `set at least one supervisory field (or drop the extension)`,
+      );
+    }
+    if (explicitInterceptExt) {
+      die(
+        `recipe ${name} loads extension 'intercept' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
           `set at least one supervisory field (or drop the extension)`,
       );
     }
@@ -201,7 +215,11 @@ function applySupervisorField(recipe, name, extensions, tools) {
     return { extensions, tools };
   }
 
-  const newExtensions = explicitExt ? extensions : [...extensions, "supervisor"];
+  // supervisor must come before intercept so intercept can wrap supervisor's
+  // globalThis dispatch hook at session_start.
+  const newExtensions = extensions.slice();
+  if (!explicitExt) newExtensions.push("supervisor");
+  if (!explicitInterceptExt) newExtensions.push("intercept");
   const newTools = explicitTool ? tools : [...tools, "respond_to_request"];
   return { extensions: newExtensions, tools: newTools };
 }
