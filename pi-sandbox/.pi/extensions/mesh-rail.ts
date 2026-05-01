@@ -46,10 +46,12 @@ export default function (pi: ExtensionAPI) {
 
     ctx.ui.setWidget(
       "mesh-rail",
-      () => {
-        // Re-register the factory on each re-render request so pi-tui picks
-        // up the latest state. The component's invalidate() is called by
-        // pi-tui; we wire the tui's requestRender trigger via setWidget.
+      (tui) => {
+        // Inject the invalidate callback so component.update() can trigger
+        // an active re-render rather than waiting for the next natural frame.
+        (handle as any)._setInvalidate(() =>
+          (tui as unknown as { requestRender?: () => void }).requestRender?.(),
+        );
         return handle;
       },
       { placement: "aboveEditor" },
