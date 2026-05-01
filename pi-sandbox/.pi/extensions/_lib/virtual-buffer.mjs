@@ -230,8 +230,7 @@ export class VirtualBuffer {
     const cols = this._cols;
     const parts = [HIDE_CURSOR, CLEAR_SCREEN];
 
-    // Reuse a single cell object to avoid repeated allocation.
-    const nullCell = buf.getNullCell();
+    // Reuse a single cell object across getCell() calls to avoid repeated allocation.
     const reuseCell = buf.getNullCell();
 
     for (let r = 0; r < rows; r++) {
@@ -247,7 +246,6 @@ export class VirtualBuffer {
 
       // Walk cells and emit per-run SGR + text.
       // A "run" is a maximal sequence of cells sharing the same attributes.
-      let runStart = 0;
       let runText = "";
       /** @type {import('@xterm/headless').IBufferCell | null} */
       let runCell = null;
@@ -271,18 +269,15 @@ export class VirtualBuffer {
         if (cell.getWidth() === 0) continue;
 
         if (runCell === null) {
-          // Start a new run.
+          // Start a new run: snapshot this cell's attributes as the template.
           runCell = buf.getNullCell();
-          // Copy current cell's attributes into runCell by reading via the API.
-          // We store runCell as a reference snapshot — we re-fetch per cell.
-          // Actually we keep the first cell of the run as the attribute template.
           line.getCell(c, runCell);
           runText = cell.getChars() || " ";
         } else if (sameAttrs(runCell, cell)) {
           // Same attributes — extend the run.
           runText += cell.getChars() || " ";
         } else {
-          // Attributes changed — flush current run, start new one.
+          // Attributes changed — flush current run, start a new one.
           flushRun();
           runCell = buf.getNullCell();
           line.getCell(c, runCell);
