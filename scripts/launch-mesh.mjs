@@ -7,17 +7,19 @@
 //   npm run mesh -- <mesh.yaml>
 //
 // Topology YAML schema:
+//   entry: authority              # required; peer the launcher TUI focuses on first
 //   bus_root: /tmp/pi-mesh-demo   # optional; auto-derived from filename
 //   nodes:
 //     - name: authority           # instance name (--agent-name)
 //       recipe: mesh-authority    # recipe in pi-sandbox/agents/
 //       sandbox: /tmp/mesh/auth   # optional; auto-created
 //       task: "..."               # optional; if set, passes -p (non-interactive)
-//     - name: human
-//       type: relay               # spawns human-relay.mjs instead of a pi agent
 //     - name: analyst
 //       recipe: mesh-node
+//       supervisor: authority     # all non-root nodes must declare a supervisor
 //       task: "wait for requests"
+// NOTE: type:relay nodes are no longer supported (see ADR-0004); the validator
+//       will reject any topology that still declares them.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -26,6 +28,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { parseTopology, resolveNode } from "../pi-sandbox/.pi/extensions/_lib/topology.mjs";
+import { validateTopology } from "../pi-sandbox/.pi/extensions/_lib/topology-validator.mjs";
+import { resolveEntry } from "../pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -54,6 +58,37 @@ try {
 }
 if (topology.nodes.length < 2) {
   die("topology must have at least 2 nodes");
+}
+
+// ── Validate topology (entry:, relay deprecation, top supervisor, peer refs) ──
+
+/** @param {string} recipeName */
+function loadRecipeModel(recipeName) {
+  const recipeFile = path.join(REPO_ROOT, "pi-sandbox", "agents", `${recipeName}.yaml`);
+  try {
+    const recipe = parseYaml(readFileSync(recipeFile, "utf8"));
+    if (typeof recipe?.model === "string") return recipe.model;
+  } catch { /* recipe not found or unreadable — no tier warning */ }
+  return undefined;
+}
+
+const { errors: topoErrors, warnings: topoWarnings } = validateTopology(topology, loadRecipeModel);
+
+for (const warning of topoWarnings) {
+  process.stderr.write(`launch-mesh: ${warning}\n`);
+}
+
+if (topoErrors.length > 0) {
+  for (const error of topoErrors) {
+    process.stderr.write(`launch-mesh: validation error: ${error}\n`);
+  }
+  process.exit(1);
+}
+
+// Resolve entry peer (for launcher TUI focus — informational for now).
+const { entryPeer } = resolveEntry(topology);
+if (entryPeer) {
+  process.stderr.write(`launch-mesh: entry peer: ${entryPeer}\n`);
 }
 
 // Resolve bus root

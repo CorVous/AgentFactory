@@ -25,6 +25,7 @@ import { parse as parseYaml } from "yaml";
 
 /**
  * @typedef {{
+ *   entry?: string;
  *   bus_root?: string;
  *   groups?: Record<string, string[]>;
  *   group_bindings?: Record<string, GroupBinding>;
@@ -85,6 +86,7 @@ export function parseTopology(yamlText) {
   /** @type {Topology} */
   const topo = { nodes };
 
+  if (typeof raw.entry === "string" && raw.entry) topo.entry = raw.entry;
   if (typeof raw.bus_root === "string") topo.bus_root = raw.bus_root;
 
   if (raw.groups && typeof raw.groups === "object" && !Array.isArray(raw.groups)) {

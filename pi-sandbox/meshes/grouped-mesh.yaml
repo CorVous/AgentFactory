@@ -2,8 +2,7 @@
 # and per-node overrides (Phase 6a).
 #
 # Participants:
-#   human      — human REPL (type: relay)
-#   authority  — Lead-tier orchestrator; accepts requests from all workers
+#   authority  — Lead-tier orchestrator; top supervisor; entry peer
 #   analyst    — Task-tier worker in the "workers" group
 #   writer     — Task-tier worker in the "workers" group
 #   reviewer   — Task-tier worker in the "reviewers" group; writer submits to it
@@ -16,6 +15,9 @@
 # Per-node override:
 #   writer.submitTo     = reviewer   (writer submits drafts to the reviewer, not authority)
 #
+# Human interaction is provided by the launcher TUI (see ADR-0004).
+# The former `type: relay` human node has been removed.
+#
 # Launch:
 #   set -a; source models.env; set +a
 #   npm run mesh -- pi-sandbox/meshes/grouped-mesh.yaml
@@ -24,6 +26,9 @@
 #   AGENT_DEBUG=1 npm run mesh -- pi-sandbox/meshes/grouped-mesh.yaml
 
 bus_root: /tmp/pi-mesh-grouped
+
+# The peer the launcher TUI focuses on first.
+entry: authority
 
 groups:
   workers: [analyst, writer]
@@ -37,15 +42,12 @@ group_bindings:
     peers: ["@workers"]
 
 nodes:
-  - name: human
-    type: relay
-
   - name: authority
     recipe: mesh-authority
     sandbox: /tmp/pi-mesh-grouped/authority
     acceptedFrom: ["@workers"]
     task: |
-      You are the authority in this mesh. Your peers are: analyst, writer, reviewer, human.
+      You are the authority in this mesh. Your peers are: analyst, writer, reviewer.
       Start by calling agent_list to see who is online. Then wait for messages from workers.
       When a worker sends you a request, coordinate with your peers and reply.
 
@@ -70,6 +72,7 @@ nodes:
   - name: reviewer
     recipe: mesh-node
     sandbox: /tmp/pi-mesh-grouped/reviewer
+    supervisor: authority
     acceptedFrom: [writer]
     task: |
       You are the reviewer in a mesh. Your name is "reviewer".
