@@ -81,6 +81,26 @@ describe("createMeshRailComponent — placeholder content", () => {
     expect(Array.isArray(lines)).toBe(true);
     for (const line of lines) expect(typeof line).toBe("string");
   });
+
+  it("draws an ASCII box: top and bottom border lines plus side bars on content lines", () => {
+    const component = createMeshRailComponent({ peerName: "any-peer" });
+    const lines = component.render(30);
+    // First and last lines are corner-to-corner border runs.
+    expect(lines[0]).toMatch(/^\+-+\+$/);
+    expect(lines[lines.length - 1]).toMatch(/^\+-+\+$/);
+    // Every line in between begins with `|` and ends with `|`.
+    for (let i = 1; i < lines.length - 1; i++) {
+      expect(lines[i].startsWith("|")).toBe(true);
+      expect(lines[i].endsWith("|")).toBe(true);
+    }
+  });
+
+  it("pads each rendered line to the same visible width (so the box is rectangular)", () => {
+    const component = createMeshRailComponent({ peerName: "any-peer" });
+    const lines = component.render(30);
+    const widths = new Set(lines.map((l) => l.length));
+    expect(widths.size).toBe(1);
+  });
 });
 
 describe("meshRailOverlayOptions", () => {

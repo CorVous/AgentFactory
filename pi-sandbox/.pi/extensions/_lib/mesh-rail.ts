@@ -10,12 +10,18 @@ export interface MeshRailComponentOptions {
 
 export function createMeshRailComponent(opts: MeshRailComponentOptions): Component {
   return {
-    render(_width: number): string[] {
-      return [
-        opts.peerName,
-        "0 peers",
-        "0 decisions",
-      ];
+    render(width: number): string[] {
+      const content = [opts.peerName, "0 peers", "0 decisions"];
+      // Inner width is the box width minus the two side bars; clamp so we
+      // always fit the longest content line plus one space of padding.
+      const longest = content.reduce((m, s) => Math.max(m, s.length), 0);
+      const inner = Math.max(longest + 2, width - 2);
+      const border = `+${"-".repeat(inner)}+`;
+      const body = content.map((line) => {
+        const padded = ` ${line}`.padEnd(inner, " ");
+        return `|${padded}|`;
+      });
+      return [border, ...body, border];
     },
     invalidate(): void {
       // Static placeholder content; nothing to invalidate yet.
