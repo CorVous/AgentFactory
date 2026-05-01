@@ -26,6 +26,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { parseTopology, resolveNode } from "../pi-sandbox/.pi/extensions/_lib/topology.mjs";
+import { validateTopology } from "../pi-sandbox/.pi/extensions/_lib/topology-validator.mjs";
+import { resolveEntry } from "../pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -54,6 +56,37 @@ try {
 }
 if (topology.nodes.length < 2) {
   die("topology must have at least 2 nodes");
+}
+
+// ── Validate topology (entry:, relay deprecation, top supervisor, peer refs) ──
+
+/** @param {string} recipeName */
+function loadRecipeModel(recipeName) {
+  const recipeFile = path.join(REPO_ROOT, "pi-sandbox", "agents", `${recipeName}.yaml`);
+  try {
+    const recipe = parseYaml(readFileSync(recipeFile, "utf8"));
+    if (typeof recipe?.model === "string") return recipe.model;
+  } catch { /* recipe not found or unreadable — no tier warning */ }
+  return undefined;
+}
+
+const { errors: topoErrors, warnings: topoWarnings } = validateTopology(topology, loadRecipeModel);
+
+for (const warning of topoWarnings) {
+  process.stderr.write(`launch-mesh: ${warning}\n`);
+}
+
+if (topoErrors.length > 0) {
+  for (const error of topoErrors) {
+    process.stderr.write(`launch-mesh: validation error: ${error}\n`);
+  }
+  process.exit(1);
+}
+
+// Resolve entry peer (for launcher TUI focus — informational for now).
+const { entryPeer } = resolveEntry(topology);
+if (entryPeer) {
+  process.stderr.write(`launch-mesh: entry peer: ${entryPeer}\n`);
 }
 
 // Resolve bus root
