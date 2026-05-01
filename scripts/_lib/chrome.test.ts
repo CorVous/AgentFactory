@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { renderChrome, renderPeerRow, stripAnsi } from "./chrome.mjs";
+import { renderChrome, renderPeerRow, renderDecisionsPanel, stripAnsi } from "./chrome.mjs";
 
 describe("stripAnsi", () => {
   it("removes ANSI color codes", () => {
@@ -336,5 +336,188 @@ describe("renderChrome — auto-shift notice", () => {
     const plain = stripAnsi(output);
     expect(plain).toContain("!");
     expect(plain).toContain("top supervisor");
+  });
+});
+
+// ── decisions queue panel ─────────────────────────────────────────────────────
+
+const BASE_TS = 1_700_000_000_000; // fixed epoch ms for deterministic age tests
+
+describe("renderDecisionsPanel — empty queue", () => {
+  it("shows 'Decisions' header and (none) for empty queue", () => {
+    const lines = renderDecisionsPanel([], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("Decisions");
+    expect(plain).toContain("(none)");
+  });
+
+  it("does NOT show count badge for empty queue", () => {
+    const lines = renderDecisionsPanel([], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).not.toMatch(/\[\d+\]/);
+  });
+});
+
+describe("renderDecisionsPanel — non-empty queue", () => {
+  const item = {
+    msg_id: "msg-1",
+    peer: "authority",
+    kind: "approval-request",
+    summary: "approve build step",
+    ts: BASE_TS - 90_000, // 1.5 minutes ago
+    pinned: true,
+  };
+
+  it("shows peer name, kind, summary, and age", () => {
+    const lines = renderDecisionsPanel([item], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("authority");
+    expect(plain).toContain("approve");
+    expect(plain).toContain("approve build step");
+    expect(plain).toContain("ago");
+  });
+
+  it("shows count badge in header for non-empty queue", () => {
+    const lines = renderDecisionsPanel([item], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toMatch(/\[1\]/);
+  });
+
+  it("shows pinned star icon for pinned items", () => {
+    const lines = renderDecisionsPanel([item], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("★");
+  });
+
+  it("does NOT show star icon for non-pinned items", () => {
+    const nonPinned = { ...item, pinned: false };
+    const lines = renderDecisionsPanel([nonPinned], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).not.toContain("★");
+  });
+
+  it("truncates long summaries to 30 chars with ellipsis", () => {
+    const longSummary = "a".repeat(50);
+    const longItem = { ...item, summary: longSummary };
+    const lines = renderDecisionsPanel([longItem], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("…");
+    // The truncated text should not contain the full 50 chars
+    expect(plain).not.toContain("a".repeat(40));
+  });
+
+  it("shows correct count in badge for multiple items", () => {
+    const items = [
+      { ...item, msg_id: "a" },
+      { ...item, msg_id: "b" },
+      { ...item, msg_id: "c" },
+    ];
+    const lines = renderDecisionsPanel(items, BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toMatch(/\[3\]/);
+  });
+
+  it("formats age as 'just now' for recent items", () => {
+    const recentItem = { ...item, ts: BASE_TS - 10_000 }; // 10 seconds ago
+    const lines = renderDecisionsPanel([recentItem], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("just now");
+  });
+
+  it("formats age as Xm ago for minute-range items", () => {
+    const minuteItem = { ...item, ts: BASE_TS - 5 * 60_000 }; // 5 minutes ago
+    const lines = renderDecisionsPanel([minuteItem], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("5m ago");
+  });
+
+  it("formats age as Xh ago for hour-range items", () => {
+    const hourItem = { ...item, ts: BASE_TS - 2 * 3_600_000 }; // 2 hours ago
+    const lines = renderDecisionsPanel([hourItem], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("2h ago");
+  });
+
+  it("abbreviates 'submission' kind to 'submit'", () => {
+    const submissionItem = { ...item, kind: "submission" };
+    const lines = renderDecisionsPanel([submissionItem], BASE_TS);
+    const plain = lines.map(stripAnsi).join("\n");
+    expect(plain).toContain("submit");
+  });
+});
+
+describe("renderChrome — decisions queue panel integration", () => {
+  const item = {
+    msg_id: "msg-1",
+    peer: "authority",
+    kind: "approval-request",
+    summary: "approve build",
+    ts: Date.now() - 30_000,
+    pinned: true,
+  };
+
+  it("renders decisions panel under peers list when decisionsQueue is provided", () => {
+    const output = renderChrome({
+      peers: [{ name: "authority", state: "running" }],
+      focused: "authority",
+      decisionsQueue: [item],
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("Decisions");
+    expect(plain).toContain("authority");
+  });
+
+  it("does NOT render decisions panel when decisionsQueue is undefined", () => {
+    const output = renderChrome({
+      peers: [{ name: "authority", state: "running" }],
+      focused: "authority",
+    });
+    const plain = stripAnsi(output);
+    expect(plain).not.toContain("Decisions");
+  });
+
+  it("shows count badge in header when decisionsQueue is non-empty", () => {
+    const output = renderChrome({
+      peers: [{ name: "authority", state: "running" }],
+      focused: "authority",
+      decisionsQueue: [item],
+    });
+    const plain = stripAnsi(output);
+    // Header line should contain [1] badge
+    const headerLine = plain.split("\n")[0];
+    expect(headerLine).toContain("[1]");
+  });
+
+  it("does NOT show count badge in header when decisionsQueue is empty", () => {
+    const output = renderChrome({
+      peers: [],
+      focused: null,
+      decisionsQueue: [],
+    });
+    const headerLine = stripAnsi(output).split("\n")[0];
+    expect(headerLine).not.toMatch(/\[\d+\]/);
+  });
+
+  it("shows (none) in decisions panel when queue is empty", () => {
+    const output = renderChrome({
+      peers: [],
+      focused: null,
+      decisionsQueue: [],
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("Decisions");
+    expect(plain).toContain("(none)");
+  });
+
+  it("decisions panel appears after peers list", () => {
+    const output = renderChrome({
+      peers: [{ name: "peer-a", state: "running" }],
+      focused: "peer-a",
+      decisionsQueue: [item],
+    });
+    const plain = stripAnsi(output);
+    const peerIdx = plain.indexOf("peer-a");
+    const decisionsIdx = plain.indexOf("Decisions");
+    expect(peerIdx).toBeLessThan(decisionsIdx);
   });
 });

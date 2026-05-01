@@ -50,6 +50,27 @@ interface InterceptState {
   active: boolean;
 }
 
+/**
+ * Current decision payload exposed to slash-commands via globalThis.
+ * Set when a ctx.ui.confirm dialog is open; cleared when it resolves or aborts.
+ * The /pin slash command reads this to build a pin-request envelope.
+ */
+export interface CurrentDecisionPayload {
+  msg_id: string;
+  peer: string;
+  kind: string;
+  summary: string;
+}
+
+function setCurrentDecision(payload: CurrentDecisionPayload | null): void {
+  (globalThis as { __pi_current_decision__?: CurrentDecisionPayload | null }).__pi_current_decision__ = payload;
+}
+
+export function getCurrentDecision(): CurrentDecisionPayload | null {
+  const g = globalThis as { __pi_current_decision__?: CurrentDecisionPayload | null };
+  return g.__pi_current_decision__ ?? null;
+}
+
 function getState(): InterceptState {
   const g = globalThis as { __pi_intercept__?: InterceptState };
   return (g.__pi_intercept__ ??= {
@@ -160,6 +181,14 @@ async function handleHumanDecision(env: Envelope): Promise<void> {
   const abort = new AbortController();
   state.pendingAbort = abort;
 
+  // Expose the current decision payload to slash-commands (/pin reads this).
+  setCurrentDecision({
+    msg_id: env.msg_id,
+    peer: env.from,
+    kind: env.payload.kind,
+    summary: title,
+  });
+
   let pickedAction: string | undefined;
   try {
     pickedAction = await ctx.ui.select(title, actions, { signal: abort.signal });
@@ -168,7 +197,8 @@ async function handleHumanDecision(env: Envelope): Promise<void> {
     pickedAction = undefined;
   }
 
-  // Clear pending abort state regardless of outcome.
+  // Clear current decision exposure and pending abort state.
+  setCurrentDecision(null);
   state.pendingAbort = null;
 
   if (!pickedAction || abort.signal.aborted) {

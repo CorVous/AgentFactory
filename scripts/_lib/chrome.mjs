@@ -48,11 +48,23 @@ const WHITE = "\x1b[37m";
 
 /**
  * @typedef {{
+ *   msg_id: string;
+ *   peer: string;
+ *   kind: string;
+ *   summary: string;
+ *   ts: number;
+ *   pinned: boolean;
+ * }} QueuedDecision
+ */
+
+/**
+ * @typedef {{
  *   peers: PeerEntry[];
  *   focused: string | null;
  *   busRoot?: string;
  *   meshName?: string;
  *   autoShiftNotice?: string | null;
+ *   decisionsQueue?: QueuedDecision[];
  * }} ChromeOpts
  */
 
@@ -66,6 +78,52 @@ const STATE_ICONS = {
 };
 
 /**
+ * Format a relative age string from a timestamp.
+ *
+ * @param {number} ts - epoch ms
+ * @param {number} now - current epoch ms
+ * @returns {string} e.g. "2m ago", "just now"
+ */
+function formatAge(ts, now) {
+  const diffMs = now - ts;
+  if (diffMs < 60_000) return "just now";
+  if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)}m ago`;
+  return `${Math.floor(diffMs / 3_600_000)}h ago`;
+}
+
+/**
+ * Render the decisions queue panel (under the peer list).
+ * Shows each pinned item with peer name, kind, short summary, and age.
+ * Count badge appears in the section header whenever the queue is non-empty.
+ *
+ * @param {QueuedDecision[]} items
+ * @param {number} now - current epoch ms for age formatting
+ * @returns {string[]} array of lines (no trailing newline per line)
+ */
+export function renderDecisionsPanel(items, now = Date.now()) {
+  const lines = [];
+  const count = items.length;
+  const badge = count > 0 ? ` ${YELLOW}${BOLD}[${count}]${RESET}` : "";
+  lines.push(`${BOLD}${CYAN}Decisions${RESET}${badge}`);
+
+  if (count === 0) {
+    lines.push(`${DIM}(none)${RESET}`);
+  } else {
+    for (const item of items) {
+      const age = formatAge(item.ts, now);
+      const pinIcon = item.pinned ? `${YELLOW}★${RESET} ` : "  ";
+      const kindShort = item.kind.replace("approval-request", "approve").replace("submission", "submit");
+      const summaryTrunc = item.summary.length > 30 ? `${item.summary.slice(0, 28)}…` : item.summary;
+      lines.push(
+        `${pinIcon}${BOLD}${WHITE}${item.peer}${RESET} ${DIM}${kindShort}${RESET} ${summaryTrunc} ${DIM}${age}${RESET}`,
+      );
+    }
+  }
+
+  return lines;
+}
+
+/**
  * Render the right-rail chrome as a multi-line ANSI string.
  * Each line is terminated with `\n`.
  *
@@ -73,12 +131,14 @@ const STATE_ICONS = {
  * @returns {string}
  */
 export function renderChrome(opts) {
-  const { peers, focused, busRoot, meshName, autoShiftNotice } = opts;
+  const { peers, focused, busRoot, meshName, autoShiftNotice, decisionsQueue } = opts;
   const lines = [];
 
-  // Header
+  // Header — include decisions count badge when queue is non-empty.
   const title = meshName ? `Mesh: ${meshName}` : "Mesh";
-  lines.push(`${BOLD}${CYAN}${title}${RESET}`);
+  const queueCount = decisionsQueue ? decisionsQueue.length : 0;
+  const headerBadge = queueCount > 0 ? ` ${YELLOW}${BOLD}[${queueCount}]${RESET}` : "";
+  lines.push(`${BOLD}${CYAN}${title}${RESET}${headerBadge}`);
 
   if (busRoot) {
     const short = busRoot.length > 30 ? `…${busRoot.slice(-28)}` : busRoot;
@@ -92,6 +152,13 @@ export function renderChrome(opts) {
   // Peer rows
   for (const peer of peers) {
     lines.push(renderPeerRow(peer, peer.name === focused));
+  }
+
+  // Decisions queue panel (under the peers list).
+  if (decisionsQueue !== undefined) {
+    lines.push(""); // blank separator
+    const panelLines = renderDecisionsPanel(decisionsQueue);
+    lines.push(...panelLines);
   }
 
   // Auto-shift notice (persists until next focus change or user input).

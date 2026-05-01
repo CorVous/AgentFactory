@@ -33,7 +33,8 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
 import { createLauncherSocket } from "./_lib/launcher-socket.mjs";
-import { makeFocusChangedEnvelope, makeTailToggleEnvelope } from "./_lib/launcher-envelope.mjs";
+import { makeFocusChangedEnvelope, makeTailToggleEnvelope, makePinnedResolvedEnvelope } from "./_lib/launcher-envelope.mjs";
+import { createDecisionsQueue } from "./_lib/decisions-queue.mjs";
 import { createFocusController } from "./_lib/focus-controller.mjs";
 import { renderChrome } from "./_lib/chrome.mjs";
 import { createBusTailBuffer, renderBusTailOverlay } from "./_lib/bus-tail.mjs";
@@ -164,6 +165,9 @@ const peerEntries = new Map();
 const busTailBuffer = createBusTailBuffer();
 const busTailState = { on: false, filter: undefined };
 
+// Decisions queue — tracks pinned decisions from peers (sticky lifecycle).
+const decisionsQueue = createDecisionsQueue();
+
 /**
  * Render and emit the right-rail chrome to stderr.
  * Called on every focus change and peer state transition.
@@ -176,6 +180,7 @@ function repaintChrome() {
     busRoot,
     meshName: path.basename(meshPath, ".yaml"),
     autoShiftNotice: focusController.getAutoShiftNotice(),
+    decisionsQueue: decisionsQueue.list(),
   });
   const tailEntries = busTailBuffer.getEntries(busTailState.filter);
   const tailOutput = renderBusTailOverlay({
@@ -342,6 +347,30 @@ launcherSock.on("envelope", (env) => {
       );
       repaintChrome();
     }
+  } else if (env.kind === "pin-request") {
+    // A peer sent /pin — promote the currently-open dialog into the decisions queue
+    // with sticky (pinned) lifecycle. The item survives focus changes.
+    const msg_id = typeof env.msg_id === "string" ? env.msg_id : null;
+    const peer = typeof env.peer === "string" ? env.peer : null;
+    const kind = typeof env.kind_of_decision === "string" ? env.kind_of_decision : "unknown";
+    const summary = typeof env.summary === "string" ? env.summary : "";
+    if (msg_id && peer) {
+      decisionsQueue.enqueue({ msg_id, peer, kind, summary });
+      decisionsQueue.pin(msg_id);
+      process.stderr.write(
+        `launch-mesh: pin-request from "${peer}": pinned msg_id=${msg_id.slice(0, 8)}\n`,
+      );
+      repaintChrome();
+    }
+  } else if (env.kind === "decisions-jump") {
+    // A peer sent /decisions — log it; full TUI panel focus is deferred (requires
+    // deeper TUI integration in a future slice). For now, notify via stderr.
+    const from = typeof env.from === "string" ? env.from : "?";
+    process.stderr.write(
+      `launch-mesh: decisions-jump from "${from}": ${decisionsQueue.count()} item(s) in queue (TUI panel focus deferred)\n`,
+    );
+    // Repaint so the queue count badge is visible.
+    repaintChrome();
   }
 });
 

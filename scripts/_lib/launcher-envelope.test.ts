@@ -13,6 +13,9 @@ import {
   makeTailToggleEnvelope,
   makeTailEventEnvelope,
   makeDecisionPendingEnvelope,
+  makePinRequestEnvelope,
+  makePinnedResolvedEnvelope,
+  makeDecisionsJumpEnvelope,
   encodeEnvelope,
   tryDecodeEnvelope,
 } from "./launcher-envelope.mjs";
@@ -140,6 +143,100 @@ describe("makeDecisionPendingEnvelope", () => {
   });
 });
 
+describe("makePinRequestEnvelope", () => {
+  it("produces a v:1 pin-request envelope with all required fields", () => {
+    const env = makePinRequestEnvelope({
+      msg_id: "msg-123",
+      peer: "authority",
+      kind: "approval-request",
+      summary: "approve build step",
+    });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("pin-request");
+    expect(env.msg_id).toBe("msg-123");
+    expect(env.peer).toBe("authority");
+    expect(env.kind_of_decision).toBe("approval-request");
+    expect(env.summary).toBe("approve build step");
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("round-trips through encode/decode", () => {
+    const env = makePinRequestEnvelope({
+      msg_id: "msg-456",
+      peer: "worker",
+      kind: "submission",
+      summary: "3 artifacts",
+    });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("pin-request");
+    expect(result.env?.msg_id).toBe("msg-456");
+    expect(result.env?.peer).toBe("worker");
+    expect((result.env as any)?.kind_of_decision).toBe("submission");
+    expect((result.env as any)?.summary).toBe("3 artifacts");
+  });
+});
+
+describe("makePinnedResolvedEnvelope", () => {
+  it("produces a v:1 pinned-resolved envelope for approve action", () => {
+    const env = makePinnedResolvedEnvelope({ msg_id: "msg-789", action: "approve" });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("pinned-resolved");
+    expect(env.msg_id).toBe("msg-789");
+    expect(env.action).toBe("approve");
+    expect("note" in env).toBe(false);
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("includes note when provided", () => {
+    const env = makePinnedResolvedEnvelope({ msg_id: "msg-789", action: "reject", note: "not now" });
+    expect(env.action).toBe("reject");
+    expect(env.note).toBe("not now");
+  });
+
+  it("omits note when not provided", () => {
+    const env = makePinnedResolvedEnvelope({ msg_id: "msg-789", action: "approve" });
+    expect("note" in env).toBe(false);
+  });
+
+  it("supports revise action", () => {
+    const env = makePinnedResolvedEnvelope({ msg_id: "msg-abc", action: "revise", note: "needs work" });
+    expect(env.action).toBe("revise");
+    expect(env.note).toBe("needs work");
+  });
+
+  it("round-trips through encode/decode", () => {
+    const env = makePinnedResolvedEnvelope({ msg_id: "msg-round", action: "approve", note: "looks good" });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("pinned-resolved");
+    expect(result.env?.msg_id).toBe("msg-round");
+    expect(result.env?.action).toBe("approve");
+    expect(result.env?.note).toBe("looks good");
+  });
+});
+
+describe("makeDecisionsJumpEnvelope", () => {
+  it("produces a v:1 decisions-jump envelope with from field", () => {
+    const env = makeDecisionsJumpEnvelope({ from: "peer-a" });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("decisions-jump");
+    expect(env.from).toBe("peer-a");
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("round-trips through encode/decode", () => {
+    const env = makeDecisionsJumpEnvelope({ from: "authority" });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("decisions-jump");
+    expect(result.env?.from).toBe("authority");
+  });
+});
+
 describe("encodeEnvelope", () => {
   it("produces a newline-terminated JSON string", () => {
     const env = makeFocusChangedEnvelope({ focused: "peer-a" });
@@ -195,6 +292,9 @@ describe("tryDecodeEnvelope", () => {
         body: "2 artifacts",
       }),
       makeDecisionPendingEnvelope({ peer: "authority", on: true }),
+      makePinRequestEnvelope({ msg_id: "m1", peer: "p1", kind: "approval-request", summary: "s" }),
+      makePinnedResolvedEnvelope({ msg_id: "m2", action: "approve" }),
+      makeDecisionsJumpEnvelope({ from: "peer-a" }),
     ];
     for (const env of envelopes) {
       const result = tryDecodeEnvelope(encodeEnvelope(env));

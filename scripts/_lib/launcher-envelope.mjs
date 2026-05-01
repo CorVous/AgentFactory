@@ -14,6 +14,9 @@
  *   - heartbeat: peer announces it is alive.
  *   - tail-event: peer forwards a bus envelope for the launcher's tail overlay.
  *   - decision-pending: Top Supervisor peer signals an open/resolved local escalation dialog.
+ *   - pin-request: peer promotes the currently-open ctx.ui.confirm dialog into the launcher queue.
+ *   - pinned-resolved: launcher notifies the source peer that a pinned item was resolved.
+ *   - decisions-jump: peer requests focus into the launcher's decisions-queue panel.
  *
  * All fields are plain strings / booleans — no complex sub-objects — so
  * JSON.parse + JSON.stringify is sufficient for encoding/decoding.
@@ -22,7 +25,7 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending"} EnvelopeKind
+ * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump"} EnvelopeKind
  */
 
 /**
@@ -172,6 +175,72 @@ export function makeDecisionPendingEnvelope(args) {
     ts: Date.now(),
     peer: args.peer,
     on: args.on,
+  };
+}
+
+/**
+ * Create a `pin-request` envelope (peer → launcher).
+ *
+ * Emitted by a peer's /pin slash command to promote the currently-open
+ * ctx.ui.confirm dialog into the launcher's persistent decisions queue.
+ * The pinned item survives focus changes (sticky lifecycle).
+ *
+ * @param {{ msg_id: string; peer: string; kind: string; summary: string }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makePinRequestEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "pin-request",
+    ts: Date.now(),
+    msg_id: args.msg_id,
+    peer: args.peer,
+    kind_of_decision: args.kind,
+    summary: args.summary,
+  };
+}
+
+/**
+ * Create a `pinned-resolved` envelope (launcher → peer).
+ *
+ * Emitted by the launcher after a human resolves a pinned item in the
+ * decisions-queue panel. Carries the same wire shape as the inline
+ * approval-result / revision-requested so the source peer's supervisor
+ * inbound rail can route it normally.
+ *
+ * @param {{ msg_id: string; action: "approve" | "reject" | "revise"; note?: string }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makePinnedResolvedEnvelope(args) {
+  const env = {
+    v: 1,
+    id: randomUUID(),
+    kind: "pinned-resolved",
+    ts: Date.now(),
+    msg_id: args.msg_id,
+    action: args.action,
+  };
+  if (args.note !== undefined) env.note = args.note;
+  return env;
+}
+
+/**
+ * Create a `decisions-jump` envelope (peer → launcher).
+ *
+ * Emitted by a peer's /decisions slash command to request that the launcher
+ * focus into the decisions-queue panel for arrow-key navigation.
+ *
+ * @param {{ from: string }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeDecisionsJumpEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "decisions-jump",
+    ts: Date.now(),
+    from: args.from,
   };
 }
 
