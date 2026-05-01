@@ -31,6 +31,14 @@ const BASELINE_EXTENSIONS = [
   // by default does not change the tool surface seen by the model.
   "agent-bus",
 ];
+
+// When launched under the mesh launcher (MESH_PEER=1), load the launcher
+// bridge, focus-state, and slash-commands extensions as additional baselines.
+// These are silent no-ops when the launcher socket is absent (standalone mode).
+const MESH_PEER_EXTENSIONS = [
+  "launcher-bridge",
+  "slash-commands",
+];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
 function die(msg) {
@@ -208,9 +216,12 @@ function resolveModel(tierOrId) {
   return requested;
 }
 
-function resolveExtensionPaths(names) {
+function resolveExtensionPaths(names, isMeshPeer = false) {
   const seen = new Set();
-  const merged = [...BASELINE_EXTENSIONS, ...names];
+  const baseline = isMeshPeer
+    ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
+    : BASELINE_EXTENSIONS;
+  const merged = [...baseline, ...names];
   return merged
     .filter((n) => {
       if (seen.has(n)) return false;
@@ -269,14 +280,25 @@ const model = resolveModel(recipeModel);
 const wiredAgents = applyAgentsField(recipe, args.name);
 const wiredSupervisor = applySupervisorField(recipe, args.name, wiredAgents.extensions, wiredAgents.tools);
 const wired = { ...wiredAgents, extensions: wiredSupervisor.extensions, tools: wiredSupervisor.tools };
-const extensionPaths = resolveExtensionPaths(wired.extensions);
+
+// MESH_PEER=1 is set by launch-mesh.mjs for all non-entry peers. It signals
+// run-agent.mjs to load the launcher-bridge + slash-commands baseline extensions
+// so peers can receive focus-changed signals and send /focus requests.
+// When run standalone via `npm run agent`, MESH_PEER is unset (or "0"),
+// so the launcher extensions degrade gracefully (socket not found = no-op).
+const isMeshPeer = process.env.MESH_PEER === "1";
+
+const extensionPaths = resolveExtensionPaths(wired.extensions, isMeshPeer);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
 // Build the effective system prompt: tool/extension fragments first
 // (in load order), then the recipe's own role-specific prompt.
+const effectiveBaseline = isMeshPeer
+  ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
+  : BASELINE_EXTENSIONS;
 const mergedExtensions = [
-  ...BASELINE_EXTENSIONS,
-  ...wired.extensions.filter((n) => !BASELINE_EXTENSIONS.includes(n)),
+  ...effectiveBaseline,
+  ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
 ];
 const promptFragments = loadPromptFragments(mergedExtensions);
 const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
@@ -435,7 +457,14 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const isTTY = Boolean(process.stdout.isTTY);
 const isPrintMode = args.passthrough.includes("-p") || args.passthrough.includes("--print");
 
-if (isTTY && !isPrintMode) {
+// PTY-in-PTY fix (slice 3): when run-agent.mjs is launched as a MESH_PEER=1
+// child of launch-mesh.mjs, its stdout is already inside the launcher's managed
+// PTY. Creating another PTY here would cause PTY-in-PTY nesting and break
+// terminal rendering. In that case, fall through to the inherited-stdio path so
+// pi writes directly to the launcher's PTY buffer.
+const isInsideManagedPty = isMeshPeer && isTTY;
+
+if (isTTY && !isPrintMode && !isInsideManagedPty) {
   // Interactive launcher path: PTY + virtual buffer + multiplexer.
   const cols = process.stdout.columns || 220;
   const rows = process.stdout.rows || 50;

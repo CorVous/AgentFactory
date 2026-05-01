@@ -32,6 +32,10 @@ import { resolveEntry } from "../pi-sandbox/.pi/extensions/_lib/entry-resolver.m
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
+import { createLauncherSocket } from "./_lib/launcher-socket.mjs";
+import { makeFocusChangedEnvelope } from "./_lib/launcher-envelope.mjs";
+import { createFocusController } from "./_lib/focus-controller.mjs";
+import { renderChrome } from "./_lib/chrome.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
@@ -144,20 +148,25 @@ function makePrefix(name, idx) {
 }
 
 
-// ── PTY pool + multiplexer (slice 2: single-peer focused rendering) ──────────
+// ── PTY pool + multiplexer + launcher socket (slice 3: multi-peer focus) ──────
 //
 // Every pi-agent node is spawned via node-pty into a VirtualBuffer.
-// The entry peer's buffer is rendered live to the launcher's terminal.
-// Off-screen peers accumulate output in their buffers (slice 3 adds focus
-// switching to bring them into view).
+// The focused peer's buffer is rendered live to the launcher's terminal.
+// Focus can be switched by a peer sending a focus-request to the launcher socket.
 //
-// TODO(manual-tmux-check): verify full TUI fidelity and clean teardown with:
+// PTY-in-PTY fix (slice 3): run-agent.mjs checks MESH_PEER=1 and uses
+// inherited stdio when its own stdout is already inside a managed PTY,
+// preventing the PTY-in-PTY nesting that slice 2 had for non-entry peers.
+//
+// TODO(manual-tmux-check): verify multi-peer focus switching with:
 //   set -a; source models.env; set +a
 //   tmux new-session -d -s mesh-test -x 220 -y 50 \
 //     'npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml'
 //   sleep 5
 //   tmux capture-pane -t mesh-test -p
 //   # expect: entry peer's agent-header / agent-footer rendered in launcher pane
+//   # type /focus <other-peer-name> in the TUI to switch focus
+//   # expect: the other peer's buffer is now painted
 //   tmux send-keys -t mesh-test 'C-c'
 //   sleep 2
 //   # expect: all peers cleaned up, no orphan pi processes
@@ -168,11 +177,45 @@ const rows = isTTY ? (process.stdout.rows || 50) : 50;
 
 const pool = createPtyPool();
 const mux = isTTY ? createMultiplexer({ out: process.stdout }) : null;
+const focusController = createFocusController();
 
 if (mux) {
   mux.attachPool(pool);
   mux.attachResizeHandler(pool);
 }
+
+// ── Launcher socket ──────────────────────────────────────────────────────────
+//
+// Binds ${BUS_ROOT}/__launcher__.sock. Peers that load launcher-bridge connect
+// here to send focus-request envelopes and receive focus-changed broadcasts.
+
+const launcherSock = createLauncherSocket();
+await launcherSock.bind(busRoot);
+
+// When the focus controller changes focus, broadcast focus-changed to all
+// connected peers and repaint the multiplexer.
+focusController.on("focus-changed", ({ focused }) => {
+  const env = makeFocusChangedEnvelope({ focused });
+  launcherSock.broadcast(env);
+  if (mux && focused) {
+    mux.setFocus(focused);
+  } else if (mux && !focused) {
+    mux.setFocus(null);
+  }
+});
+
+// Dispatch inbound envelopes from peers.
+launcherSock.on("envelope", (env) => {
+  if (env.kind === "focus-request") {
+    const target = env.target;
+    if (typeof target === "string") {
+      const result = focusController.setFocus(target);
+      if (!result.ok) {
+        process.stderr.write(`launch-mesh: focus-request rejected: ${result.reason}\n`);
+      }
+    }
+  }
+});
 
 // ── Spawn all nodes ───────────────────────────────────────────────────────────
 
@@ -223,6 +266,13 @@ for (let i = 0; i < topology.nodes.length; i++) {
     ...process.env,
     PI_AGENT_NAME: name,
     PI_AGENT_BUS_ROOT: busRoot,
+    // MESH_PEER=1 signals run-agent.mjs to:
+    //   1. Load the launcher-bridge + slash-commands baseline extensions.
+    //   2. Use inherited stdio (not a nested PTY) when spawning pi — this
+    //      fixes the PTY-in-PTY nesting issue from slice 2 where each peer
+    //      spawned its own PTY even though its stdout was already inside the
+    //      launcher's managed PTY.
+    MESH_PEER: "1",
   };
 
   pool.spawn({
@@ -235,36 +285,44 @@ for (let i = 0; i < topology.nodes.length; i++) {
     env: peerEnv,
   });
 
+  // Register the peer with the focus controller so setFocus can validate names.
+  focusController.registerPeer(name);
+
+  // Unregister when the peer exits so focus falls back gracefully.
+  pool.on("exit", (exitedName, code, signal) => {
+    if (exitedName === name) {
+      focusController.unregisterPeer(name);
+      process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
+    }
+  });
+
   // For non-entry RPC peers: send the initial task as the first RPC prompt.
   if (!isEntry && task) {
     // Use pool.write() to inject the JSON prompt into the PTY stdin.
     pool.write(name, JSON.stringify({ type: "prompt", message: task }) + "\n");
   }
 
-  pool.on("exit", (exitedName, code, signal) => {
-    if (exitedName === name) {
-      process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
-    }
-  });
-
   nodeNames.push(name);
 }
 
 // Focus the entry peer (renders its buffer to the launcher's terminal).
-if (mux && entryPeer && nodeNames.includes(entryPeer)) {
-  mux.setFocus(entryPeer);
+// Use the FocusController so focus-changed events broadcast to all peers.
+if (entryPeer && nodeNames.includes(entryPeer)) {
+  focusController.setFocus(entryPeer);
+  if (mux) mux.setFocus(entryPeer);
 
   // Forward stdin to the focused peer's PTY so the user can type.
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
-    if (!mux.getFocus()) return;
+    const focused = focusController.getFocus() ?? mux?.getFocus();
+    if (!focused) return;
     // Ctrl-C in raw mode: initiate teardown.
     if (chunk === "\x03") {
       shutdown("SIGINT");
       return;
     }
-    pool.write(mux.getFocus(), chunk);
+    pool.write(focused, chunk);
   });
 }
 
@@ -273,6 +331,7 @@ if (mux && entryPeer && nodeNames.includes(entryPeer)) {
 function shutdown(signal) {
   process.stderr.write(`\nlaunch-mesh: ${signal} — stopping all nodes\n`);
   if (mux) mux.detach();
+  launcherSock.close().catch(() => {});
   pool.killAll().then(() => {
     // Restore terminal state.
     if (isTTY) process.stdout.write("\x1b[?25h\x1b[0m");
@@ -290,12 +349,24 @@ pool.on("exit", () => {
   if (exited >= nodeNames.length) {
     process.stderr.write("launch-mesh: all nodes exited\n");
     if (mux) mux.detach();
+    launcherSock.close().catch(() => {});
     if (isTTY) process.stdout.write("\x1b[?25h\x1b[0m");
     process.exit(0);
   }
 });
 
+// Paint the initial right-rail chrome to stderr (informational, even in non-TTY mode).
+const initialChrome = renderChrome({
+  peers: nodeNames.map((n) => ({ name: n, state: "spawning" })),
+  focused: entryPeer ?? null,
+  busRoot,
+  meshName: path.basename(meshPath, ".yaml"),
+});
+process.stderr.write(initialChrome);
+
 process.stderr.write(
   `launch-mesh: started ${nodeNames.length} node(s) — bus_root=${busRoot}\n` +
-  `             Entry peer: ${entryPeer ?? "(none)"} — Press Ctrl+C to stop all.\n`,
+  `             Entry peer: ${entryPeer ?? "(none)"} — Press Ctrl+C to stop all.\n` +
+  `             Launcher socket: ${launcherSock.getSockPath()}\n` +
+  `             Use /focus <peer-name> in the TUI to switch the focused peer.\n`,
 );

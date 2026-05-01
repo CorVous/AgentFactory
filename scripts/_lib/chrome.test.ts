@@ -1,0 +1,175 @@
+/**
+ * chrome.test.ts — hermetic unit tests for right-rail ANSI rendering.
+ *
+ * Contract: no I/O, no network. Rendering is deterministic for fixed input.
+ * ANSI sequences are verified to be present/absent via helpers; plain text
+ * content is verified after stripping ANSI.
+ */
+
+import { describe, it, expect } from "vitest";
+import { renderChrome, renderPeerRow, stripAnsi } from "./chrome.mjs";
+
+describe("stripAnsi", () => {
+  it("removes ANSI color codes", () => {
+    expect(stripAnsi("\x1b[32m●\x1b[0m")).toBe("●");
+    expect(stripAnsi("\x1b[1m\x1b[36mMesh\x1b[0m")).toBe("Mesh");
+  });
+
+  it("leaves plain strings unchanged", () => {
+    expect(stripAnsi("hello world")).toBe("hello world");
+  });
+});
+
+describe("renderChrome — header", () => {
+  it("includes mesh title", () => {
+    const output = renderChrome({ peers: [], focused: null, meshName: "test-mesh" });
+    expect(stripAnsi(output)).toContain("Mesh: test-mesh");
+  });
+
+  it("defaults to 'Mesh' when meshName is not provided", () => {
+    const output = renderChrome({ peers: [], focused: null });
+    expect(stripAnsi(output)).toContain("Mesh");
+  });
+
+  it("includes busRoot in header", () => {
+    const output = renderChrome({ peers: [], focused: null, busRoot: "/tmp/my-bus" });
+    expect(stripAnsi(output)).toContain("bus:");
+    expect(stripAnsi(output)).toContain("/tmp/my-bus");
+  });
+
+  it("truncates long busRoot", () => {
+    const longPath = "/very/long/path/that/exceeds/thirty/characters/for/bus";
+    const output = renderChrome({ peers: [], focused: null, busRoot: longPath });
+    expect(stripAnsi(output)).toContain("…");
+  });
+
+  it("shows correct peer count", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "peer-a", state: "running" },
+        { name: "peer-b", state: "spawning" },
+      ],
+      focused: null,
+    });
+    expect(stripAnsi(output)).toContain("2 peers");
+  });
+
+  it("uses singular 'peer' for 1 peer", () => {
+    const output = renderChrome({
+      peers: [{ name: "peer-a", state: "running" }],
+      focused: null,
+    });
+    expect(stripAnsi(output)).toContain("1 peer");
+    expect(stripAnsi(output)).not.toContain("1 peers");
+  });
+});
+
+describe("renderChrome — peer rows", () => {
+  it("shows each peer name", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "peer-a", state: "running" },
+        { name: "peer-b", state: "exited" },
+      ],
+      focused: "peer-a",
+    });
+    const plain = stripAnsi(output);
+    expect(plain).toContain("peer-a");
+    expect(plain).toContain("peer-b");
+  });
+
+  it("marks focused peer with ▶", () => {
+    const output = renderChrome({
+      peers: [
+        { name: "peer-a", state: "running" },
+        { name: "peer-b", state: "running" },
+      ],
+      focused: "peer-a",
+    });
+    const plain = stripAnsi(output);
+    const lines = plain.split("\n").filter(Boolean);
+    const focusedLine = lines.find((l) => l.includes("peer-a"));
+    const unfocusedLine = lines.find((l) => l.includes("peer-b"));
+    expect(focusedLine).toContain("▶");
+    expect(unfocusedLine).not.toContain("▶");
+  });
+
+  it("shows state icon ● for running", () => {
+    const output = renderChrome({
+      peers: [{ name: "peer-a", state: "running" }],
+      focused: null,
+    });
+    expect(stripAnsi(output)).toContain("●");
+  });
+
+  it("shows state icon ○ for spawning", () => {
+    const output = renderChrome({
+      peers: [{ name: "peer-a", state: "spawning" }],
+      focused: null,
+    });
+    expect(stripAnsi(output)).toContain("○");
+  });
+
+  it("shows state icon ✗ for exited", () => {
+    const output = renderChrome({
+      peers: [{ name: "peer-a", state: "exited" }],
+      focused: null,
+    });
+    expect(stripAnsi(output)).toContain("✗");
+  });
+
+  it("handles empty peer list gracefully", () => {
+    const output = renderChrome({ peers: [], focused: null });
+    expect(typeof output).toBe("string");
+    expect(stripAnsi(output)).toContain("0 peers");
+  });
+});
+
+describe("renderPeerRow", () => {
+  it("marks focused peer", () => {
+    const row = renderPeerRow({ name: "peer-a", state: "running" }, true);
+    expect(stripAnsi(row)).toContain("▶");
+    expect(stripAnsi(row)).toContain("peer-a");
+  });
+
+  it("does not mark unfocused peer", () => {
+    const row = renderPeerRow({ name: "peer-b", state: "running" }, false);
+    expect(stripAnsi(row)).not.toContain("▶");
+    expect(stripAnsi(row)).toContain("peer-b");
+  });
+
+  it("shows correct icon for each state", () => {
+    const states = [
+      ["running", "●"],
+      ["spawning", "○"],
+      ["exited", "✗"],
+      ["exiting", "↓"],
+      ["unknown", "?"],
+    ] as const;
+    for (const [state, icon] of states) {
+      const row = renderPeerRow({ name: "p", state: state as any }, false);
+      expect(stripAnsi(row)).toContain(icon);
+    }
+  });
+});
+
+describe("renderChrome — output format", () => {
+  it("is a multi-line string terminated with newline", () => {
+    const output = renderChrome({ peers: [], focused: null });
+    expect(output.endsWith("\n")).toBe(true);
+    expect(output.split("\n").length).toBeGreaterThan(1);
+  });
+
+  it("is deterministic for the same input", () => {
+    const opts = {
+      peers: [
+        { name: "alpha", state: "running" as const },
+        { name: "beta", state: "exited" as const },
+      ],
+      focused: "alpha",
+      busRoot: "/tmp/bus",
+      meshName: "test",
+    };
+    expect(renderChrome(opts)).toBe(renderChrome(opts));
+  });
+});
