@@ -35,15 +35,10 @@ const BASELINE_EXTENSIONS = [
 // When launched under the mesh launcher (PI_MESH_PEER=1), load the launcher
 // bridge, focus-state, and slash-commands extensions as additional baselines.
 // These are silent no-ops when the launcher socket is absent (standalone mode).
-//
-// mesh-rail renders the top-right mesh-status overlay; only meaningful under
-// the launcher. Like the others, it degrades silently if hasUI is false
-// (print mode / no TUI).
 const MESH_PEER_EXTENSIONS = [
   "launcher-bridge",
   "slash-commands",
   "bus-tail-emitter",
-  "mesh-rail",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
