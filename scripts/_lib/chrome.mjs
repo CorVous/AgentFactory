@@ -123,9 +123,19 @@ export function renderDecisionsPanel(items, now = Date.now()) {
   return lines;
 }
 
+// DECSC (save cursor) / DECRC (restore cursor) — VT100 private sequences.
+// Written as ESC 7 / ESC 8 (not CSI), so they work even when the terminal
+// is in application-cursor mode.
+const DECSC = "\x1b7";
+const DECRC = "\x1b8";
+
 /**
  * Render the right-rail chrome as a multi-line ANSI string.
  * Each line is terminated with `\n`.
+ *
+ * The output is wrapped in DECSC (\x1b7) / DECRC (\x1b8) so that chrome
+ * renders cannot strand the focused peer's stdout cursor: the cursor is
+ * saved before any chrome escapes and restored immediately after.
  *
  * @param {ChromeOpts} opts
  * @returns {string}
@@ -167,7 +177,7 @@ export function renderChrome(opts) {
     lines.push(`${YELLOW}${BOLD}!${RESET} ${DIM}${autoShiftNotice}${RESET}`);
   }
 
-  return lines.join("\n") + "\n";
+  return DECSC + lines.join("\n") + "\n" + DECRC;
 }
 
 /**

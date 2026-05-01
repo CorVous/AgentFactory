@@ -157,23 +157,26 @@ describe("paint", () => {
 // ── attachPool + output events ────────────────────────────────────────────────
 
 describe("attachPool", () => {
-  it("repaints the focused buffer when the focused peer emits output", () => {
+  it("pass-through: writes focused-peer data verbatim to output (no repaint)", () => {
     const out = makeOutputStream();
     const pool = makeFakePool();
-    let content = "first";
-    pool.addBuffer("peer-a", () => content);
+    let paintCallCount = 0;
+    pool.addBuffer("peer-a", () => { paintCallCount++; return "SNAPSHOT"; });
 
     const mux = createMultiplexer({ out });
     mux.attachPool(pool as any);
     mux.setFocus("peer-a");
     out.reset();
+    paintCallCount = 0; // reset after setFocus snapshot
 
-    content = "second";
-    pool.simulateOutput("peer-a", "chunk");
-    expect(out.output).toBe("second");
+    pool.simulateOutput("peer-a", "raw-chunk-data");
+    // The chunk must be written verbatim
+    expect(out.output).toBe("raw-chunk-data");
+    // paint() must NOT be called during pass-through
+    expect(paintCallCount).toBe(0);
   });
 
-  it("does not repaint when a non-focused peer emits output", () => {
+  it("does not write anything when a non-focused peer emits output", () => {
     const out = makeOutputStream();
     const pool = makeFakePool();
     pool.addBuffer("peer-a", () => "A-CONTENT");
@@ -188,7 +191,7 @@ describe("attachPool", () => {
     expect(out.calls).toBe(0);
   });
 
-  it("repaints when focus switches to a peer that then emits output", () => {
+  it("pass-through works after focus switches to a different peer", () => {
     const out = makeOutputStream();
     const pool = makeFakePool();
     pool.addBuffer("peer-a", () => "A");
@@ -202,27 +205,50 @@ describe("attachPool", () => {
     mux.setFocus("peer-b");
     out.reset();
 
-    pool.simulateOutput("peer-b", "chunk");
-    expect(out.output).toBe("B");
+    pool.simulateOutput("peer-b", "live-data-from-b");
+    expect(out.output).toBe("live-data-from-b");
   });
 });
 
 // ── setFocus is the slice-3 seam ─────────────────────────────────────────────
 
 describe("setFocus seam for slice-3 focus switching", () => {
-  it("switching focus repaints with the new peer's buffer immediately", () => {
+  it("switching focus writes exactly one snapshot of the new peer's buffer", () => {
     const out = makeOutputStream();
     const pool = makeFakePool();
+    let paintCount = 0;
     pool.addBuffer("peer-a", () => "BUFFER-A");
-    pool.addBuffer("peer-b", () => "BUFFER-B");
+    pool.addBuffer("peer-b", () => { paintCount++; return "BUFFER-B"; });
 
     const mux = createMultiplexer({ out });
     mux.attachPool(pool as any);
 
     mux.setFocus("peer-a");
     out.reset();
+    paintCount = 0;
+
     mux.setFocus("peer-b");
+    // Must write exactly the snapshot string once
     expect(out.output).toBe("BUFFER-B");
+    expect(paintCount).toBe(1);
+  });
+
+  it("setFocus does not call _repaint when focus is unchanged", () => {
+    const out = makeOutputStream();
+    const pool = makeFakePool();
+    let paintCount = 0;
+    pool.addBuffer("peer-a", () => { paintCount++; return "BUFFER-A"; });
+
+    const mux = createMultiplexer({ out });
+    mux.attachPool(pool as any);
+
+    mux.setFocus("peer-a");
+    out.reset();
+    paintCount = 0;
+
+    mux.setFocus("peer-a"); // no change
+    expect(paintCount).toBe(0);
+    expect(out.calls).toBe(0);
   });
 });
 
