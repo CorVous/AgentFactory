@@ -189,3 +189,86 @@ describe("dispose", () => {
     expect(() => vb.dispose()).not.toThrow();
   });
 });
+
+// ── SGR attribute rendering ───────────────────────────────────────────────────
+
+describe("paint() SGR attributes", () => {
+  it("emits an SGR bold sequence when bold text is written", async () => {
+    const vb = createVirtualBuffer({ cols: 80, rows: 24 });
+    // Write bold text using SGR 1
+    await vb.write("\x1b[1mbold text\x1b[0m");
+    const output = vb.paint();
+    // The paint output must contain bold SGR (CSI 1 m or CSI ...;1;... m)
+    expect(output).toMatch(/\x1b\[[0-9;]*1[0-9;]*m/);
+    // The plain text must still be present
+    expect(stripAnsi(output)).toContain("bold text");
+    vb.dispose();
+  });
+
+  it("emits SGR foreground color when colored text is written", async () => {
+    const vb = createVirtualBuffer({ cols: 80, rows: 24 });
+    // Write green text using SGR 32 (palette color 2)
+    await vb.write("\x1b[32mgreen text\x1b[0m");
+    const output = vb.paint();
+    // Must contain an SGR sequence with a foreground color code
+    expect(output).toContain("\x1b[");
+    // The plain text must be present
+    expect(stripAnsi(output)).toContain("green text");
+    vb.dispose();
+  });
+
+  it("emits SGR italic sequence when italic text is written", async () => {
+    const vb = createVirtualBuffer({ cols: 80, rows: 24 });
+    await vb.write("\x1b[3mitalic text\x1b[0m");
+    const output = vb.paint();
+    // Must contain italic SGR (CSI 3 m or CSI ...;3;... m)
+    expect(output).toMatch(/\x1b\[[0-9;]*3[m;]/);
+    expect(stripAnsi(output)).toContain("italic text");
+    vb.dispose();
+  });
+
+  it("paint output for colored text differs from plain text paint output", async () => {
+    const vb1 = createVirtualBuffer({ cols: 80, rows: 24 });
+    const vb2 = createVirtualBuffer({ cols: 80, rows: 24 });
+    await vb1.write("\x1b[32mcolored\x1b[0m");
+    await vb2.write("colored");
+    // The colored buffer's paint should differ from the plain buffer's paint
+    // because the SGR attribute runs will be different
+    expect(vb1.paint()).not.toBe(vb2.paint());
+    vb1.dispose();
+    vb2.dispose();
+  });
+});
+
+// ── cursor position escape ────────────────────────────────────────────────────
+
+describe("paint() cursor position", () => {
+  it("ends with a cursor-position escape (CUP) derived from xterm cursor", async () => {
+    const vb = createVirtualBuffer({ cols: 80, rows: 24 });
+    await vb.write("hello");
+    const output = vb.paint();
+    // After SHOW_CURSOR, the last non-SHOW_CURSOR content should include a CUP.
+    // CUP format: ESC [ row ; col H
+    // The cursor after "hello" (5 chars) should be at col 6, row 1 → CSI 1;6H
+    expect(output).toMatch(/\x1b\[\d+;\d+H\x1b\[\?25h$/);
+    vb.dispose();
+  });
+
+  it("cursor position reflects xterm cursor after writing text", async () => {
+    const vb = createVirtualBuffer({ cols: 80, rows: 24 });
+    await vb.write("abc");
+    const output = vb.paint();
+    // cursorX should be 3 (after 3 chars), cursorY should be 0 → CUP row=1, col=4
+    expect(output).toContain("\x1b[1;4H");
+    vb.dispose();
+  });
+
+  it("cursor position updates after newline", async () => {
+    const vb = createVirtualBuffer({ cols: 80, rows: 24 });
+    await vb.write("line1\r\n");
+    const output = vb.paint();
+    // After line1 + CRLF, cursor is at row 2, col 1 → CUP 2;1
+    expect(output).toContain("\x1b[2;1H");
+    vb.dispose();
+  });
+});
