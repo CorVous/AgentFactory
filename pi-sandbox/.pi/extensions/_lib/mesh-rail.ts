@@ -10,12 +10,23 @@ export interface MeshRailComponentOptions {
 
 export function createMeshRailComponent(opts: MeshRailComponentOptions): Component {
   return {
-    render(_width: number): string[] {
-      return [
-        opts.peerName,
-        "0 peers",
-        "0 decisions",
-      ];
+    render(width: number): string[] {
+      const content = [opts.peerName, "0 peers", "0 decisions"];
+      // Frame is left-anchored: rounded top-left + horizontals across, left
+      // bar on each content line, rounded bottom-left + horizontals across.
+      // Right side is intentionally open — the overlay sits against the
+      // terminal's right edge, so a right border would just be wasted ink.
+      const longest = content.reduce((m, s) => Math.max(m, s.length), 0);
+      // Total visible width: at least longest content + 2 (left bar + space),
+      // expanding to fill the column budget pi-tui hands us.
+      const total = Math.max(longest + 2, width);
+      const top = "╭" + "─".repeat(total - 1);
+      const bottom = "╰" + "─".repeat(total - 1);
+      const body = content.map((line) => {
+        const padded = ` ${line}`.padEnd(total - 1, " ");
+        return `│${padded}`;
+      });
+      return [top, ...body, bottom];
     },
     invalidate(): void {
       // Static placeholder content; nothing to invalidate yet.

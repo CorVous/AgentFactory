@@ -81,6 +81,36 @@ describe("createMeshRailComponent — placeholder content", () => {
     expect(Array.isArray(lines)).toBe(true);
     for (const line of lines) expect(typeof line).toBe("string");
   });
+
+  it("draws a left-anchored frame: rounded top-left, left bars, rounded bottom-left, open right", () => {
+    const component = createMeshRailComponent({ peerName: "any-peer" });
+    const lines = component.render(30);
+    // Top: rounded top-left corner followed by horizontals to the right edge.
+    expect(lines[0]).toMatch(/^╭─+$/);
+    // Bottom: rounded bottom-left corner followed by horizontals to the right edge.
+    expect(lines[lines.length - 1]).toMatch(/^╰─+$/);
+    // Middle: left bar only — right side is intentionally open (overlay sits
+    // against the terminal's right edge, so a right border would be wasted).
+    for (let i = 1; i < lines.length - 1; i++) {
+      expect(lines[i].startsWith("│")).toBe(true);
+      expect(lines[i].endsWith("│")).toBe(false);
+    }
+  });
+
+  it("does not use any corner character on the right side", () => {
+    const component = createMeshRailComponent({ peerName: "any-peer" });
+    const all = component.render(30).join("");
+    expect(all).not.toContain("╮");
+    expect(all).not.toContain("╯");
+  });
+
+  it("pads each rendered line to the same visible width (so the underline extends across)", () => {
+    const component = createMeshRailComponent({ peerName: "any-peer" });
+    const lines = component.render(30);
+    // visibleWidth is character count; box-drawing chars are single-width.
+    const widths = new Set(lines.map((l) => [...l].length));
+    expect(widths.size).toBe(1);
+  });
 });
 
 describe("meshRailOverlayOptions", () => {
