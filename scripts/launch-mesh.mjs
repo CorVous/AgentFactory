@@ -13,7 +13,7 @@
 //     - name: authority           # instance name (--agent-name)
 //       recipe: mesh-authority    # recipe in pi-sandbox/agents/
 //       sandbox: /tmp/mesh/auth   # optional; auto-created
-//       task: "..."               # optional; if set, passes -p (non-interactive)
+//       task: "..."               # optional; sent to the peer as the first user message
 //     - name: analyst
 //       recipe: mesh-node
 //       supervisor: authority     # all non-root nodes must declare a supervisor
@@ -177,9 +177,11 @@ function repaintBusTail() {
 // The focused peer's buffer is rendered live to the launcher's terminal.
 // Focus can be switched by a peer sending a focus-request to the launcher socket.
 //
-// PTY-in-PTY fix (slice 3): run-agent.mjs checks PI_MESH_PEER=1 and uses
-// inherited stdio when its own stdout is already inside a managed PTY,
-// preventing the PTY-in-PTY nesting that slice 2 had for non-entry peers.
+// PTY-in-PTY fix: run-agent.mjs checks PI_MESH_PEER=1 and uses inherited
+// stdio when its own stdout is already inside the launcher's managed PTY,
+// preventing PTY-in-PTY nesting. Every peer now runs the full pi TUI
+// (no `--mode rpc`); the multiplexer accumulates each peer's ANSI into a
+// VirtualBuffer and paints the focused peer's snapshot on /focus switch.
 //
 // TODO(manual-tmux-check): verify multi-peer focus switching with:
 //   set -a; source models.env; set +a
@@ -403,9 +405,14 @@ for (let i = 0; i < topology.nodes.length; i++) {
 
   const overlay = nodeOverlays.get(name);
 
-  // Non-entry peers run in --mode rpc so the entry peer's PTY gets full terminal.
-  // The entry peer runs interactively (no --mode rpc) so pi's TUI renders.
-  const isEntry = name === entryPeer;
+  // Every peer runs the full pi TUI in its own PTY. The multiplexer paints
+  // only the focused peer's virtual buffer to the launcher's terminal;
+  // non-focused peers keep emitting ANSI into their virtual buffers, so a
+  // /focus switch repaints a real TUI snapshot rather than RPC JSON.
+  //
+  // The optional `task:` field is forwarded as a positional argument to pi
+  // (interactive mode treats trailing positionals as the first user message),
+  // replacing the previous `--mode rpc` + JSON-over-stdin bootstrap.
   const peerArgs = [
     RUNNER,
     recipe,
@@ -416,10 +423,8 @@ for (let i = 0; i < topology.nodes.length; i++) {
     "--topology-overlay", JSON.stringify(overlay),
   ];
 
-  if (!isEntry) {
-    // Non-entry peers run headless (RPC mode); their output goes into a virtual
-    // buffer for slice-3 focus switching but isn't painted to the launcher's terminal.
-    peerArgs.push("--mode", "rpc");
+  if (typeof task === "string" && task.trim()) {
+    peerArgs.push(task);
   }
 
   const peerEnv = {
@@ -465,12 +470,6 @@ for (let i = 0; i < topology.nodes.length; i++) {
       // handle state update, unregistration, and auto-shift via focusController.
     }
   });
-
-  // For non-entry RPC peers: send the initial task as the first RPC prompt.
-  if (!isEntry && task) {
-    // Use pool.write() to inject the JSON prompt into the PTY stdin.
-    pool.write(name, JSON.stringify({ type: "prompt", message: task }) + "\n");
-  }
 
   nodeNames.push(name);
 }
