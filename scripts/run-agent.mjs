@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
+import { createPtyPool } from "./_lib/pty-pool.mjs";
+import { createMultiplexer } from "./_lib/multiplexer.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = path.join(REPO_ROOT, "pi-sandbox");
@@ -29,6 +30,20 @@ const BASELINE_EXTENSIONS = [
   // gated by the recipe's `tools:` allowlist, so loading the extension
   // by default does not change the tool surface seen by the model.
   "agent-bus",
+];
+
+// When launched under the mesh launcher (PI_MESH_PEER=1), load the launcher
+// bridge, focus-state, and slash-commands extensions as additional baselines.
+// These are silent no-ops when the launcher socket is absent (standalone mode).
+//
+// mesh-rail renders the mesh-status widget above the editor; only meaningful
+// under the launcher. Like the others, it degrades silently if hasUI is false
+// (print mode / no TUI).
+const MESH_PEER_EXTENSIONS = [
+  "launcher-bridge",
+  "slash-commands",
+  "bus-tail-emitter",
+  "mesh-rail",
 ];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
@@ -160,13 +175,20 @@ function applyAgentsField(recipe, name) {
   return { allowed: declared, extensions, tools };
 }
 
-// Implicit-wire the supervisor extension and respond_to_request tool when a
-// recipe sets any of the supervisor-related peer fields (acceptedFrom,
-// supervisor, submitTo).
+// Implicit-wire the supervisor extension, the intercept extension, and the
+// respond_to_request tool when a recipe sets any of the supervisor-related
+// peer fields (acceptedFrom, supervisor, submitTo).
 //
-// Inverse rejection: if a recipe explicitly lists 'supervisor' in extensions
-// or 'respond_to_request' in tools without setting any supervisory field,
-// that's a misconfiguration — fail loudly.
+// Intercept is always auto-loaded alongside supervisor — it decorates the
+// supervisor dispatch hook and is a silent no-op when no supervisor inbound
+// rail is active (empty acceptedFrom).
+//
+// supervisor must appear before intercept in the extension list so that
+// intercept can wrap supervisor's globalThis dispatch hook at session_start.
+//
+// Inverse rejection: if a recipe explicitly lists 'supervisor' or 'intercept'
+// in extensions or 'respond_to_request' in tools without setting any
+// supervisory field, that's a misconfiguration — fail loudly.
 function applySupervisorField(recipe, name, extensions, tools) {
   const supervisoryFields =
     (Array.isArray(recipe.acceptedFrom) && recipe.acceptedFrom.length > 0) ||
@@ -174,12 +196,19 @@ function applySupervisorField(recipe, name, extensions, tools) {
     (typeof recipe.submitTo === "string" && recipe.submitTo);
 
   const explicitExt = extensions.includes("supervisor");
+  const explicitInterceptExt = extensions.includes("intercept");
   const explicitTool = tools.includes("respond_to_request");
 
   if (!supervisoryFields) {
     if (explicitExt) {
       die(
         `recipe ${name} loads extension 'supervisor' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
+          `set at least one supervisory field (or drop the extension)`,
+      );
+    }
+    if (explicitInterceptExt) {
+      die(
+        `recipe ${name} loads extension 'intercept' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
           `set at least one supervisory field (or drop the extension)`,
       );
     }
@@ -192,7 +221,11 @@ function applySupervisorField(recipe, name, extensions, tools) {
     return { extensions, tools };
   }
 
-  const newExtensions = explicitExt ? extensions : [...extensions, "supervisor"];
+  // supervisor must come before intercept so intercept can wrap supervisor's
+  // globalThis dispatch hook at session_start.
+  const newExtensions = extensions.slice();
+  if (!explicitExt) newExtensions.push("supervisor");
+  if (!explicitInterceptExt) newExtensions.push("intercept");
   const newTools = explicitTool ? tools : [...tools, "respond_to_request"];
   return { extensions: newExtensions, tools: newTools };
 }
@@ -207,9 +240,12 @@ function resolveModel(tierOrId) {
   return requested;
 }
 
-function resolveExtensionPaths(names) {
+function resolveExtensionPaths(names, isMeshPeer = false) {
   const seen = new Set();
-  const merged = [...BASELINE_EXTENSIONS, ...names];
+  const baseline = isMeshPeer
+    ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
+    : BASELINE_EXTENSIONS;
+  const merged = [...baseline, ...names];
   return merged
     .filter((n) => {
       if (seen.has(n)) return false;
@@ -268,14 +304,25 @@ const model = resolveModel(recipeModel);
 const wiredAgents = applyAgentsField(recipe, args.name);
 const wiredSupervisor = applySupervisorField(recipe, args.name, wiredAgents.extensions, wiredAgents.tools);
 const wired = { ...wiredAgents, extensions: wiredSupervisor.extensions, tools: wiredSupervisor.tools };
-const extensionPaths = resolveExtensionPaths(wired.extensions);
+
+// PI_MESH_PEER=1 is set by launch-mesh.mjs for all peers. It signals
+// run-agent.mjs to load the launcher-bridge + slash-commands baseline extensions
+// so peers can receive focus-changed signals and send /focus requests.
+// When run standalone via `npm run agent`, PI_MESH_PEER is unset,
+// so the launcher extensions degrade gracefully (socket not found = no-op).
+const isMeshPeer = process.env.PI_MESH_PEER === "1";
+
+const extensionPaths = resolveExtensionPaths(wired.extensions, isMeshPeer);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
 // Build the effective system prompt: tool/extension fragments first
 // (in load order), then the recipe's own role-specific prompt.
+const effectiveBaseline = isMeshPeer
+  ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
+  : BASELINE_EXTENSIONS;
 const mergedExtensions = [
-  ...BASELINE_EXTENSIONS,
-  ...wired.extensions.filter((n) => !BASELINE_EXTENSIONS.includes(n)),
+  ...effectiveBaseline,
+  ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
 ];
 const promptFragments = loadPromptFragments(mergedExtensions);
 const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
@@ -408,13 +455,102 @@ piArgs.push(...args.passthrough);
 
 if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 
-const child = spawn(PI_BIN, piArgs, {
-  cwd: sandboxRoot,
-  stdio: "inherit",
-  env: { ...process.env },
-});
+// ── PTY pool + multiplexer (slice 2: single-peer launcher TUI) ───────────────
+//
+// Spawn pi in a PTY so the full interactive TUI renders (agent-header,
+// agent-footer, deferred-confirm dialogs) and pipe its output through a
+// VirtualBuffer before painting to the launcher's terminal.
+//
+// In interactive mode (stdio is a TTY) we use PTY-based rendering.
+// In non-interactive mode (piped stdout, CI, -p passthrough) we fall back to
+// the plain child_process.spawn path with inherited stdio so scripts that
+// capture stdout keep working.
+//
+// TODO(manual-tmux-check): verify full TUI fidelity with:
+//   set -a; source models.env; set +a
+//   tmux new-session -d -s run-agent-test -x 220 -y 50 \
+//     'npm run agent -- deferred-writer'
+//   sleep 5
+//   tmux capture-pane -t run-agent-test -p
+//   # expect: agent-header strip, agent-footer four-line block visible
+//   tmux send-keys -t run-agent-test '/quit' Enter
+//   sleep 2
+//   # expect: clean exit, no orphan pi processes
+//   tmux kill-session -t run-agent-test
 
-child.on("exit", (code, signal) => {
-  if (signal) process.kill(process.pid, signal);
-  else process.exit(code ?? 0);
-});
+const isTTY = Boolean(process.stdout.isTTY);
+const isPrintMode = args.passthrough.includes("-p") || args.passthrough.includes("--print");
+
+// PTY-in-PTY fix (slice 3): when run-agent.mjs is launched as a PI_MESH_PEER=1
+// child of launch-mesh.mjs, its stdout is already inside the launcher's managed
+// PTY. Creating another PTY here would cause PTY-in-PTY nesting and break
+// terminal rendering. In that case, fall through to the inherited-stdio path so
+// pi writes directly to the launcher's PTY buffer.
+const isInsideManagedPty = isMeshPeer && isTTY;
+
+if (isTTY && !isPrintMode && !isInsideManagedPty) {
+  // Interactive launcher path: PTY + virtual buffer + multiplexer.
+  const cols = process.stdout.columns || 220;
+  const rows = process.stdout.rows || 50;
+
+  const pool = createPtyPool();
+  const mux = createMultiplexer({ out: process.stdout });
+
+  pool.spawn({
+    name: agentName,
+    cmd: PI_BIN,
+    args: piArgs,
+    cols,
+    rows,
+    cwd: sandboxRoot,
+    env: { ...process.env },
+  });
+
+  mux.attachPool(pool);
+  mux.setFocus(agentName);
+  mux.attachResizeHandler(pool);
+
+  // Forward stdin to the focused peer's PTY so the user can type.
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    // Ctrl-C in raw mode sends \x03; translate to SIGINT for the peer.
+    if (chunk === "\x03") {
+      pool.kill(agentName).then(() => process.exit(0));
+      return;
+    }
+    pool.write(agentName, chunk);
+  });
+
+  // Coordinated teardown.
+  function shutdownAgent(signal) {
+    mux.detach();
+    pool.kill(agentName).then(() => process.exit(0));
+    void signal;
+  }
+
+  process.once("SIGINT", () => shutdownAgent("SIGINT"));
+  process.once("SIGTERM", () => shutdownAgent("SIGTERM"));
+
+  pool.on("exit", (name, code, signal) => {
+    if (name !== agentName) return;
+    mux.detach();
+    // Restore terminal state before exit.
+    process.stdout.write("\x1b[?25h\x1b[0m"); // show cursor + reset attrs
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+} else {
+  // Non-interactive path: plain spawn with inherited stdio (original behaviour).
+  const { spawn } = await import("node:child_process");
+  const child = spawn(PI_BIN, piArgs, {
+    cwd: sandboxRoot,
+    stdio: "inherit",
+    env: { ...process.env },
+  });
+
+  child.on("exit", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+}

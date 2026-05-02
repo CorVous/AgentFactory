@@ -69,7 +69,7 @@ A peer's submission target; the peer that receives and applies the worker's arti
 ### Human Surface
 
 **TUI**:
-Launcher-level interactive surface; the human's only interface to a running **Mesh**. Each peer runs in its own PTY with a full pi TUI alive; the launcher multiplexes — the **Focused Peer**'s PTY is rendered live in the main pane, off-screen peers render to virtual buffers. Launcher chrome (peers list, **Decisions Queue**) lives in a right rail. Slash commands (`/focus`, `/pin`, `/tail`, …) registered by a baseline `launcher-bridge` extension on every peer are the human's command channel; they emit control envelopes to a launcher-bound socket. The human is *not* a peer — there is no `human-relay` peer in this model.
+Launcher-level interactive surface; the human's only interface to a running **Mesh**. Each peer runs in its own PTY with a full pi TUI alive; the launcher multiplexes via PTY pass-through — the **Focused Peer**'s output streams directly to the launcher's stdout, off-screen peers accumulate in virtual buffers, and a focus change paints the destination's accumulated state once before resuming pass-through. Mesh status (peers list, **Decisions Queue**) renders inside each peer's pi TUI as a widget pinned directly above the input editor (`ctx.ui.setWidget` with `placement: "aboveEditor"`), populated by the `mesh-rail` baseline extension; the launcher emits no chrome of its own. Slash commands (`/focus`, `/pin`, `/tail`, `/decisions`, …) registered by a baseline `launcher-bridge` extension on every peer are the human's command channel; they emit control envelopes to a launcher-bound socket. The human is *not* a peer — there is no `human-relay` peer in this model. See [ADR-0004](docs/adr/0004-launcher-multiplexed-tui.md) including its 2026-05-01 amendment.
 
 **Focused Peer**:
 The peer whose pi session the **TUI** is currently bound to. Human keystrokes inject as user-messages into this peer's pi process via stdin. Movable at runtime; the topology may declare an initial default focus.
@@ -80,7 +80,7 @@ When the **TUI** is the **Focused Peer** for X and X is about to invoke `respond
 A focus change from X→Y is a **hard cancel** on X: any in-flight `ctx.ui.confirm` on X is dismissed and the original prompt is re-injected to X's LLM as a fresh `respond_to_request` turn. The exception is **pin** — a pinned decision survives focus shifts and is never returned to the LLM.
 
 **Decisions Queue**:
-Side-panel of pending human decisions surfaced by **Intercept** or by `escalate` from the **Top Supervisor**. Default lifecycle is **fluid**: shifting focus away from a transient intercept dialog re-injects the original prompt to the peer's LLM (fresh turn). The human can **pin** a decision to make it sticky — it stays in the queue across focus changes and the LLM does not resume.
+Pending human decisions surfaced by **Intercept** or by `escalate` from the **Top Supervisor**, summarized as a count badge in the `mesh-rail` widget and expanded via `/decisions` into a focus-capturing overlay with pin/dismiss affordances. Default lifecycle is **fluid**: shifting focus away from a transient intercept dialog re-injects the original prompt to the peer's LLM (fresh turn). The human can **pin** a decision to make it sticky — it stays in the queue across focus changes and the LLM does not resume.
 
 ### Patterns
 
@@ -130,4 +130,4 @@ When inbound rail surfaces a **Submission** or approval request, the supervisor'
 - "**sandbox**" was used to mean three different things — fs containment, the whole agent surface, the worker's working directory. Resolved: **Habitat** is the whole perimeter; **Scratch Sandbox** and **Canonical Sandbox** are the two FS slices.
 - "**agent**" was overloaded between the role (recipe) and the instance (running peer). Resolved: **Role** for the kind, **Peer** for the instance.
 - "**delegation**" used to mean both "subprocess via `agent-spawn`" and "any worker dispatch." Resolved: **Atomic Delegate** is the single-tool spawn-and-collect; long-running worker dispatch is just `mesh_spawn` + `agent_call`.
-- "**human**" was sometimes a peer (`human-relay.mjs`) and sometimes the operator at the keyboard. Resolved: the human is *not* a peer — they participate via the launcher's **TUI**. `human-relay` is deprecated.
+- "**human**" was sometimes a peer (`human-relay.mjs`) and sometimes the operator at the keyboard. Resolved: the human is *not* a peer — they participate via the launcher's **TUI**. `human-relay` was retired by ADR-0004; cross-agent escalation flows over the bus to the launcher socket as well as between peers.

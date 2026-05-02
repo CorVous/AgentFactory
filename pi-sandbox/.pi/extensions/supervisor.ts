@@ -6,8 +6,16 @@
 // typed inbound envelopes here instead of the general inbox.
 //
 // The testable core lives in _lib/supervisor-inbox.ts.
+//
+// Top Supervisor escalate path (slice 6):
+// When the Top Supervisor's LLM picks escalate and no supervisor peer is
+// configured, localEscalate is invoked. This opens ctx.ui.confirm in this
+// peer's own TUI. Before opening, a decision-pending(on:true) envelope is
+// sent to the launcher so the chrome can show a badge if the human is
+// focused elsewhere. After the human decides, decision-pending(on:false)
+// clears the badge.
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { getHabitat } from "./_lib/habitat";
 import { createSupervisorInbox, type InboundEnvelope } from "./_lib/supervisor-inbox";
@@ -20,6 +28,9 @@ import {
 import { sendOverBus } from "./_lib/bus-transport";
 import net from "node:net";
 import path from "node:path";
+import { createRequire } from "node:module";
+
+const _require = createRequire(import.meta.url);
 
 interface SupervisorState {
   inbox: ReturnType<typeof createSupervisorInbox>;
@@ -28,6 +39,8 @@ interface SupervisorState {
   /** Captured from pi.sendUserMessage at session_start. Allows dispatchToSupervisor
    *  to deliver messages directly without going through a turn_end queue. */
   sendUserMessage?: (text: string, opts: { deliverAs: "followUp" }) => void;
+  /** ExtensionContext captured at session_start — used for localEscalate dialog. */
+  ctx: ExtensionContext | null;
 }
 
 function getState(): SupervisorState {
@@ -36,7 +49,104 @@ function getState(): SupervisorState {
     inbox: createSupervisorInbox(),
     agentName: "supervisor",
     busRoot: "",
+    ctx: null,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Launcher bridge helpers (for decision-pending signals)
+// ---------------------------------------------------------------------------
+
+/** Send a control envelope to the launcher via launcher-bridge (if connected). */
+function sendControlToLauncher(env: Record<string, unknown>): void {
+  // Lazy-access the launcher-bridge module to avoid circular dependency at
+  // module load time. launcher-bridge may not be loaded in standalone mode.
+  const g = globalThis as {
+    __pi_launcher_bridge__?: {
+      client: { send: (env: Record<string, unknown>) => boolean } | null;
+      ready: boolean;
+    };
+  };
+  const bridge = g.__pi_launcher_bridge__;
+  if (!bridge?.ready || !bridge.client) return;
+  try {
+    bridge.client.send(env);
+  } catch {
+    // best-effort; standalone mode or launcher not running
+  }
+}
+
+/** Signal the launcher that this peer has opened or resolved a decision dialog. */
+function signalDecisionPending(agentName: string, on: boolean): void {
+  // Import makeDecisionPendingEnvelope lazily so this file doesn't acquire a
+  // hard dependency on scripts/_lib at module parse time (it's a peer file
+  // relative to the extension, loaded via require at runtime).
+  try {
+    const { makeDecisionPendingEnvelope } = _require(
+      path.resolve(__dirname, "../../../../scripts/_lib/launcher-envelope.mjs"),
+    ) as { makeDecisionPendingEnvelope: (args: { peer: string; on: boolean }) => Record<string, unknown> };
+    const env = makeDecisionPendingEnvelope({ peer: agentName, on });
+    sendControlToLauncher(env);
+  } catch {
+    // Module not available (standalone mode) — silently ignore.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Local escalation dialog (Top Supervisor path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Show a local ctx.ui.confirm dialog for the Top Supervisor escalation path.
+ * Emits decision-pending signals to the launcher before and after so the
+ * chrome can show/hide the badge when the human is focused elsewhere.
+ */
+async function runLocalEscalateDialog(
+  ctx: ExtensionContext,
+  agentName: string,
+  req: { title: string; summary: string; preview: string },
+): Promise<{ approved: boolean; note?: string }> {
+  // Signal to the launcher that a decision is pending (badge appears in chrome).
+  signalDecisionPending(agentName, true);
+
+  let approved = false;
+  let note: string | undefined;
+
+  try {
+    const title = `[Top Supervisor] Escalation: ${req.title}`;
+    const choices = ["approve", "reject"];
+    let picked: string | undefined;
+    try {
+      picked = await ctx.ui.select(title + `\n\n${req.summary}`, choices);
+    } catch {
+      // Dialog cancelled (e.g. process shutdown) — default to reject.
+      picked = "reject";
+    }
+
+    approved = picked === "approve";
+
+    // Optionally prompt for a note.
+    try {
+      const input = await ctx.ui.input(
+        approved ? "Approval note (optional)" : "Rejection reason (optional)",
+        "",
+      );
+      note = input && input.trim() ? input.trim() : undefined;
+    } catch {
+      note = undefined;
+    }
+
+    if (approved) {
+      ctx.ui.notify(`[supervisor] escalation approved by human`, "info");
+    } else {
+      ctx.ui.notify(`[supervisor] escalation rejected by human`, "info");
+    }
+  } finally {
+    // Always clear the badge when the dialog closes (whether resolved or thrown).
+    signalDecisionPending(agentName, false);
+  }
+
+  return { approved, note };
 }
 
 // Called by agent-bus.ts's handleIncoming to forward typed envelopes.
@@ -129,6 +239,9 @@ export default function (pi: ExtensionAPI) {
   registerDispatchHook();
 
   pi.on("session_start", async (_event, ctx) => {
+    // Capture ctx so respondToRequest can provide localEscalate.
+    state.ctx = ctx;
+
     try {
       const h = getHabitat();
       state.agentName = h.agentName;
@@ -175,14 +288,21 @@ export default function (pi: ExtensionAPI) {
       let busRoot = state.busRoot;
       try { busRoot = getHabitat().busRoot; } catch { /* use state */ }
 
+      const ctx = state.ctx;
+      const agentName = state.agentName;
       const result = await state.inbox.respondToRequest({
         msg_id: params.msg_id,
         action: params.action,
         note: params.note,
-        agentName: state.agentName,
+        agentName,
         sendEnvelope: (env: InboundEnvelope) => sendToPeer(busRoot, env),
         escalateToSupervisor: async (supervisorName, req) =>
-          escalateViaBus(busRoot, state.agentName, supervisorName, req),
+          escalateViaBus(busRoot, agentName, supervisorName, req),
+        // Top Supervisor local escalation: when no supervisor peer is configured,
+        // surface the prompt to the human via ctx.ui.confirm in this TUI.
+        localEscalate: ctx
+          ? (req) => runLocalEscalateDialog(ctx, agentName, req)
+          : undefined,
       });
 
       if (!result.ok) {
@@ -196,5 +316,11 @@ export default function (pi: ExtensionAPI) {
         details: { ok: true },
       };
     },
+  });
+
+  pi.on("session_end", async () => {
+    // Clear ctx so no stale reference is held after the session ends.
+    state.ctx = null;
+    state.sendUserMessage = undefined;
   });
 }

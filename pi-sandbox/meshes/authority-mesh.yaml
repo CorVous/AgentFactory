@@ -1,34 +1,31 @@
-# authority-mesh.yaml — example 4-participant mesh topology.
+# authority-mesh.yaml — example 3-participant mesh topology.
 #
 # Participants:
-#   human     — human REPL (type: relay); no LLM; type @peer to send messages
-#   authority — LLM orchestrator (LEAD_HARE_MODEL); can spawn/stop/delegate
+#   authority — LLM orchestrator (LEAD_HARE_MODEL); top supervisor; entry peer
 #   analyst   — LLM peer (TASK_RABBIT_MODEL); handles research requests
 #   writer    — LLM peer (TASK_RABBIT_MODEL); handles drafting requests
 #
 # All participants share the same bus root and discover each other by
 # instance name. Any participant can agent_call or agent_send any other.
 #
+# Human interaction is provided by the launcher TUI (see ADR-0004).
+# The former `type: relay` human node has been removed.
+#
 # Launch:
 #   set -a; source models.env; set +a
 #   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
-#
-# The human relay gets a REPL prompt. Example interactions:
-#   [human]> @authority summarise the project and draft a README
-#   [human]> @analyst what does the agent-bus extension do?
-#   [human]> /peers
 
 bus_root: /tmp/pi-mesh-authority
 
-nodes:
-  - name: human
-    type: relay
+# The peer the launcher TUI focuses on first.
+entry: authority
 
+nodes:
   - name: authority
     recipe: mesh-authority
     sandbox: /tmp/pi-mesh-authority/authority
     task: |
-      You are the authority in this mesh. Your peers are: analyst, writer, human.
+      You are the authority in this mesh. Your peers are: analyst, writer.
       Start by calling agent_list to see who is already online.
       Then wait — messages from peers arrive as [from <peer>] prompts.
       When a peer sends you a request, handle it using your tools and reply
@@ -38,6 +35,7 @@ nodes:
   - name: analyst
     recipe: mesh-node
     sandbox: /tmp/pi-mesh-authority/analyst
+    supervisor: authority
     task: |
       You are the analyst peer in a mesh. Your name is "analyst".
       Wait for requests from other peers. When a request arrives as
@@ -49,6 +47,7 @@ nodes:
   - name: writer
     recipe: mesh-writer
     sandbox: /tmp/pi-mesh-authority/writer
+    supervisor: authority
     task: |
       You are the writer peer in a mesh. Your name is "writer".
       Wait for drafting requests from other peers. When a request arrives as

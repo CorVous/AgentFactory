@@ -39,6 +39,14 @@ export interface RespondOpts {
     supervisorName: string,
     req: { title: string; summary: string; preview: string },
   ) => Promise<{ approved: boolean; note?: string }>;
+  /**
+   * Called when this is the Top Supervisor (no supervisor configured above) and the
+   * model picks `escalate`. The callback surfaces the prompt to the human via
+   * ctx.ui.confirm in the top supervisor's own TUI. Returns the human's decision.
+   */
+  localEscalate?: (
+    req: { title: string; summary: string; preview: string },
+  ) => Promise<{ approved: boolean; note?: string }>;
 }
 
 export interface RespondResult {
@@ -198,12 +206,7 @@ export function createSupervisorInbox(): SupervisorInbox {
           } catch {
             supervisorName = undefined;
           }
-          if (!supervisorName) {
-            return { ok: false, error: "escalate requires no supervisor configured in Habitat" };
-          }
-          if (!opts.escalateToSupervisor) {
-            return { ok: false, error: "escalateToSupervisor callback required for escalate action" };
-          }
+
           const req =
             payload.kind === "approval-request"
               ? { title: payload.title, summary: payload.summary, preview: payload.preview }
@@ -212,6 +215,29 @@ export function createSupervisorInbox(): SupervisorInbox {
                   summary: (payload as Extract<Payload, { kind: "submission" }>).summary ?? `${(payload as Extract<Payload, { kind: "submission" }>).artifacts.length} artifact(s)`,
                   preview: renderInboundForUser(env),
                 };
+
+          // Top Supervisor path: no peer above — route to local ctx.ui.confirm.
+          if (!supervisorName) {
+            if (!opts.localEscalate) {
+              return { ok: false, error: "escalate: no supervisor configured and no localEscalate callback provided (Top Supervisor must provide localEscalate)" };
+            }
+            const localResult = await opts.localEscalate(req);
+            const reply = makeApprovalResultEnvelope({
+              from: opts.agentName,
+              to: env.from,
+              in_reply_to: env.msg_id,
+              approved: localResult.approved,
+              ...(localResult.note !== undefined ? { note: localResult.note } : {}),
+            });
+            await opts.sendEnvelope(reply);
+            pending.delete(opts.msg_id);
+            return { ok: true };
+          }
+
+          // Standard path: forward to configured supervisor peer.
+          if (!opts.escalateToSupervisor) {
+            return { ok: false, error: "escalateToSupervisor callback required for escalate action" };
+          }
 
           const upstream = await opts.escalateToSupervisor(supervisorName, req);
           const reply = makeApprovalResultEnvelope({

@@ -56,3 +56,33 @@ The new infrastructure follows the same per-axis split that ADR-0002 established
 | `entry-resolver` | Resolves the topology `entry:` field; integrates with `focus-controller` for crash auto-shift. |
 
 The discipline is not free — more files, more interface boundaries, slightly more ceremony per change. The trade-off is "if a future you wants to replace exactly one behavior, can you do it without touching anything else?" The repo's existing rail pattern says yes; this infrastructure inherits that contract.
+
+## Amendment (2026-05-01) — Mesh status surfaces inside pi's TUI (issue #88)
+
+The original *Consequences* described *"Launcher chrome (peers list, Decisions Queue) lives in a right rail"* rendered by the launcher to stderr alongside the focused peer's stdout. Slice 2's first attempt — buffer-paint the focused peer on every PTY chunk — produced unusable rendering: full-screen reprint per keystroke, stripped SGR, wrong cursor (issue #88). Refactoring slice 2 to "paint-once-on-focus-change with pass-through between" (the literal reading of *"swaps which buffer paints the focused pane on focus change"*) re-opens a different problem the original ADR didn't address: chrome's stderr writes interleaving with pi's stdout would strand the cursor mid-keystroke during pi's live editing.
+
+This amendment relocates the rail into pi rather than continuing to fight the interleaving. The same logic that argued *"Intercept reuses pi's own UI ... no double-render of the same prompt across launcher chrome and pi's own surface"* applies to mesh status.
+
+### Rendering pipeline
+
+- **Focused peer**: PTY output passes through verbatim to the launcher's stdout. The peer's `xterm-headless` virtual buffer continues to accumulate so focus changes have something to paint.
+- **Off-screen peers**: write only to their virtual buffer (unchanged from slice 3).
+- **Focus change**: the multiplexer paints the destination peer's accumulated buffer once (with SGR reconstruction and cursor restore), then resumes pass-through. The snapshot's role is narrow — make the few hundred ms before pi's next render look right; the bar for SGR fidelity is bounded.
+
+### Mesh status surface
+
+- A new in-peer baseline extension `mesh-rail` (auto-loaded under the launcher) renders mesh status as a single-line widget pinned directly above the input editor, via `ctx.ui.setWidget(name, factory, { placement: "aboveEditor" })`. The widget sits in the layout flow — it is not a floating overlay. The launcher emits no chrome of its own.
+- Slash command `/decisions` opens a rich centered overlay (focus-capturing) for full peer detail and pin/dismiss affordances. The `mesh-rail` widget continues to render underneath while `/decisions` is open — the widget is informational and ambient, and pi's overlay system handles input focus on its own. Other overlays (intercept's `ctx.ui.confirm`, future `/peers`) likewise leave the widget in place.
+- `mesh-rail` subscribes to launcher signals via the existing `launcher-bridge` extension. The launcher's `decisions-queue.mjs` and `focus-controller.mjs` modules continue to own state but stop holding render code; they broadcast renderable summaries to peers instead.
+- `scripts/_lib/chrome.mjs` and its tests are removed. `launch-mesh.mjs` stops writing peer-state chrome to stderr.
+
+### Decomposition diff
+
+- **Add to in-peer baseline extensions:** `mesh-rail` — *Renders the mesh-status widget (peers list, decisions count) above the input editor. Subscribes to launcher signals via `launcher-bridge`.*
+- **Remove from launcher modules:** `chrome` (deleted).
+- **Amend `decisions-queue` row:** *Pending-decisions state; pin/dismiss; broadcasts renderable summaries to `mesh-rail` peers* (no longer renders into `chrome`).
+
+### Trade-offs accepted
+
+- **The widget consumes one row of vertical space above the editor** in every peer's pi TUI when running under the launcher. Chat content is reflowed by pi's normal layout engine — there is no overlay-vs-base clipping to worry about (this was an issue under the floating-overlay approach considered earlier; abandoning it in favor of `aboveEditor` placement removes the clipping concern entirely).
+- **Single-line, borderless layout** keeps the row count fixed and predictable. Multi-line variants (e.g. one row per peer when peer count grows) can be revisited when peer counts justify it; for v1 a compact "name · N peers · M decisions" line is enough.
