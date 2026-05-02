@@ -14,7 +14,7 @@
  * ANSI rendering is deterministic for fixed input — easy to test.
  */
 
-// ANSI escape helpers (same palette as chrome.mjs)
+// ANSI escape helpers
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";

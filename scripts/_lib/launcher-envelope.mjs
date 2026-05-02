@@ -171,7 +171,7 @@ export function makeTailEventEnvelope(args) {
  *
  * Emitted by the Top Supervisor peer when it opens (`on: true`) or resolves
  * (`on: false`) a local escalation dialog. The launcher uses this to show a
- * "decisions pending" badge next to the peer in the chrome when the human is
+ * "decisions pending" badge in the mesh-rail widget when the human is
  * focused elsewhere.
  *
  * @param {{ peer: string; on: boolean }} args
@@ -257,15 +257,21 @@ export function makeDecisionsJumpEnvelope(args) {
 /**
  * Create a `mesh-rail-update` envelope (launcher → all peers).
  *
- * Carries a renderable snapshot of the current peer states and the launcher's
- * decisions-queue count. Broadcast on every state-mutating event so the
- * mesh-rail widget stays current in real time.
+ * Carries a renderable snapshot of the current peer states, the launcher's
+ * decisions-queue count, and optionally the full decisions array. Broadcast
+ * on every state-mutating event so the mesh-rail widget stays current in
+ * real time. The `decisions` field is optional for backward compatibility —
+ * existing code that only reads `peers`/`decisionCount` is unaffected.
  *
- * @param {{ peers: Array<{name: string, state: string, decisionPending: boolean}>, decisionCount: number }} args
+ * @param {{
+ *   peers: Array<{name: string, state: string, decisionPending: boolean}>,
+ *   decisionCount: number,
+ *   decisions?: Array<{msg_id: string, peer: string, kind: string, summary: string, pinned: boolean}>
+ * }} args
  * @returns {LauncherEnvelope}
  */
 export function makeMeshRailUpdateEnvelope(args) {
-  return {
+  const env = {
     v: 1,
     id: randomUUID(),
     kind: "mesh-rail-update",
@@ -273,6 +279,8 @@ export function makeMeshRailUpdateEnvelope(args) {
     peers: args.peers,
     decisionCount: args.decisionCount,
   };
+  if (args.decisions !== undefined) env.decisions = args.decisions;
+  return env;
 }
 
 /**

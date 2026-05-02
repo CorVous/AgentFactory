@@ -185,3 +185,51 @@ describe("setMeshRailHandle / getMeshRailHandle / clearMeshRailHandle", () => {
     expect(getMeshRailHandle()).not.toBe(h1);
   });
 });
+
+// ── decisions field in state (AC-1 coverage) ─────────────────────────────────
+
+describe("createMeshRailComponent — decisions in state", () => {
+  it("getState() includes an empty decisions array by default", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const s = component.getState();
+    expect(Array.isArray(s.decisions)).toBe(true);
+    expect(s.decisions).toHaveLength(0);
+  });
+
+  it("update() with decisions updates the state", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.update({
+      decisions: [
+        { msg_id: "m1", peer: "worker-a", kind: "approval-request", summary: "build step", pinned: false },
+      ],
+    });
+    const s = component.getState();
+    expect(s.decisions).toHaveLength(1);
+    expect(s.decisions[0]!.msg_id).toBe("m1");
+    expect(s.decisions[0]!.peer).toBe("worker-a");
+  });
+
+  it("partial update() with only decisions leaves peers and decisionCount unchanged", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.update({ decisionCount: 7, peers: [{ name: "p1", state: "running", decisionPending: false }] });
+    component.update({
+      decisions: [{ msg_id: "m2", peer: "p1", kind: "submission", summary: "artifacts", pinned: true }],
+    });
+    const s = component.getState();
+    expect(s.decisionCount).toBe(7);
+    expect(s.peers).toHaveLength(1);
+    expect(s.decisions).toHaveLength(1);
+    expect(s.decisions[0]!.pinned).toBe(true);
+  });
+
+  it("getState() returns a copy of decisions (not a reference)", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.update({
+      decisions: [{ msg_id: "x", peer: "p", kind: "k", summary: "s", pinned: false }],
+    });
+    const s1 = component.getState();
+    s1.decisions.push({ msg_id: "y", peer: "q", kind: "k2", summary: "s2", pinned: false });
+    const s2 = component.getState();
+    expect(s2.decisions).toHaveLength(1); // mutation of copy didn't affect state
+  });
+});

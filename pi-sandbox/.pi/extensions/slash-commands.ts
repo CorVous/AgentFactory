@@ -16,6 +16,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { getHabitat } from "./_lib/habitat";
+import { getMeshRailHandle } from "./_lib/mesh-rail";
+import { createDecisionsOverlayComponent } from "./_lib/decisions-overlay";
 
 const _require = createRequire(import.meta.url);
 
@@ -235,49 +237,105 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Register /decisions as a slash command.
-  // Emits a decisions-jump envelope to request the launcher to focus into the
-  // decisions-queue panel for arrow-key navigation.
+  // Opens a focus-capturing centered overlay listing all peers and queued
+  // decisions with arrow-key navigation. While the overlay is open, the
+  // always-on mesh-rail widget is hidden to reclaim its layout slot; it
+  // reappears on close.
+  //
+  // Falls back to emitting a decisions-jump envelope when ctx.hasUI is false
+  // (i.e. RPC / print mode) so the launcher can still honour the request.
   pi.registerCommand("decisions", {
-    description: "Jump to the launcher decisions-queue panel (arrow-key navigation).",
+    description: "Open the decisions overlay (peers + decision queue with arrow-key navigation).",
     handler: async (args: string, ctx) => {
-      const habitat = getHabitat();
-      const agentName = habitat.agentName;
+      if (!ctx.hasUI) {
+        // No UI available — fall back to launcher notification via decisions-jump.
+        const habitat = getHabitat();
+        const agentName = habitat.agentName;
 
-      // Load the launcher-bridge.
-      let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
-      try {
-        const bridge = _require(
-          path.resolve(__dirname, "launcher-bridge"),
-        ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-        sendControl = bridge.sendControl;
-      } catch {
-        // launcher-bridge not loaded or not available.
-      }
+        let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
+        try {
+          const bridge = _require(
+            path.resolve(__dirname, "launcher-bridge"),
+          ) as { sendControl?: (env: Record<string, unknown>) => boolean };
+          sendControl = bridge.sendControl;
+        } catch {
+          // launcher-bridge not loaded or not available.
+        }
 
-      if (!sendControl) {
-        ctx.ui.notify("/decisions: launcher-bridge not active (standalone mode).", "warning");
+        if (!sendControl) {
+          ctx.ui.notify("/decisions: no UI and launcher-bridge not active (standalone mode).", "warning");
+          return;
+        }
+
+        let makeDecisionsJumpEnvelope: ((args: { from: string }) => Record<string, unknown>) | undefined;
+        try {
+          const envMod = _require(getLauncherEnvelopePath()) as {
+            makeDecisionsJumpEnvelope: (args: { from: string }) => Record<string, unknown>;
+          };
+          makeDecisionsJumpEnvelope = envMod.makeDecisionsJumpEnvelope;
+        } catch {
+          ctx.ui.notify("/decisions: launcher-envelope module not found.", "warning");
+          return;
+        }
+
+        const env = makeDecisionsJumpEnvelope({ from: agentName });
+        const sent = sendControl(env);
+        if (sent) {
+          ctx.ui.notify("/decisions: requested focus → decisions-queue panel.", "info");
+        } else {
+          ctx.ui.notify("/decisions: launcher not connected.", "warning");
+        }
         return;
       }
 
-      // Build a decisions-jump envelope.
-      let makeDecisionsJumpEnvelope: ((args: { from: string }) => Record<string, unknown>) | undefined;
-      try {
-        const envMod = _require(getLauncherEnvelopePath()) as {
-          makeDecisionsJumpEnvelope: (args: { from: string }) => Record<string, unknown>;
-        };
-        makeDecisionsJumpEnvelope = envMod.makeDecisionsJumpEnvelope;
-      } catch {
-        ctx.ui.notify("/decisions: launcher-envelope module not found.", "warning");
-        return;
-      }
+      // UI is available — open the rich overlay. The mesh-rail stays visible
+      // throughout so the human keeps ambient peer-state context while picking
+      // an action in the overlay.
+      const railHandle = getMeshRailHandle();
+      const state = railHandle?.getState() ?? { peers: [], decisions: [], decisionCount: 0, peerName: "" };
 
-      const env = makeDecisionsJumpEnvelope({ from: agentName });
-      const sent = sendControl(env);
+      const result = await ctx.ui.custom(
+        (_tui, _theme, _keybindings, done) => {
+          const overlay = createDecisionsOverlayComponent({
+            peers: state.peers,
+            decisions: state.decisions ?? [],
+            done,
+          });
+          return overlay;
+        },
+        { overlay: true },
+      );
 
-      if (sent) {
-        ctx.ui.notify("/decisions: requested focus → decisions-queue panel.", "info");
-      } else {
-        ctx.ui.notify("/decisions: launcher not connected.", "warning");
+      // If the user pressed Enter on a decision, emit a focus-request so the
+      // launcher switches to that peer's pane.
+      if (result && result.action === "focus-peer" && result.peer) {
+        // Attempt to send a focus-request via the launcher-bridge (best effort).
+        let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
+        try {
+          const bridge = _require(
+            path.resolve(__dirname, "launcher-bridge"),
+          ) as { sendControl?: (env: Record<string, unknown>) => boolean };
+          sendControl = bridge.sendControl;
+        } catch {
+          // launcher-bridge not loaded — no focus switch, that is fine.
+        }
+
+        if (sendControl) {
+          let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
+          try {
+            const envMod = _require(getLauncherEnvelopePath()) as {
+              makeFocusRequestEnvelope: (args: { from: string; target: string }) => Record<string, unknown>;
+            };
+            makeFocusRequestEnvelope = envMod.makeFocusRequestEnvelope;
+          } catch {
+            // ignore
+          }
+
+          if (makeFocusRequestEnvelope) {
+            const habitat = getHabitat();
+            sendControl(makeFocusRequestEnvelope({ from: habitat.agentName, target: result.peer }));
+          }
+        }
       }
     },
   });
