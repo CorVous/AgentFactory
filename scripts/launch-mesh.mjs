@@ -227,6 +227,24 @@ pool.on("error", (peer, err) => {
 const launcherSock = createLauncherSocket();
 await launcherSock.bind(busRoot);
 
+// Wire focusController → launcher broadcast. Without this, every state-mutating
+// call (registerPeer, setFocus, setPeerState, …) silently no-ops its
+// mesh-rail-update broadcast and each peer's mesh-rail widget stays stuck at
+// "0 peers". The decisions-count getter pulls live from decisionsQueue so the
+// envelope reflects the current pin queue size.
+focusController.setBroadcast(
+  (env) => launcherSock.broadcast(env),
+  () => decisionsQueue.count(),
+);
+
+// Each peer's launcher-bridge connects asynchronously after spawn. By the time
+// it lands on the socket, all the registerPeer() broadcasts have already
+// fired, so the late arrival would never see them. Re-emit a snapshot on every
+// client-connected so the newcomer's mesh-rail catches up.
+launcherSock.on("client-connected", () => {
+  focusController.broadcastRailUpdate();
+});
+
 // When the focus controller changes focus, broadcast focus-changed to all
 // connected peers and repaint the multiplexer. mesh-rail handles peer-status display.
 focusController.on("focus-changed", ({ focused }) => {

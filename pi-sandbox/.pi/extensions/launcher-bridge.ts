@@ -30,6 +30,14 @@ interface BridgeState {
   ready: boolean;
   signalHandlers: Array<(env: any) => void>;
   meshRailUpdateHandlers: Array<(env: any) => void>;
+  // Cache of the most recent mesh-rail-update envelope so a handler that
+  // subscribes after the launcher has already broadcast can replay the latest
+  // snapshot immediately. Without this, the launcher's `client-connected →
+  // broadcastRailUpdate` round-trip races with mesh-rail's `session_start`
+  // (extensions session_start runs sequentially in load order — launcher-bridge
+  // first, mesh-rail last — so the envelope can land in the empty handler
+  // list and be lost).
+  lastMeshRailUpdate: any | null;
 }
 
 function getBridgeState(): BridgeState {
@@ -40,6 +48,7 @@ function getBridgeState(): BridgeState {
     ready: false,
     signalHandlers: [],
     meshRailUpdateHandlers: [],
+    lastMeshRailUpdate: null,
   });
 }
 
@@ -64,10 +73,16 @@ export function onSignal(handler: (env: any) => void): void {
 /**
  * Subscribe to mesh-rail-update envelopes from the launcher.
  * The handler receives the full envelope (peers array + decisionCount).
+ * If the launcher has already broadcast a snapshot before this subscription
+ * landed, the cached envelope is replayed synchronously so the late
+ * subscriber doesn't start out with an empty view.
  */
 export function onMeshRailUpdate(handler: (env: any) => void): void {
   const state = getBridgeState();
   state.meshRailUpdateHandlers.push(handler);
+  if (state.lastMeshRailUpdate) {
+    try { handler(state.lastMeshRailUpdate); } catch { /* ignore handler errors */ }
+  }
 }
 
 /**
@@ -97,7 +112,7 @@ export default function (pi: ExtensionAPI) {
     try {
       // The path is relative to this extension file's location in the repo.
       const sockMod = _require(
-        path.resolve(__dirname, "../../../../scripts/_lib/launcher-socket.mjs"),
+        path.resolve(__dirname, "../../../scripts/_lib/launcher-socket.mjs"),
       );
       createLauncherClient = sockMod.createLauncherClient;
     } catch (e) {
@@ -124,6 +139,10 @@ export default function (pi: ExtensionAPI) {
           break;
         }
         case "mesh-rail-update": {
+          // Cache the latest snapshot so subscribers that register after this
+          // arrival get replayed on subscribe (handles the launcher's
+          // client-connected catch-up vs. mesh-rail session_start race).
+          state.lastMeshRailUpdate = env;
           for (const handler of state.meshRailUpdateHandlers) {
             try { handler(env); } catch { /* ignore handler errors */ }
           }
