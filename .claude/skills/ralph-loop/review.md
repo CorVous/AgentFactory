@@ -4,7 +4,16 @@ Model: Sonnet.
 
 ## Task
 
-Review the changes on branch `{{BRANCH}}` against `{{SOURCE_BRANCH}}`. Verify deliverables, run smoke tests, and improve clarity where useful — without changing behaviour.
+Review the changes on branch `{{BRANCH}}` against `{{SOURCE_BRANCH}}`. Verify deliverables, run unit tests, and improve clarity where useful — without changing behaviour.
+
+## Step 0 — Lock to your worktree
+
+You have been given the same isolated git worktree the implementer used, at `{{WORKTREE}}`. **All your work happens inside that directory.** Do not `cd` to the main checkout or to any other worktree.
+
+```
+cd {{WORKTREE}}
+git status   # confirm you're on {{BRANCH}}
+```
 
 ## Step 1 — Read the change
 
@@ -18,11 +27,11 @@ Inspect:
 
 Compare the change against what the issue asked for. For every acceptance criterion, identify the test or code path that satisfies it. If a deliverable is missing, add the missing test and implementation using the same red-green discipline as the implementation phase.
 
-## Step 3 — Smoke test
+## Step 3 — Smoke test (typecheck + unit)
 
-Run the project's typecheck and test commands (see `{{TEST_COMMANDS}}`). Both must pass before you change anything else.
+Run the project's typecheck and unit-test commands (see `{{TEST_COMMANDS}}`). Both must pass before you change anything else. If they fail, fix the failures first — that takes priority over any clarity work.
 
-If they fail, fix the failures first — that takes priority over any clarity work.
+You do **not** run the full integration / e2e smoke suite at this stage — the merge agent runs that after merging.
 
 ## Step 4 — Clarity pass
 
@@ -60,7 +69,7 @@ Never change *what* the code does — only *how* it does it. All original output
 
 ## Step 7 — Commit and finish
 
-If you made changes, commit them with a message that describes the refinements. Re-run typecheck and tests one more time after committing.
+If you made changes, commit them with a message that describes the refinements. Re-run typecheck and unit tests one more time after committing.
 
 If you made no changes, that's fine — skip the commit.
 

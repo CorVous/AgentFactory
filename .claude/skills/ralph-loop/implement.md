@@ -6,7 +6,16 @@ Model: Sonnet.
 
 Fix issue `{{TASK_ID}}`: `{{ISSUE_TITLE}}` on branch `{{BRANCH}}`.
 
-Only work on this single issue. Do not touch other issues, even if they look related.
+Only work on this single issue. Do not touch other issues.
+
+## Step 0 — Lock to your worktree
+
+You have been given an isolated git worktree at `{{WORKTREE}}`. **Every git, test, and file command you run must be inside that directory.** Do not `cd` to the main checkout. Do not touch other worktrees under `.ralph-worktrees/` — other agents are working there in parallel.
+
+```
+cd {{WORKTREE}}
+git status   # confirm you're on {{BRANCH}}
+```
 
 ## Step 1 — Force rebase before any work
 
@@ -14,17 +23,14 @@ Before reading any code or writing any tests:
 
 ```
 git fetch
-git checkout {{BRANCH}}
 git rebase {{SOURCE_BRANCH}}
 ```
 
-If the rebase produces conflicts, resolve them, complete the rebase, and only then continue. If the branch does not yet exist, create it from `{{SOURCE_BRANCH}}`.
-
-This step is mandatory — if you skip it, the review and merge phases will fail.
+If the rebase produces conflicts, resolve them, complete the rebase, and only then continue. Skipping this step is not allowed — review and merge will fail without it.
 
 ## Step 2 — Pull in the issue
 
-Use the issue-tracker commands from `{{ISSUE_TRACKER_COMMANDS}}` to fetch issue `{{TASK_ID}}`. If it has a parent PRD or epic, pull that in too so you have the full context.
+Use the issue-tracker commands from `{{ISSUE_TRACKER_COMMANDS}}` to fetch issue `{{TASK_ID}}`. If it has a parent PRD or epic, pull that in too so you have full context.
 
 ## Step 3 — Explore
 
@@ -53,7 +59,7 @@ Rules:
 
 ## Step 5 — Feedback loop
 
-Before committing, run the project's typecheck and test commands (see `{{TEST_COMMANDS}}`). Both must pass.
+Before committing, run the project's typecheck and unit-test commands (see `{{TEST_COMMANDS}}`). Both must pass. Smoke / integration tests are run later by the merge agent — you don't need to run them here.
 
 ## Step 6 — Commit
 
@@ -81,5 +87,6 @@ Once the commit is in and the issue is commented, output:
 ## Final rules
 
 - Only work on a single issue.
+- Stay inside `{{WORKTREE}}` for the entire run.
 - Never push, never open a PR, never close the issue.
 - If you genuinely cannot complete the task (missing dependency, ambiguous spec), comment that on the issue and still output `<promise>COMPLETE</promise>` so the loop continues.

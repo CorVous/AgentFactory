@@ -22,3 +22,7 @@ Today's per-call `--rpc-sock` delegation primitive (`agent-spawn`) and the agent
 - `delegate` keeps its name but becomes a single tool call (was the two-tool `delegate` + `approve_delegation` dance).
 - Every supervisor pays a model turn per inbound submission; tier choice (`LEAD_HARE_MODEL` vs `TASK_RABBIT_MODEL`) matters for supervisors handling many submissions.
 - Migration ships in six phases, each independently safe: typed envelope → habitat materialiser → supervisor inbound rail → `deferred-*` ship submissions → atomic `delegate` replaces `agent-spawn` → topology + groups + status reporting.
+
+---
+
+> **Note (ADR-0004):** `human-relay` was retired by ADR-0004; cross-agent escalation flows over the bus to the launcher socket as well as between peers.
