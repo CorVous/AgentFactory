@@ -254,6 +254,10 @@ focusController.on("focus-changed", ({ focused }) => {
   launcherSock.broadcast(env);
   if (mux && focused) {
     mux.setFocus(focused);
+    // Nudge pi to fully redraw its TUI. ioctl(TIOCSWINSZ) only delivers
+    // SIGWINCH when dims change, so pool.resize() with same dimensions is a
+    // no-op. Send the signal directly to guarantee delivery regardless.
+    pool.signalSigwinch(focused);
   } else if (mux && !focused) {
     mux.setFocus(null);
   }

@@ -191,6 +191,23 @@ export class PtyPool extends EventEmitter {
   }
 
   /**
+   * Send SIGWINCH directly to a peer's PTY process, unconditionally.
+   * Unlike resize(), this works even when dimensions haven't changed —
+   * ioctl(TIOCSWINSZ) only delivers SIGWINCH when dims differ, so focus
+   * switches (same size) need this path to nudge pi into a full redraw.
+   *
+   * @param {string} name
+   */
+  signalSigwinch(name) {
+    const peer = this._peers.get(name);
+    if (!peer) return;
+    if (peer.status.state !== "running") return;
+    try {
+      process.kill(peer.pty.pid, "SIGWINCH");
+    } catch { /* process may have exited */ }
+  }
+
+  /**
    * Resize ALL peers to new dimensions (e.g. after SIGWINCH on the launcher terminal).
    *
    * @param {number} cols
