@@ -11,7 +11,7 @@
 // When the Top Supervisor's LLM picks escalate and no supervisor peer is
 // configured, localEscalate is invoked. This opens ctx.ui.confirm in this
 // peer's own TUI. Before opening, a decision-pending(on:true) envelope is
-// sent to the launcher so the chrome can show a badge if the human is
+// sent to the launcher so the mesh-rail widget can show a badge if the human is
 // focused elsewhere. After the human decides, decision-pending(on:false)
 // clears the badge.
 
@@ -99,14 +99,14 @@ function signalDecisionPending(agentName: string, on: boolean): void {
 /**
  * Show a local ctx.ui.confirm dialog for the Top Supervisor escalation path.
  * Emits decision-pending signals to the launcher before and after so the
- * chrome can show/hide the badge when the human is focused elsewhere.
+ * mesh-rail widget can show/hide the badge when the human is focused elsewhere.
  */
 async function runLocalEscalateDialog(
   ctx: ExtensionContext,
   agentName: string,
   req: { title: string; summary: string; preview: string },
 ): Promise<{ approved: boolean; note?: string }> {
-  // Signal to the launcher that a decision is pending (badge appears in chrome).
+  // Signal to the launcher that a decision is pending (badge appears in mesh-rail).
   signalDecisionPending(agentName, true);
 
   let approved = false;

@@ -14,7 +14,7 @@
  *
  * Events:
  *   "focus-changed" ({ focused: string | null, prev: string | null })
- *   "crash-notice"  (CrashNoticeEvent) — emitted by handleCrash for chrome rendering.
+ *   "crash-notice"  (CrashNoticeEvent) — emitted by handleCrash for diagnostics/logging.
  */
 
 import { EventEmitter } from "node:events";

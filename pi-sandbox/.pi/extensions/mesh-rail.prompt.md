@@ -6,4 +6,4 @@ current peer/decision counts in the mesh.
 
 The widget is informational only — it captures no keyboard input and exposes
 no model-facing tools. You do not need to do anything with it; treat it as
-chrome from the launcher.
+ambient status from the launcher.

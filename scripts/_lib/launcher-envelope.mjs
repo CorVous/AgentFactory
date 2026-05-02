@@ -171,7 +171,7 @@ export function makeTailEventEnvelope(args) {
  *
  * Emitted by the Top Supervisor peer when it opens (`on: true`) or resolves
  * (`on: false`) a local escalation dialog. The launcher uses this to show a
- * "decisions pending" badge next to the peer in the chrome when the human is
+ * "decisions pending" badge in the mesh-rail widget when the human is
  * focused elsewhere.
  *
  * @param {{ peer: string; on: boolean }} args
