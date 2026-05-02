@@ -264,7 +264,45 @@ describe("makeMeshRailUpdateEnvelope", () => {
     expect(env.decisionCount).toBe(0);
   });
 
-  it("round-trips through encodeEnvelope / tryDecodeEnvelope", () => {
+  it("omits decisions field when not provided (backward-compatible)", () => {
+    const env = makeMeshRailUpdateEnvelope({ peers: [], decisionCount: 0 });
+    expect("decisions" in env).toBe(false);
+  });
+
+  it("includes decisions field when provided", () => {
+    const decisions = [
+      { msg_id: "m1", peer: "worker-a", kind: "approval-request", summary: "build step", pinned: false },
+      { msg_id: "m2", peer: "authority", kind: "submission", summary: "3 artifacts", pinned: true },
+    ];
+    const env = makeMeshRailUpdateEnvelope({
+      peers: [],
+      decisionCount: 2,
+      decisions,
+    });
+    expect("decisions" in env).toBe(true);
+    expect((env as any).decisions).toHaveLength(2);
+    expect((env as any).decisions[0].msg_id).toBe("m1");
+    expect((env as any).decisions[1].pinned).toBe(true);
+  });
+
+  it("round-trips decisions through encodeEnvelope / tryDecodeEnvelope", () => {
+    const decisions = [
+      { msg_id: "m1", peer: "worker-a", kind: "approval-request", summary: "build step", pinned: false },
+    ];
+    const env = makeMeshRailUpdateEnvelope({
+      peers: [{ name: "alpha", state: "running", decisionPending: false }],
+      decisionCount: 1,
+      decisions,
+    });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("mesh-rail-update");
+    expect((result.env as any)?.decisions[0].msg_id).toBe("m1");
+    expect((result.env as any)?.decisions[0].peer).toBe("worker-a");
+    expect((result.env as any)?.decisions[0].pinned).toBe(false);
+  });
+
+  it("round-trips through encodeEnvelope / tryDecodeEnvelope (without decisions)", () => {
     const env = makeMeshRailUpdateEnvelope({
       peers: [{ name: "alpha", state: "running", decisionPending: false }],
       decisionCount: 1,
@@ -274,6 +312,7 @@ describe("makeMeshRailUpdateEnvelope", () => {
     expect(result.env?.kind).toBe("mesh-rail-update");
     expect(result.env?.decisionCount).toBe(1);
     expect((result.env as any)?.peers[0].name).toBe("alpha");
+    expect("decisions" in (result.env as any)).toBe(false);
   });
 });
 

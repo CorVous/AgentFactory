@@ -185,3 +185,104 @@ describe("setMeshRailHandle / getMeshRailHandle / clearMeshRailHandle", () => {
     expect(getMeshRailHandle()).not.toBe(h1);
   });
 });
+
+// ── setHidden / isHidden (AC-2 coverage) ─────────────────────────────────────
+
+describe("createMeshRailComponent — setHidden / isHidden", () => {
+  it("isHidden() returns false by default", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    expect(component.isHidden()).toBe(false);
+  });
+
+  it("setHidden(true) makes render() return an empty array", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.setHidden(true);
+    expect(component.render(80)).toEqual([]);
+  });
+
+  it("setHidden(false) restores normal rendering", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.setHidden(true);
+    component.setHidden(false);
+    const lines = component.render(80);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.join("\n")).toContain("me");
+  });
+
+  it("setHidden(true) calls the injected invalidate callback", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const invalidateSpy = vi.fn();
+    (component as any)._setInvalidate(invalidateSpy);
+
+    component.setHidden(true);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("setHidden(false) calls the injected invalidate callback", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const invalidateSpy = vi.fn();
+    (component as any)._setInvalidate(invalidateSpy);
+
+    component.setHidden(true);
+    invalidateSpy.mockClear();
+    component.setHidden(false);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("isHidden() reflects the most recent setHidden call", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    expect(component.isHidden()).toBe(false);
+    component.setHidden(true);
+    expect(component.isHidden()).toBe(true);
+    component.setHidden(false);
+    expect(component.isHidden()).toBe(false);
+  });
+});
+
+// ── decisions field in state (AC-1 coverage) ─────────────────────────────────
+
+describe("createMeshRailComponent — decisions in state", () => {
+  it("getState() includes an empty decisions array by default", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const s = component.getState();
+    expect(Array.isArray(s.decisions)).toBe(true);
+    expect(s.decisions).toHaveLength(0);
+  });
+
+  it("update() with decisions updates the state", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.update({
+      decisions: [
+        { msg_id: "m1", peer: "worker-a", kind: "approval-request", summary: "build step", pinned: false },
+      ],
+    });
+    const s = component.getState();
+    expect(s.decisions).toHaveLength(1);
+    expect(s.decisions[0]!.msg_id).toBe("m1");
+    expect(s.decisions[0]!.peer).toBe("worker-a");
+  });
+
+  it("partial update() with only decisions leaves peers and decisionCount unchanged", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.update({ decisionCount: 7, peers: [{ name: "p1", state: "running", decisionPending: false }] });
+    component.update({
+      decisions: [{ msg_id: "m2", peer: "p1", kind: "submission", summary: "artifacts", pinned: true }],
+    });
+    const s = component.getState();
+    expect(s.decisionCount).toBe(7);
+    expect(s.peers).toHaveLength(1);
+    expect(s.decisions).toHaveLength(1);
+    expect(s.decisions[0]!.pinned).toBe(true);
+  });
+
+  it("getState() returns a copy of decisions (not a reference)", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.update({
+      decisions: [{ msg_id: "x", peer: "p", kind: "k", summary: "s", pinned: false }],
+    });
+    const s1 = component.getState();
+    s1.decisions.push({ msg_id: "y", peer: "q", kind: "k2", summary: "s2", pinned: false });
+    const s2 = component.getState();
+    expect(s2.decisions).toHaveLength(1); // mutation of copy didn't affect state
+  });
+});
