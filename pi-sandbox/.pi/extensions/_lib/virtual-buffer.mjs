@@ -193,6 +193,16 @@ export class VirtualBuffer {
   }
 
   /**
+   * Force the next paint() to re-render from xterm's current state. Used by
+   * the multiplexer on focus change so a stale cached snapshot can't ghost
+   * behind the new peer's screen.
+   */
+  invalidate() {
+    this._dirty = true;
+    this._cachedPaint = "";
+  }
+
+  /**
    * Resize the virtual buffer. Invalidates the cached paint.
    *
    * @param {number} cols

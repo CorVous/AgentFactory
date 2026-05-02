@@ -213,7 +213,7 @@ describe("attachPool", () => {
 // ── setFocus is the slice-3 seam ─────────────────────────────────────────────
 
 describe("setFocus seam for slice-3 focus switching", () => {
-  it("switching focus writes exactly one snapshot of the new peer's buffer", () => {
+  it("switching focus emits a hard-reset prefix then the new peer's snapshot", () => {
     const out = makeOutputStream();
     const pool = makeFakePool();
     let paintCount = 0;
@@ -228,8 +228,10 @@ describe("setFocus seam for slice-3 focus switching", () => {
     paintCount = 0;
 
     mux.setFocus("peer-b");
-    // Must write exactly the snapshot string once
-    expect(out.output).toBe("BUFFER-B");
+    // DECSTR + erase scrollback + erase screen + home, then the snapshot.
+    // Without the prefix, ANSI residue (scroll regions, SGR, alt-screen state)
+    // from peer-a leaks into peer-b's painted output.
+    expect(out.output).toBe("\x1b[!p\x1b[3J\x1b[2J\x1b[H" + "BUFFER-B");
     expect(paintCount).toBe(1);
   });
 
