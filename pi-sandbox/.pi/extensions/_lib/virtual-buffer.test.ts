@@ -272,3 +272,34 @@ describe("paint() cursor position", () => {
     vb.dispose();
   });
 });
+
+describe("drain", () => {
+  it("resolves immediately when no writes are pending", async () => {
+    const vb = createVirtualBuffer({ cols: 40, rows: 10 });
+    await vb.drain();
+    vb.dispose();
+  });
+
+  it("waits for in-flight write() to finish parsing", async () => {
+    const vb = createVirtualBuffer({ cols: 40, rows: 10 });
+    // Fire-and-forget a write the way pty-pool does — do not await it here.
+    vb.write("late-content");
+    // drain() should wait until xterm has parsed the chunk before resolving.
+    await vb.drain();
+    expect(vb.paint()).toContain("late-content");
+    vb.dispose();
+  });
+
+  it("drains additional writes that arrive while drain() is waiting", async () => {
+    const vb = createVirtualBuffer({ cols: 40, rows: 10 });
+    vb.write("first");
+    const drainPromise = vb.drain();
+    // Schedule a second write before the first finishes parsing.
+    queueMicrotask(() => { vb.write("second"); });
+    await drainPromise;
+    const out = vb.paint();
+    expect(out).toContain("first");
+    expect(out).toContain("second");
+    vb.dispose();
+  });
+});

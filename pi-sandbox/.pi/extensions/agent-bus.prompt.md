@@ -28,10 +28,10 @@ first 8 characters.
 other peers are queued and will surface as user prompts after the call
 returns — you cannot handle them concurrently.
 
-**Mesh nodes** run in `--mode rpc` (long-lived subprocess mode). After
-your initial turn completes, the process stays alive waiting for the
-next bus message. You do not need to loop or poll — just finish your
-response and the next message will start a new turn automatically.
+**Mesh nodes** are long-lived: after your initial turn completes, the
+process stays alive waiting for the next bus message. You do not need
+to loop or poll — just finish your response and the next message will
+start a new turn automatically.
 
 `peer offline` and `timeout` are normal failure modes, not errors to
 retry — there is no offline queue or retry mechanism.

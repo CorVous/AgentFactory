@@ -104,9 +104,36 @@ export class Multiplexer extends EventEmitter {
     const prev = this._focused;
     this._focused = name;
     if (name !== prev) {
-      this._repaint();
+      // Focus change: hard-reset terminal state before repainting so scroll
+      // regions, SGR attrs, and alt-screen content from the previously-focused
+      // peer don't ghost behind the new peer's snapshot.
+      this._repaint({ hardReset: true });
+      // Schedule a follow-up paint after the new peer's xterm parser has
+      // drained pending writes — otherwise PTY chunks that arrived just
+      // before the switch are still being parsed when paint() ran above,
+      // leaving the snapshot stale until the next chunk arrives.
+      void this._followupPaintAfterDrain(name);
       this.emit("focus-changed", name);
     }
+  }
+
+  /**
+   * Re-paint the focused peer once xterm has finished parsing any in-flight
+   * writes. No-op if focus changed again before the drain resolved.
+   *
+   * @param {string} expectedFocus
+   * @returns {Promise<void>}
+   */
+  async _followupPaintAfterDrain(expectedFocus) {
+    if (!this._pool) return;
+    const vb = this._pool.getBuffer(expectedFocus);
+    if (!vb || typeof vb.drain !== "function") return;
+    await vb.drain();
+    // Bail if the user switched focus again while we were waiting.
+    if (this._focused !== expectedFocus) return;
+    if (typeof vb.invalidate === "function") vb.invalidate();
+    const ansi = vb.paint();
+    this._out.write(ansi);
   }
 
   /**
@@ -160,10 +187,24 @@ export class Multiplexer extends EventEmitter {
 
   // ── private ─────────────────────────────────────────────────────────────────
 
-  _repaint() {
+  /**
+   * @param {{ hardReset?: boolean }} [opts]
+   */
+  _repaint(opts = {}) {
     if (!this._focused || !this._pool) return;
     const vb = this._pool.getBuffer(this._focused);
     if (!vb) return;
+    if (opts.hardReset) {
+      // DECSTR (soft terminal reset) + erase scrollback + erase screen + home.
+      // Forces the terminal back to a known state before paint() writes the
+      // new peer's snapshot, so SGR / scroll-region / alt-screen residue from
+      // the previously-focused peer doesn't ghost through.
+      this._out.write("\x1b[!p\x1b[3J\x1b[2J\x1b[H");
+      // Invalidate the virtual buffer's cached paint so paint() re-renders
+      // from xterm-headless's current state instead of returning a stale
+      // snapshot that was generated before recent PTY chunks were parsed.
+      if (typeof vb.invalidate === "function") vb.invalidate();
+    }
     const ansi = vb.paint();
     this._out.write(ansi);
   }
