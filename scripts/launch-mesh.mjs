@@ -254,10 +254,11 @@ focusController.on("focus-changed", ({ focused }) => {
   launcherSock.broadcast(env);
   if (mux && focused) {
     mux.setFocus(focused);
-    // Nudge pi to fully redraw its TUI. ioctl(TIOCSWINSZ) only delivers
-    // SIGWINCH when dims change, so pool.resize() with same dimensions is a
-    // no-op. Send the signal directly to guarantee delivery regardless.
-    pool.signalSigwinch(focused);
+    // Pi's full redraw on focus-in is triggered peer-side by mesh-rail
+    // calling tui.requestRender(true) on the focus-changed envelope.
+    // Bare SIGWINCH from outside doesn't fire pi's resize handler
+    // (Node only emits "resize" on actual dim change), so the launcher
+    // itself does no further nudging beyond the broadcast above.
   } else if (mux && !focused) {
     mux.setFocus(null);
   }
