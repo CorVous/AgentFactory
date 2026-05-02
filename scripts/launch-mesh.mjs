@@ -36,7 +36,6 @@ import { createLauncherSocket } from "./_lib/launcher-socket.mjs";
 import { makeFocusChangedEnvelope, makeTailToggleEnvelope, makePinnedResolvedEnvelope } from "./_lib/launcher-envelope.mjs";
 import { createDecisionsQueue } from "./_lib/decisions-queue.mjs";
 import { createFocusController } from "./_lib/focus-controller.mjs";
-import { renderChrome } from "./_lib/chrome.mjs";
 import { createBusTailBuffer, renderBusTailOverlay } from "./_lib/bus-tail.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -149,18 +148,6 @@ function makePrefix(name, idx) {
   return `${COLORS[idx % COLORS.length]}[${name}]${RESET} `;
 }
 
-// ── Right-rail chrome state ──────────────────────────────────────────────────
-//
-// peerEntries tracks the full PeerEntry for each node so the chrome can render
-// accurate state icons and crash info. Updated on pool.on("exit") /
-// pool.on("crash") and re-rendered whenever focus changes or a peer exits/crashes.
-//
-// Chrome is written to stderr (separate from the peer pane on stdout) and
-// redrawn on every focus or state change.
-
-/** @type {Map<string, import('./_lib/chrome.mjs').PeerEntry>} */
-const peerEntries = new Map();
-
 // Bus-tail overlay state — buffer of observed envelopes and toggle state.
 const busTailBuffer = createBusTailBuffer();
 const busTailState = { on: false, filter: undefined };
@@ -169,26 +156,17 @@ const busTailState = { on: false, filter: undefined };
 const decisionsQueue = createDecisionsQueue();
 
 /**
- * Render and emit the right-rail chrome to stderr.
- * Called on every focus change and peer state transition.
+ * Render and emit the bus-tail overlay to stderr.
+ * Called whenever the tail state changes (toggle, new event).
  */
-function repaintChrome() {
-  const peers = [...peerEntries.values()];
-  const chrome = renderChrome({
-    peers,
-    focused: focusController.getFocus(),
-    busRoot,
-    meshName: path.basename(meshPath, ".yaml"),
-    autoShiftNotice: focusController.getAutoShiftNotice(),
-    decisionsQueue: decisionsQueue.list(),
-  });
+function repaintBusTail() {
   const tailEntries = busTailBuffer.getEntries(busTailState.filter);
   const tailOutput = renderBusTailOverlay({
     entries: tailEntries,
     active: busTailState.on,
     filter: busTailState.filter,
   });
-  process.stderr.write(tailOutput + chrome);
+  if (tailOutput) process.stderr.write(tailOutput);
 }
 
 
@@ -249,7 +227,7 @@ const launcherSock = createLauncherSocket();
 await launcherSock.bind(busRoot);
 
 // When the focus controller changes focus, broadcast focus-changed to all
-// connected peers, repaint the multiplexer, and redraw the chrome.
+// connected peers and repaint the multiplexer.
 focusController.on("focus-changed", ({ focused }) => {
   const env = makeFocusChangedEnvelope({ focused });
   launcherSock.broadcast(env);
@@ -258,17 +236,16 @@ focusController.on("focus-changed", ({ focused }) => {
   } else if (mux && !focused) {
     mux.setFocus(null);
   }
-  repaintChrome();
 });
 
 // ── Crash auto-shift (slice 4) ───────────────────────────────────────────────
 //
 // When a peer's PTY exits abnormally (non-zero code or signal), the pool emits
 // a typed "crash" event. We:
-//   1. Mark the peer as "crashed" in peerEntries (with exit code / signal).
+//   1. Sync the crashed state into focusController so the mesh-rail broadcast
+//      carries "crashed" for this peer.
 //   2. Call focusController.handleCrash() to auto-shift focus to the top
 //      supervisor if the crashed peer was the focused one.
-//   3. Repaint the chrome so the crashed indicator and auto-shift notice show.
 //
 // The top supervisor is resolved once from the topology. If it can't be resolved
 // uniquely (zero or multiple candidates), crashTarget is null and handleCrash
@@ -284,8 +261,6 @@ const crashTarget = crashAutoShiftTarget(topology);
 
 pool.on("crash", (/** @type {import('./_lib/pty-pool.mjs').CrashEvent} */ ev) => {
   const { peer, exitCode, signal } = ev;
-  // Override state to "crashed" (exit handler set "exited" first).
-  peerEntries.set(peer, { name: peer, state: "crashed", exitCode, exitSignal: signal });
   // Sync the crashed state into focus-controller so the mesh-rail broadcast
   // emitted by handleCrash below carries "crashed" for this peer.
   focusController.setPeerState(peer, "crashed");
@@ -297,7 +272,6 @@ pool.on("crash", (/** @type {import('./_lib/pty-pool.mjs').CrashEvent} */ ev) =>
   // Unregister after handleCrash: focus already shifted away so unregisterPeer
   // won't trigger the fallback "clear focus" path for the now-shifted focus.
   focusController.unregisterPeer(peer);
-  repaintChrome();
 });
 
 // crash-notice event: emitted by handleCrash — log it for debugging.
@@ -335,7 +309,7 @@ launcherSock.on("envelope", (env) => {
       ...(busTailState.filter !== undefined ? { filter: busTailState.filter } : {}),
     });
     launcherSock.broadcast(broadcast);
-    repaintChrome();
+    repaintBusTail();
   } else if (env.kind === "tail-event") {
     // A focused peer forwarded a bus envelope observation.
     if (busTailState.on) {
@@ -347,20 +321,19 @@ launcherSock.on("envelope", (env) => {
         body: typeof env.body === "string" ? env.body : "",
         direction: "in",
       });
-      repaintChrome();
+      repaintBusTail();
     }
   } else if (env.kind === "decision-pending") {
     // Top Supervisor opened (on:true) or resolved (on:false) a local escalation dialog.
-    // Update the peer's decisionPending flag and repaint so the badge appears/disappears.
+    // Update the peer's decisionPending flag via focusController so the mesh-rail
+    // broadcast carries the updated state.
     const peerName = typeof env.peer === "string" ? env.peer : null;
     const on = Boolean(env.on);
-    if (peerName && peerEntries.has(peerName)) {
-      const entry = peerEntries.get(peerName);
-      peerEntries.set(peerName, { ...entry, decisionPending: on });
+    if (peerName) {
+      focusController.setPeerDecisionPending(peerName, on);
       process.stderr.write(
         `launch-mesh: decision-pending from "${peerName}": ${on ? "opened" : "resolved"}\n`,
       );
-      repaintChrome();
     }
   } else if (env.kind === "pin-request") {
     // A peer sent /pin — promote the currently-open dialog into the decisions queue
@@ -375,7 +348,6 @@ launcherSock.on("envelope", (env) => {
       process.stderr.write(
         `launch-mesh: pin-request from "${peer}": pinned msg_id=${msg_id.slice(0, 8)}\n`,
       );
-      repaintChrome();
     }
   } else if (env.kind === "decisions-jump") {
     // A peer sent /decisions — log it; full TUI panel focus is deferred (requires
@@ -384,8 +356,6 @@ launcherSock.on("envelope", (env) => {
     process.stderr.write(
       `launch-mesh: decisions-jump from "${from}": ${decisionsQueue.count()} item(s) in queue (TUI panel focus deferred)\n`,
     );
-    // Repaint so the queue count badge is visible.
-    repaintChrome();
   }
 });
 
@@ -457,9 +427,6 @@ for (let i = 0; i < topology.nodes.length; i++) {
     env: peerEnv,
   });
 
-  // Track this peer as spawning; updated to crashed/exited on exit.
-  peerEntries.set(name, { name, state: "spawning" });
-
   // Register the peer with the focus controller so setFocus can validate names.
   focusController.registerPeer(name);
 
@@ -470,15 +437,13 @@ for (let i = 0; i < topology.nodes.length; i++) {
   pool.on("exit", (exitedName, code, signal) => {
     if (exitedName === name) {
       const isCrash = (code !== null && code !== 0) || (signal !== null && signal !== "");
-      peerEntries.set(name, { name, state: "exited", exitCode: code, exitSignal: signal });
       process.stderr.write(`${prefix}exited (code=${code} signal=${signal})\n`);
       if (!isCrash) {
         // Clean exit: unregister immediately so focus falls back.
         focusController.unregisterPeer(name);
-        repaintChrome();
       }
       // For crash exits: the "crash" handler fires next (synchronously) and will
-      // handle unregistration and auto-shift, then repaint.
+      // handle unregistration and auto-shift.
     }
   });
 
@@ -505,7 +470,6 @@ if (entryPeer && nodeNames.includes(entryPeer)) {
     // Clear auto-shift notice on first user input after a crash auto-shift.
     if (focusController.getAutoShiftNotice()) {
       focusController.clearAutoShiftNotice();
-      repaintChrome();
     }
     if (!focused) return;
     // Ctrl-C in raw mode: initiate teardown.
@@ -545,11 +509,6 @@ pool.on("exit", () => {
     process.exit(0);
   }
 });
-
-// Paint the initial right-rail chrome to stderr (and re-paint on every focus /
-// state change via repaintChrome() — wired above in the focus-changed handler
-// and pool.on("exit") handlers).
-repaintChrome();
 
 process.stderr.write(
   `launch-mesh: started ${nodeNames.length} node(s) — bus_root=${busRoot}\n` +
