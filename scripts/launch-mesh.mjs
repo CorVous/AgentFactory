@@ -65,8 +65,6 @@ if (topology.nodes.length < 2) {
   die("topology must have at least 2 nodes");
 }
 
-// ── Validate topology (entry:, relay deprecation, top supervisor, peer refs) ──
-
 /** @param {string} recipeName */
 function loadRecipeModel(recipeName) {
   const recipeFile = path.join(REPO_ROOT, "pi-sandbox", "agents", `${recipeName}.yaml`);
@@ -77,33 +75,19 @@ function loadRecipeModel(recipeName) {
   return undefined;
 }
 
-const { errors: topoErrors, warnings: topoWarnings } = validateTopology(topology, loadRecipeModel);
+// ── Resolve bus root ──────────────────────────────────────────────────────────
 
-for (const warning of topoWarnings) {
-  process.stderr.write(`launch-mesh: ${warning}\n`);
-}
-
-if (topoErrors.length > 0) {
-  for (const error of topoErrors) {
-    process.stderr.write(`launch-mesh: validation error: ${error}\n`);
-  }
-  process.exit(1);
-}
-
-// Resolve entry peer (for launcher TUI focus — informational for now).
-const { entryPeer } = resolveEntry(topology);
-if (entryPeer) {
-  process.stderr.write(`launch-mesh: entry peer: ${entryPeer}\n`);
-}
-
-// Resolve bus root
 const busRoot = topology.bus_root
   ? path.resolve(topology.bus_root)
   : path.join(os.homedir(), ".pi-agent-bus", `mesh-${path.basename(meshPath, ".yaml")}`);
 
 mkdirSync(busRoot, { recursive: true });
 
-// Assign names: explicit `name:` wins; missing name auto-generates <breed>-<shortName>
+// ── Assign names ──────────────────────────────────────────────────────────────
+// Explicit `name:` wins; missing name auto-generates <breed>-<shortName> using
+// the recipe's optional shortName (or filename stem) plus a breed pool. Runs
+// BEFORE validation so validateTopology / resolveEntry see fully-named nodes.
+
 const taken = await probeBusRoot(busRoot);
 for (const node of topology.nodes) {
   if (node.name) {
@@ -124,10 +108,34 @@ for (const node of topology.nodes) {
   taken.add(node.name);
 }
 
-// Validate unique names after assignment
+// Validate unique names after assignment (defence in depth — parseTopology
+// already rejects dups among declared names, but auto-naming might collide
+// with a pre-bound bus socket; generateInstanceName handles that, but a
+// user-declared name that matches an auto-generated slug would slip through).
 const names = topology.nodes.map((n) => n.name);
 const dupes = names.filter((n, i) => names.indexOf(n) !== i);
 if (dupes.length > 0) die(`duplicate node names: ${dupes.join(", ")}`);
+
+// ── Validate topology (entry:, relay deprecation, top supervisor, peer refs) ──
+
+const { errors: topoErrors, warnings: topoWarnings } = validateTopology(topology, loadRecipeModel);
+
+for (const warning of topoWarnings) {
+  process.stderr.write(`launch-mesh: ${warning}\n`);
+}
+
+if (topoErrors.length > 0) {
+  for (const error of topoErrors) {
+    process.stderr.write(`launch-mesh: validation error: ${error}\n`);
+  }
+  process.exit(1);
+}
+
+// Resolve entry peer (for launcher TUI focus — informational for now).
+const { entryPeer } = resolveEntry(topology);
+if (entryPeer) {
+  process.stderr.write(`launch-mesh: entry peer: ${entryPeer}\n`);
+}
 
 // Pre-compute per-node overlays (validates @group refs and peer references early).
 const nodeOverlays = new Map();

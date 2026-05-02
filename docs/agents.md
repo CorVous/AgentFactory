@@ -708,6 +708,15 @@ nodes:
 All four peer fields (`supervisor`, `submitTo`, `acceptedFrom`, `peers`) are
 optional. Nodes without them launch with only their recipe's own peer fields.
 
+`name:` is also optional. When omitted, the launcher generates a
+`<breed>-<shortName>` slug from the recipe (using the same breed-pool /
+collision-detection machinery as `npm run agent`). Auto-named nodes can't be
+referenced by name elsewhere in the topology — `entry:`, `supervisor:`,
+`submitTo:`, `acceptedFrom:`, `peers:`, and group memberships all need an
+explicit name. Use it for "anonymous worker" nodes whose roles only flow
+outward (e.g. several workers that all set `supervisor: authority` but are
+never enumerated by the authority).
+
 ### Group references
 
 Any string value in `acceptedFrom`, `peers`, or a `group_bindings` array that

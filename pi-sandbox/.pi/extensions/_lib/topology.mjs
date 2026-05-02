@@ -2,7 +2,7 @@ import { parse as parseYaml } from "yaml";
 
 /**
  * @typedef {{
- *   name: string;
+ *   name?: string;
  *   recipe?: string;
  *   type?: "relay";
  *   sandbox?: string;
@@ -56,11 +56,8 @@ export function parseTopology(yamlText) {
 
   const nodes = raw.nodes.map((n, idx) => {
     if (!n || typeof n !== "object") throw new Error(`topology: node[${idx}] must be a mapping`);
-    if (typeof n.name !== "string" || !n.name) {
-      throw new Error(`topology: node[${idx}] missing 'name'`);
-    }
     return {
-      name: n.name,
+      ...(typeof n.name === "string" && n.name ? { name: n.name } : {}),
       ...(typeof n.recipe === "string" ? { recipe: n.recipe } : {}),
       ...(n.type === "relay" ? { type: /** @type {"relay"} */ ("relay") } : {}),
       ...(typeof n.sandbox === "string" ? { sandbox: n.sandbox } : {}),
@@ -76,9 +73,11 @@ export function parseTopology(yamlText) {
     };
   });
 
-  // Reject duplicate names
+  // Reject duplicate names among the named nodes (unnamed nodes get assigned
+  // names later by the launcher and are checked again post-assignment).
   const seen = new Set();
   for (const node of nodes) {
+    if (!node.name) continue;
     if (seen.has(node.name)) throw new Error(`topology: duplicate node name: '${node.name}'`);
     seen.add(node.name);
   }

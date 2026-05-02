@@ -18,6 +18,10 @@
 # Human interaction is provided by the launcher TUI (see ADR-0004).
 # The former `type: relay` human node has been removed.
 #
+# Note: all nodes in this mesh require explicit names because they are referenced
+# by structural fields — groups list them, submitTo/acceptedFrom name them directly.
+# See authority-mesh.yaml for an example that uses auto-generated names for workers.
+#
 # Launch:
 #   set -a; source models.env; set +a
 #   npm run mesh -- pi-sandbox/meshes/grouped-mesh.yaml

@@ -75,6 +75,46 @@ nodes:
   it("rejects empty nodes array", () => {
     expect(() => parseTopology("nodes: []\n")).toThrow(/nodes/i);
   });
+
+  it("accepts a node without 'name' (the launcher auto-assigns one)", () => {
+    const yaml = `
+nodes:
+  - recipe: mesh-node
+`;
+    const topo = parseTopology(yaml);
+    expect(topo.nodes).toHaveLength(1);
+    expect(topo.nodes[0].name).toBeUndefined();
+    expect(topo.nodes[0].recipe).toBe("mesh-node");
+  });
+
+  it("accepts a mix of named and unnamed nodes", () => {
+    const yaml = `
+nodes:
+  - name: authority
+    recipe: mesh-authority
+  - recipe: mesh-node
+  - recipe: mesh-node
+    supervisor: authority
+`;
+    const topo = parseTopology(yaml);
+    expect(topo.nodes).toHaveLength(3);
+    expect(topo.nodes[0].name).toBe("authority");
+    expect(topo.nodes[1].name).toBeUndefined();
+    expect(topo.nodes[2].name).toBeUndefined();
+    expect(topo.nodes[2].supervisor).toBe("authority");
+  });
+
+  it("still rejects duplicate names among named nodes when unnamed nodes are also present", () => {
+    const yaml = `
+nodes:
+  - name: worker
+    recipe: mesh-node
+  - recipe: mesh-node
+  - name: worker
+    recipe: mesh-node
+`;
+    expect(() => parseTopology(yaml)).toThrow(/duplicate node name/i);
+  });
 });
 
 // ── resolveNode ──────────────────────────────────────────────────────────────
