@@ -164,9 +164,21 @@ export default function (pi: ExtensionAPI) {
       if (process.env.AGENT_DEBUG === "1") {
         ctx.ui.notify("launcher-bridge: connected to launcher socket", "info");
       }
-    } catch {
+    } catch (err) {
       // Launcher socket not present — standalone mode. Degrade gracefully.
       state.client = null;
+      // Loud one-line warning so failures aren't invisible. PI_MESH_PEER=1
+      // means we are running under the launcher and a connect failure here
+      // is a real bug (mesh-rail will stay empty, /focus broadcasts will be
+      // missed). When PI_MESH_PEER is unset this is the legitimate
+      // standalone-mode path and we stay quiet.
+      if (process.env.PI_MESH_PEER === "1") {
+        const reason = (err && (err as { message?: string }).message) || String(err);
+        process.stderr.write(
+          `launcher-bridge: connect failed to ${busRoot}/__launcher__.sock — ${reason}\n` +
+          `                 (peer "${agentName}" running standalone; mesh-rail and /focus will not work)\n`,
+        );
+      }
       if (process.env.AGENT_DEBUG === "1") {
         ctx.ui.notify("launcher-bridge: launcher socket not found (standalone mode)", "info");
       }
