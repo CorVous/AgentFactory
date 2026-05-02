@@ -75,18 +75,28 @@ export class FocusController extends EventEmitter {
      * @type {(() => number) | null}
      */
     this._getDecisionCount = null;
+    /**
+     * Callback to retrieve the full decisions list for the rail update.
+     * Injected by the launcher alongside _broadcast.
+     *
+     * @type {(() => import('./decisions-queue.mjs').DecisionItem[]) | null}
+     */
+    this._getDecisions = null;
   }
 
   /**
-   * Inject a broadcast function and an optional decisions-count getter.
-   * Once set, every state-mutating method broadcasts a `mesh-rail-update` envelope.
+   * Inject a broadcast function, an optional decisions-count getter, and an
+   * optional full decisions-list getter. Once set, every state-mutating method
+   * broadcasts a `mesh-rail-update` envelope.
    *
    * @param {(env: import('./launcher-envelope.mjs').LauncherEnvelope) => void} broadcastFn
    * @param {() => number} [getDecisionCount]
+   * @param {() => import('./decisions-queue.mjs').DecisionItem[]} [getDecisions]
    */
-  setBroadcast(broadcastFn, getDecisionCount = () => 0) {
+  setBroadcast(broadcastFn, getDecisionCount = () => 0, getDecisions = () => []) {
     this._broadcast = broadcastFn;
     this._getDecisionCount = getDecisionCount;
+    this._getDecisions = getDecisions;
   }
 
   /**
@@ -101,7 +111,8 @@ export class FocusController extends EventEmitter {
       decisionPending: this._peerDecisionPending.get(name) ?? false,
     }));
     const decisionCount = this._getDecisionCount ? this._getDecisionCount() : 0;
-    this._broadcast(makeMeshRailUpdateEnvelope({ peers, decisionCount }));
+    const decisions = this._getDecisions ? this._getDecisions() : [];
+    this._broadcast(makeMeshRailUpdateEnvelope({ peers, decisionCount, decisions }));
   }
 
   /**

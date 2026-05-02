@@ -17,6 +17,8 @@ import {
   makePinnedResolvedEnvelope,
   makeDecisionsJumpEnvelope,
   makeMeshRailUpdateEnvelope,
+  makeUnpinRequestEnvelope,
+  makeDismissRequestEnvelope,
   encodeEnvelope,
   tryDecodeEnvelope,
 } from "./launcher-envelope.mjs";
@@ -336,11 +338,77 @@ describe("tryDecodeEnvelope", () => {
       makePinnedResolvedEnvelope({ msg_id: "m2", action: "approve" }),
       makeDecisionsJumpEnvelope({ from: "peer-a" }),
       makeMeshRailUpdateEnvelope({ peers: [{ name: "p", state: "running", decisionPending: false }], decisionCount: 0 }),
+      makeUnpinRequestEnvelope({ msg_id: "m3" }),
+      makeDismissRequestEnvelope({ msg_id: "m4" }),
     ];
     for (const env of envelopes) {
       const result = tryDecodeEnvelope(encodeEnvelope(env));
       expect(result.env).not.toBeNull();
       expect(result.env?.id).toBe(env.id);
     }
+  });
+});
+
+describe("makeUnpinRequestEnvelope", () => {
+  it("produces a v:1 unpin-request envelope with msg_id", () => {
+    const env = makeUnpinRequestEnvelope({ msg_id: "msg-abc" });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("unpin-request");
+    expect(env.msg_id).toBe("msg-abc");
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("round-trips through encode/decode", () => {
+    const env = makeUnpinRequestEnvelope({ msg_id: "msg-round" });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("unpin-request");
+    expect(result.env?.msg_id).toBe("msg-round");
+  });
+});
+
+describe("makeDismissRequestEnvelope", () => {
+  it("produces a v:1 dismiss-request envelope with msg_id", () => {
+    const env = makeDismissRequestEnvelope({ msg_id: "msg-def" });
+    expect(env.v).toBe(1);
+    expect(env.kind).toBe("dismiss-request");
+    expect(env.msg_id).toBe("msg-def");
+    expect(typeof env.id).toBe("string");
+    expect(typeof env.ts).toBe("number");
+  });
+
+  it("round-trips through encode/decode", () => {
+    const env = makeDismissRequestEnvelope({ msg_id: "msg-dismiss" });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect(result.env?.kind).toBe("dismiss-request");
+    expect(result.env?.msg_id).toBe("msg-dismiss");
+  });
+});
+
+describe("makeMeshRailUpdateEnvelope — decisions field", () => {
+  it("includes an empty decisions array when omitted", () => {
+    const env = makeMeshRailUpdateEnvelope({ peers: [], decisionCount: 0 });
+    expect(Array.isArray((env as any).decisions)).toBe(true);
+    expect((env as any).decisions).toHaveLength(0);
+  });
+
+  it("includes the provided decisions array", () => {
+    const decisions = [
+      { msg_id: "m1", peer: "peer-a", kind: "approval-request", summary: "approve?", ts: 1000, pinned: true },
+    ];
+    const env = makeMeshRailUpdateEnvelope({ peers: [], decisionCount: 1, decisions });
+    expect((env as any).decisions).toEqual(decisions);
+  });
+
+  it("round-trips decisions through encode/decode", () => {
+    const decisions = [
+      { msg_id: "m-rt", peer: "p", kind: "submission", summary: "3 files", ts: 2000, pinned: false },
+    ];
+    const env = makeMeshRailUpdateEnvelope({ peers: [], decisionCount: 1, decisions });
+    const result = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(result.env).not.toBeNull();
+    expect((result.env as any).decisions).toEqual(decisions);
   });
 });

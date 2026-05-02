@@ -4,7 +4,7 @@
 //   /focus <peer>      — request the launcher to focus a specific peer.
 //   /tail [filter]     — toggle the bus-tail overlay.
 //   /pin               — pin the currently-open ctx.ui.confirm dialog into the launcher queue.
-//   /decisions         — request the launcher to jump focus into the decisions-queue panel.
+//   /decisions         — open a rich TUI overlay with peers + decisions queue.
 //
 // The commands send typed envelopes to the launcher via the `launcher-bridge`.
 // If the bridge is not connected (standalone mode), the commands print a warning.
@@ -16,6 +16,9 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { getHabitat } from "./_lib/habitat";
+import { getMeshRailHandle } from "./_lib/mesh-rail";
+import { createDecisionsOverlay } from "./_lib/decisions-overlay";
+import { offMeshRailUpdate, onMeshRailUpdate } from "./launcher-bridge";
 
 const _require = createRequire(import.meta.url);
 
@@ -235,15 +238,24 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Register /decisions as a slash command.
-  // Emits a decisions-jump envelope to request the launcher to focus into the
-  // decisions-queue panel for arrow-key navigation.
+  // Opens a rich focus-capturing overlay listing all peers and queued decisions
+  // with keyboard navigation (arrow keys, Enter, p, d, Esc).
+  // While the overlay is open, the always-on mesh-rail widget is hidden.
   pi.registerCommand("decisions", {
-    description: "Jump to the launcher decisions-queue panel (arrow-key navigation).",
+    description: "Open the decisions overlay (arrow-key navigation, p=pin, d=dismiss, Enter=focus, Esc=close).",
     handler: async (args: string, ctx) => {
-      const habitat = getHabitat();
-      const agentName = habitat.agentName;
+      if (!ctx.hasUI) {
+        ctx.ui.notify("/decisions: no UI available (non-interactive mode).", "warning");
+        return;
+      }
 
-      // Load the launcher-bridge.
+      const handle = getMeshRailHandle();
+      if (!handle) {
+        ctx.ui.notify("/decisions: mesh-rail not active (standalone mode).", "warning");
+        return;
+      }
+
+      // Load the launcher-bridge sendControl for pin/unpin/dismiss envelopes.
       let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
       try {
         const bridge = _require(
@@ -254,31 +266,112 @@ export default function (pi: ExtensionAPI) {
         // launcher-bridge not loaded or not available.
       }
 
-      if (!sendControl) {
-        ctx.ui.notify("/decisions: launcher-bridge not active (standalone mode).", "warning");
-        return;
-      }
-
-      // Build a decisions-jump envelope.
-      let makeDecisionsJumpEnvelope: ((args: { from: string }) => Record<string, unknown>) | undefined;
+      // Load envelope factories.
+      let makePinRequestEnvelope: ((args: { msg_id: string; peer: string; kind: string; summary: string }) => Record<string, unknown>) | undefined;
+      let makeUnpinRequestEnvelope: ((args: { msg_id: string }) => Record<string, unknown>) | undefined;
+      let makeDismissRequestEnvelope: ((args: { msg_id: string }) => Record<string, unknown>) | undefined;
+      let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
       try {
         const envMod = _require(getLauncherEnvelopePath()) as {
-          makeDecisionsJumpEnvelope: (args: { from: string }) => Record<string, unknown>;
+          makePinRequestEnvelope: (args: { msg_id: string; peer: string; kind: string; summary: string }) => Record<string, unknown>;
+          makeUnpinRequestEnvelope: (args: { msg_id: string }) => Record<string, unknown>;
+          makeDismissRequestEnvelope: (args: { msg_id: string }) => Record<string, unknown>;
+          makeFocusRequestEnvelope: (args: { from: string; target: string }) => Record<string, unknown>;
         };
-        makeDecisionsJumpEnvelope = envMod.makeDecisionsJumpEnvelope;
+        makePinRequestEnvelope = envMod.makePinRequestEnvelope;
+        makeUnpinRequestEnvelope = envMod.makeUnpinRequestEnvelope;
+        makeDismissRequestEnvelope = envMod.makeDismissRequestEnvelope;
+        makeFocusRequestEnvelope = envMod.makeFocusRequestEnvelope;
       } catch {
         ctx.ui.notify("/decisions: launcher-envelope module not found.", "warning");
         return;
       }
 
-      const env = makeDecisionsJumpEnvelope({ from: agentName });
-      const sent = sendControl(env);
+      // Read initial state from the handle.
+      const currentState = handle.getState();
+      const initialPeers = currentState.peers;
+      const initialDecisions = currentState.decisions;
 
-      if (sent) {
-        ctx.ui.notify("/decisions: requested focus → decisions-queue panel.", "info");
-      } else {
-        ctx.ui.notify("/decisions: launcher not connected.", "warning");
+      // Hide the mesh-rail widget before opening the overlay (AC #4).
+      handle.setHidden(true);
+
+      let meshRailUpdateHandler: ((env: any) => void) | null = null;
+      let overlayDone: (() => void) | null = null;
+
+      function closeOverlay(): void {
+        // Unsubscribe the live-update handler.
+        if (meshRailUpdateHandler) {
+          offMeshRailUpdate(meshRailUpdateHandler);
+          meshRailUpdateHandler = null;
+        }
+        // Restore the mesh-rail widget (AC #4).
+        handle.setHidden(false);
+        // Resolve the ctx.ui.custom promise.
+        if (overlayDone) {
+          const d = overlayDone;
+          overlayDone = null;
+          d();
+        }
       }
+
+      let agentName = "";
+      try { agentName = getHabitat().agentName; } catch { /**/ }
+
+      // Open the overlay via ctx.ui.custom (AC #2, #3).
+      // The factory receives (tui, theme, keybindings, done) and returns the Component.
+      // We build the overlay component inside the factory so done() is in scope.
+      await ctx.ui.custom<void>(
+        (_tui, _theme, _keybindings, done) => {
+          // Capture done so closeOverlay() can call it.
+          overlayDone = done;
+
+          const overlay = createDecisionsOverlay({
+            peers: initialPeers,
+            decisions: initialDecisions,
+            onPin: (msg_id) => {
+              if (!sendControl || !makePinRequestEnvelope) return;
+              // Find the decision for peer/kind/summary from current overlay state.
+              const dec = handle.getState().decisions.find((d) => d.msg_id === msg_id);
+              const d = dec ?? { peer: "", kind: "unknown", summary: "" };
+              const env = makePinRequestEnvelope({ msg_id, peer: d.peer, kind: d.kind, summary: d.summary });
+              sendControl(env);
+            },
+            onUnpin: (msg_id) => {
+              if (!sendControl || !makeUnpinRequestEnvelope) return;
+              const env = makeUnpinRequestEnvelope({ msg_id });
+              sendControl(env);
+            },
+            onDismiss: (msg_id) => {
+              if (!sendControl || !makeDismissRequestEnvelope) return;
+              const env = makeDismissRequestEnvelope({ msg_id });
+              sendControl(env);
+            },
+            onSwitchFocus: (peer) => {
+              if (!sendControl || !makeFocusRequestEnvelope) return;
+              const env = makeFocusRequestEnvelope({ from: agentName, target: peer });
+              sendControl(env);
+            },
+            onClose: closeOverlay,
+          });
+
+          // Subscribe to live mesh-rail updates so the overlay refreshes after
+          // pin/dismiss round-trips (decisions list round-trips via launcher broadcast).
+          meshRailUpdateHandler = (env: any) => {
+            if (!env || !Array.isArray(env.peers)) return;
+            overlay.update({
+              peers: env.peers,
+              decisions: Array.isArray(env.decisions) ? env.decisions : [],
+            });
+          };
+          onMeshRailUpdate(meshRailUpdateHandler);
+
+          return overlay;
+        },
+        { overlay: true },
+      ).catch(() => {
+        // Overlay dismissed or error — ensure cleanup.
+        closeOverlay();
+      });
     },
   });
 }

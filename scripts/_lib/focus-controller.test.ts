@@ -456,4 +456,30 @@ describe("FocusController — setBroadcast / _broadcastRailUpdate", () => {
     expect(peer).toBeDefined();
     expect(peer.decisionPending).toBe(true);
   });
+
+  it("mesh-rail-update envelope carries decisions from injected getDecisions getter", () => {
+    const fc = createFocusController();
+    const decisions = [
+      { msg_id: "m1", peer: "peer-a", kind: "approval-request", summary: "approve?", ts: 1000, pinned: true },
+    ];
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env), () => 1, () => decisions);
+
+    fc.registerPeer("peer-a");
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].decisions).toEqual(decisions);
+  });
+
+  it("mesh-rail-update envelope has empty decisions array when getDecisions not provided", () => {
+    const fc = createFocusController();
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.registerPeer("peer-a");
+
+    expect(emitted).toHaveLength(1);
+    expect(Array.isArray(emitted[0].decisions)).toBe(true);
+    expect(emitted[0].decisions).toHaveLength(0);
+  });
 });

@@ -63,11 +63,20 @@ export function onSignal(handler: (env: any) => void): void {
 
 /**
  * Subscribe to mesh-rail-update envelopes from the launcher.
- * The handler receives the full envelope (peers array + decisionCount).
+ * The handler receives the full envelope (peers array + decisionCount + decisions).
  */
 export function onMeshRailUpdate(handler: (env: any) => void): void {
   const state = getBridgeState();
   state.meshRailUpdateHandlers.push(handler);
+}
+
+/**
+ * Unsubscribe a previously-registered mesh-rail-update handler.
+ */
+export function offMeshRailUpdate(handler: (env: any) => void): void {
+  const state = getBridgeState();
+  const idx = state.meshRailUpdateHandlers.indexOf(handler);
+  if (idx !== -1) state.meshRailUpdateHandlers.splice(idx, 1);
 }
 
 /**

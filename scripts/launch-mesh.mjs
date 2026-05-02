@@ -33,7 +33,7 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
 import { createLauncherSocket } from "./_lib/launcher-socket.mjs";
-import { makeFocusChangedEnvelope, makeTailToggleEnvelope, makePinnedResolvedEnvelope } from "./_lib/launcher-envelope.mjs";
+import { makeFocusChangedEnvelope, makeTailToggleEnvelope, makePinnedResolvedEnvelope, makeMeshRailUpdateEnvelope } from "./_lib/launcher-envelope.mjs";
 import { createDecisionsQueue } from "./_lib/decisions-queue.mjs";
 import { createFocusController } from "./_lib/focus-controller.mjs";
 import { renderChrome } from "./_lib/chrome.mjs";
@@ -248,6 +248,15 @@ pool.on("error", (peer, err) => {
 const launcherSock = createLauncherSocket();
 await launcherSock.bind(busRoot);
 
+// Wire the broadcast function into the focus controller now that launcherSock is
+// bound. Every state-mutating call on focusController will broadcast a
+// mesh-rail-update (with the full decisions list) to all connected peers.
+focusController.setBroadcast(
+  (env) => launcherSock.broadcast(env),
+  () => decisionsQueue.count(),
+  () => decisionsQueue.list(),
+);
+
 // When the focus controller changes focus, broadcast focus-changed to all
 // connected peers, repaint the multiplexer, and redraw the chrome.
 focusController.on("focus-changed", ({ focused }) => {
@@ -375,7 +384,38 @@ launcherSock.on("envelope", (env) => {
       process.stderr.write(
         `launch-mesh: pin-request from "${peer}": pinned msg_id=${msg_id.slice(0, 8)}\n`,
       );
+      // Broadcast updated decisions list to all peers (pin/unpin don't fire onCountChange).
+      focusController._broadcastRailUpdate();
       repaintChrome();
+    }
+  } else if (env.kind === "unpin-request") {
+    // A peer sent /decisions overlay unpin — demote a pinned item back to non-pinned.
+    const msg_id = typeof env.msg_id === "string" ? env.msg_id : null;
+    if (msg_id) {
+      const ok = decisionsQueue.unpin(msg_id);
+      if (ok) {
+        process.stderr.write(
+          `launch-mesh: unpin-request: unpinned msg_id=${msg_id.slice(0, 8)}\n`,
+        );
+        // Broadcast updated decisions list (unpin doesn't fire onCountChange).
+        focusController._broadcastRailUpdate();
+        repaintChrome();
+      }
+    }
+  } else if (env.kind === "dismiss-request") {
+    // A peer sent /decisions overlay dismiss — remove an item from the queue.
+    const msg_id = typeof env.msg_id === "string" ? env.msg_id : null;
+    if (msg_id) {
+      const ok = decisionsQueue.dismiss(msg_id);
+      if (ok) {
+        process.stderr.write(
+          `launch-mesh: dismiss-request: dismissed msg_id=${msg_id.slice(0, 8)}\n`,
+        );
+        // dismiss() fires onCountChange, which triggers a broadcast via the count-change
+        // listener if wired. Also broadcast explicitly to include updated decisions list.
+        focusController._broadcastRailUpdate();
+        repaintChrome();
+      }
     }
   } else if (env.kind === "decisions-jump") {
     // A peer sent /decisions — log it; full TUI panel focus is deferred (requires

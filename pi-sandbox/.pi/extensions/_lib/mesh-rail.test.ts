@@ -185,3 +185,96 @@ describe("setMeshRailHandle / getMeshRailHandle / clearMeshRailHandle", () => {
     expect(getMeshRailHandle()).not.toBe(h1);
   });
 });
+
+// ── setHidden / isHidden (AC #4 coverage) ─────────────────────────────────────
+
+describe("createMeshRailComponent — setHidden / isHidden", () => {
+  it("isHidden() returns false by default", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    expect(component.isHidden()).toBe(false);
+  });
+
+  it("setHidden(true) → render() returns [] (empty)", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.setHidden(true);
+    expect(component.render(80)).toEqual([]);
+  });
+
+  it("setHidden(true) → isHidden() returns true", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.setHidden(true);
+    expect(component.isHidden()).toBe(true);
+  });
+
+  it("setHidden(false) after true → render returns content again", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    component.setHidden(true);
+    component.setHidden(false);
+    expect(component.render(80)).not.toEqual([]);
+    expect(component.isHidden()).toBe(false);
+  });
+
+  it("setHidden(true) calls the injected invalidate callback", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const invalidateSpy = vi.fn();
+    (component as any)._setInvalidate(invalidateSpy);
+    component.setHidden(true);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("setHidden(false) calls the injected invalidate callback", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const invalidateSpy = vi.fn();
+    (component as any)._setInvalidate(invalidateSpy);
+    component.setHidden(true);
+    invalidateSpy.mockClear();
+    component.setHidden(false);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("setHidden with same value is a no-op (no invalidate call)", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const invalidateSpy = vi.fn();
+    (component as any)._setInvalidate(invalidateSpy);
+    component.setHidden(false); // already false — no-op
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── decisions field (AC coverage) ─────────────────────────────────────────────
+
+describe("createMeshRailComponent — decisions field", () => {
+  it("getState().decisions is empty by default", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    expect(component.getState().decisions).toEqual([]);
+  });
+
+  it("getState().decisions returns initialDecisions when provided", () => {
+    const decisions = [{ msg_id: "m1", peer: "p", kind: "approval-request", summary: "s", ts: 1, pinned: false }];
+    const component = createMeshRailComponent({ peerName: "me", initialDecisions: decisions });
+    expect(component.getState().decisions).toEqual(decisions);
+  });
+
+  it("update({decisions: [...]}) patches state.decisions", () => {
+    const component = createMeshRailComponent({ peerName: "me" });
+    const decisions = [{ msg_id: "m2", peer: "p", kind: "submission", summary: "2 files", ts: 2, pinned: true }];
+    component.update({ decisions });
+    expect(component.getState().decisions).toEqual(decisions);
+  });
+
+  it("partial update() leaves decisions intact when not patched", () => {
+    const decisions = [{ msg_id: "m3", peer: "p", kind: "k", summary: "s", ts: 3, pinned: false }];
+    const component = createMeshRailComponent({ peerName: "me", initialDecisions: decisions });
+    component.update({ decisionCount: 5 }); // no decisions patch
+    expect(component.getState().decisions).toEqual(decisions);
+  });
+
+  it("getState() returns a copy of decisions (not a reference)", () => {
+    const decisions = [{ msg_id: "m4", peer: "p", kind: "k", summary: "s", ts: 4, pinned: false }];
+    const component = createMeshRailComponent({ peerName: "me", initialDecisions: decisions });
+    const state = component.getState();
+    state.decisions.push({ msg_id: "mutated", peer: "p", kind: "k", summary: "s", ts: 5, pinned: false });
+    // The component's internal state should not be affected.
+    expect(component.getState().decisions).toHaveLength(1);
+  });
+});

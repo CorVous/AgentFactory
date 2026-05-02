@@ -27,7 +27,7 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump" | "mesh-rail-update"} EnvelopeKind
+ * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump" | "mesh-rail-update" | "unpin-request" | "dismiss-request"} EnvelopeKind
  */
 
 /**
@@ -36,6 +36,17 @@ import { randomUUID } from "node:crypto";
  *   state: string;
  *   decisionPending: boolean;
  * }} MeshRailPeer
+ */
+
+/**
+ * @typedef {{
+ *   msg_id: string;
+ *   peer: string;
+ *   kind: string;
+ *   summary: string;
+ *   ts: number;
+ *   pinned: boolean;
+ * }} DecisionSnapshot
  */
 
 /**
@@ -257,21 +268,59 @@ export function makeDecisionsJumpEnvelope(args) {
 /**
  * Create a `mesh-rail-update` envelope (launcher → all peers).
  *
- * Carries a renderable snapshot of the current peer states and the launcher's
- * decisions-queue count. Broadcast on every state-mutating event so the
- * mesh-rail widget stays current in real time.
+ * Carries a renderable snapshot of the current peer states, the launcher's
+ * decisions-queue count, and the full decisions list. Broadcast on every
+ * state-mutating event so the mesh-rail widget stays current in real time.
  *
- * @param {{ peers: Array<{name: string, state: string, decisionPending: boolean}>, decisionCount: number }} args
+ * @param {{ peers: Array<{name: string, state: string, decisionPending: boolean}>, decisionCount: number, decisions?: DecisionSnapshot[] }} args
  * @returns {LauncherEnvelope}
  */
 export function makeMeshRailUpdateEnvelope(args) {
-  return {
+  const env = {
     v: 1,
     id: randomUUID(),
     kind: "mesh-rail-update",
     ts: Date.now(),
     peers: args.peers,
     decisionCount: args.decisionCount,
+    decisions: Array.isArray(args.decisions) ? args.decisions : [],
+  };
+  return env;
+}
+
+/**
+ * Create an `unpin-request` envelope (peer → launcher).
+ *
+ * Demotes a pinned decision back to non-pinned lifecycle.
+ *
+ * @param {{ msg_id: string }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeUnpinRequestEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "unpin-request",
+    ts: Date.now(),
+    msg_id: args.msg_id,
+  };
+}
+
+/**
+ * Create a `dismiss-request` envelope (peer → launcher).
+ *
+ * Removes a decision item from the queue entirely.
+ *
+ * @param {{ msg_id: string }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeDismissRequestEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "dismiss-request",
+    ts: Date.now(),
+    msg_id: args.msg_id,
   };
 }
 
