@@ -166,6 +166,8 @@ export class VirtualBuffer {
     this._term = new Terminal({ cols, rows, allowProposedApi: true });
     this._dirty = true;
     this._cachedPaint = "";
+    /** @type {Promise<void> | null} most recent in-flight xterm parse */
+    this._lastWrite = null;
   }
 
   /** Number of columns in the virtual buffer. */
@@ -187,9 +189,38 @@ export class VirtualBuffer {
    */
   write(data) {
     this._dirty = true;
-    return new Promise((resolve) => {
+    const p = new Promise((resolve) => {
       this._term.write(data, resolve);
     });
+    this._lastWrite = p;
+    // Clear the in-flight reference once this write completes, so drain()
+    // doesn't keep references to long-resolved Promises.
+    p.then(() => {
+      if (this._lastWrite === p) this._lastWrite = null;
+    });
+    return p;
+  }
+
+  /**
+   * Wait until xterm has finished parsing every write issued so far.
+   * The multiplexer calls this on focus change so the next paint() reflects
+   * the most recently-arrived PTY chunks instead of a pre-parse snapshot.
+   *
+   * Re-checks after each await so writes that arrive during the wait are
+   * also drained (otherwise a peer producing back-to-back chunks could
+   * still leave the painted snapshot one chunk behind).
+   *
+   * @returns {Promise<void>}
+   */
+  async drain() {
+    while (this._lastWrite) {
+      const p = this._lastWrite;
+      await p;
+      if (this._lastWrite === p) {
+        this._lastWrite = null;
+        break;
+      }
+    }
   }
 
   /**
