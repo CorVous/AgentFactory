@@ -29,9 +29,10 @@ const _require = createRequire(import.meta.url);
 
 // Resolve the launcher-envelope module path relative to this extension file.
 // The extension lives at pi-sandbox/.pi/extensions/slash-commands.ts; the
-// launcher-envelope lives at scripts/_lib/launcher-envelope.mjs (4 levels up).
+// launcher-envelope lives at scripts/_lib/launcher-envelope.mjs — 3 levels
+// up (extensions → .pi → pi-sandbox → repo root), then down into scripts/_lib.
 function getLauncherEnvelopePath(): string {
-  return path.resolve(__dirname, "../../../../scripts/_lib/launcher-envelope.mjs");
+  return path.resolve(__dirname, "../../../scripts/_lib/launcher-envelope.mjs");
 }
 
 // Per-peer tail state, stashed on globalThis so it survives jiti module isolation.

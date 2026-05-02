@@ -83,7 +83,7 @@ function signalDecisionPending(agentName: string, on: boolean): void {
   // relative to the extension, loaded via require at runtime).
   try {
     const { makeDecisionPendingEnvelope } = _require(
-      path.resolve(__dirname, "../../../../scripts/_lib/launcher-envelope.mjs"),
+      path.resolve(__dirname, "../../../scripts/_lib/launcher-envelope.mjs"),
     ) as { makeDecisionPendingEnvelope: (args: { peer: string; on: boolean }) => Record<string, unknown> };
     const env = makeDecisionPendingEnvelope({ peer: agentName, on });
     sendControlToLauncher(env);

@@ -75,7 +75,7 @@ function syncObserver(state: BusTailEmitterState) {
     let makeTailEventEnvelope: ((args: any) => Record<string, unknown>) | undefined;
     try {
       const envMod = _require(
-        path.resolve(__dirname, "../../../../scripts/_lib/launcher-envelope.mjs"),
+        path.resolve(__dirname, "../../../scripts/_lib/launcher-envelope.mjs"),
       ) as { makeTailEventEnvelope?: (args: any) => Record<string, unknown> };
       makeTailEventEnvelope = envMod.makeTailEventEnvelope;
     } catch { /* module not available */ }
