@@ -41,6 +41,7 @@ export default function (pi: ExtensionAPI) {
       handle.update({
         peers: env.peers,
         decisionCount: typeof env.decisionCount === "number" ? env.decisionCount : 0,
+        decisions: Array.isArray(env.decisions) ? env.decisions : undefined,
       });
     });
 

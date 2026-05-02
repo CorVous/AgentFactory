@@ -10,15 +10,25 @@ export interface MeshRailPeer {
   decisionPending: boolean;
 }
 
+export interface DecisionItem {
+  msg_id: string;
+  peer: string;
+  kind: string;
+  summary: string;
+  pinned: boolean;
+}
+
 export interface MeshRailState {
   peerName: string;
   peers: MeshRailPeer[];
   decisionCount: number;
+  decisions: DecisionItem[];
 }
 
 export interface MeshRailPatch {
   peers?: MeshRailPeer[];
   decisionCount?: number;
+  decisions?: DecisionItem[];
 }
 
 export interface MeshRailComponentHandle extends Component {
@@ -26,6 +36,13 @@ export interface MeshRailComponentHandle extends Component {
   update(patch: MeshRailPatch): void;
   /** Return a copy of the current state. */
   getState(): MeshRailState;
+  /**
+   * Hide or show the rail widget. When hidden, render() returns [] (empty lines).
+   * Useful when an overlay (e.g. /decisions panel) needs to reclaim the layout slot.
+   */
+  setHidden(hidden: boolean): void;
+  /** Whether the rail is currently hidden. */
+  isHidden(): boolean;
 }
 
 export interface MeshRailComponentOptions {
@@ -53,13 +70,17 @@ export function createMeshRailComponent(opts: MeshRailComponentOptions): MeshRai
     peerName: opts.peerName,
     peers: opts.initialPeers ?? [],
     decisionCount: opts.initialDecisionCount ?? 0,
+    decisions: [],
   };
 
   /** Invalidation callback injected by pi-tui when the widget is mounted. */
   let _invalidate: (() => void) | null = null;
+  let _hidden = false;
 
   const component: MeshRailComponentHandle = {
     render(width: number): string[] {
+      if (_hidden) return [];
+
       const peerCount = state.peers.length;
       const peerSummary =
         peerCount === 0
@@ -83,12 +104,22 @@ export function createMeshRailComponent(opts: MeshRailComponentOptions): MeshRai
     update(patch: MeshRailPatch): void {
       if (patch.peers !== undefined) state.peers = patch.peers;
       if (patch.decisionCount !== undefined) state.decisionCount = patch.decisionCount;
+      if (patch.decisions !== undefined) state.decisions = patch.decisions;
       // Trigger pi-tui re-render by calling the stored invalidate callback.
       if (_invalidate) _invalidate();
     },
 
     getState(): MeshRailState {
-      return { ...state, peers: [...state.peers] };
+      return { ...state, peers: [...state.peers], decisions: [...state.decisions] };
+    },
+
+    setHidden(hidden: boolean): void {
+      _hidden = hidden;
+      if (_invalidate) _invalidate();
+    },
+
+    isHidden(): boolean {
+      return _hidden;
     },
   };
 
