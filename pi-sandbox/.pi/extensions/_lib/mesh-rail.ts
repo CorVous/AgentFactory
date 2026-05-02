@@ -36,13 +36,6 @@ export interface MeshRailComponentHandle extends Component {
   update(patch: MeshRailPatch): void;
   /** Return a copy of the current state. */
   getState(): MeshRailState;
-  /**
-   * Hide or show the rail widget. When hidden, render() returns [] (empty lines).
-   * Useful when an overlay (e.g. /decisions panel) needs to reclaim the layout slot.
-   */
-  setHidden(hidden: boolean): void;
-  /** Whether the rail is currently hidden. */
-  isHidden(): boolean;
 }
 
 export interface MeshRailComponentOptions {
@@ -75,12 +68,9 @@ export function createMeshRailComponent(opts: MeshRailComponentOptions): MeshRai
 
   /** Invalidation callback injected by pi-tui when the widget is mounted. */
   let _invalidate: (() => void) | null = null;
-  let _hidden = false;
 
   const component: MeshRailComponentHandle = {
     render(width: number): string[] {
-      if (_hidden) return [];
-
       const peerCount = state.peers.length;
       const peerSummary =
         peerCount === 0
@@ -111,15 +101,6 @@ export function createMeshRailComponent(opts: MeshRailComponentOptions): MeshRai
 
     getState(): MeshRailState {
       return { ...state, peers: [...state.peers], decisions: [...state.decisions] };
-    },
-
-    setHidden(hidden: boolean): void {
-      _hidden = hidden;
-      if (_invalidate) _invalidate();
-    },
-
-    isHidden(): boolean {
-      return _hidden;
     },
   };
 

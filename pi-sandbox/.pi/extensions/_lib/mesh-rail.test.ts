@@ -186,59 +186,6 @@ describe("setMeshRailHandle / getMeshRailHandle / clearMeshRailHandle", () => {
   });
 });
 
-// ── setHidden / isHidden (AC-2 coverage) ─────────────────────────────────────
-
-describe("createMeshRailComponent — setHidden / isHidden", () => {
-  it("isHidden() returns false by default", () => {
-    const component = createMeshRailComponent({ peerName: "me" });
-    expect(component.isHidden()).toBe(false);
-  });
-
-  it("setHidden(true) makes render() return an empty array", () => {
-    const component = createMeshRailComponent({ peerName: "me" });
-    component.setHidden(true);
-    expect(component.render(80)).toEqual([]);
-  });
-
-  it("setHidden(false) restores normal rendering", () => {
-    const component = createMeshRailComponent({ peerName: "me" });
-    component.setHidden(true);
-    component.setHidden(false);
-    const lines = component.render(80);
-    expect(lines.length).toBeGreaterThan(0);
-    expect(lines.join("\n")).toContain("me");
-  });
-
-  it("setHidden(true) calls the injected invalidate callback", () => {
-    const component = createMeshRailComponent({ peerName: "me" });
-    const invalidateSpy = vi.fn();
-    (component as any)._setInvalidate(invalidateSpy);
-
-    component.setHidden(true);
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("setHidden(false) calls the injected invalidate callback", () => {
-    const component = createMeshRailComponent({ peerName: "me" });
-    const invalidateSpy = vi.fn();
-    (component as any)._setInvalidate(invalidateSpy);
-
-    component.setHidden(true);
-    invalidateSpy.mockClear();
-    component.setHidden(false);
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("isHidden() reflects the most recent setHidden call", () => {
-    const component = createMeshRailComponent({ peerName: "me" });
-    expect(component.isHidden()).toBe(false);
-    component.setHidden(true);
-    expect(component.isHidden()).toBe(true);
-    component.setHidden(false);
-    expect(component.isHidden()).toBe(false);
-  });
-});
-
 // ── decisions field in state (AC-1 coverage) ─────────────────────────────────
 
 describe("createMeshRailComponent — decisions in state", () => {

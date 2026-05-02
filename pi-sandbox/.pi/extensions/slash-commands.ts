@@ -288,62 +288,54 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // UI is available — open the rich overlay.
+      // UI is available — open the rich overlay. The mesh-rail stays visible
+      // throughout so the human keeps ambient peer-state context while picking
+      // an action in the overlay.
       const railHandle = getMeshRailHandle();
+      const state = railHandle?.getState() ?? { peers: [], decisions: [], decisionCount: 0, peerName: "" };
 
-      // Hide the mesh-rail widget while the overlay is open so there is no
-      // visual conflict. The `setHidden` call triggers a widget invalidation.
-      railHandle?.setHidden(true);
+      const result = await ctx.ui.custom(
+        (_tui, _theme, _keybindings, done) => {
+          const overlay = createDecisionsOverlayComponent({
+            peers: state.peers,
+            decisions: state.decisions ?? [],
+            done,
+          });
+          return overlay;
+        },
+        { overlay: true },
+      );
 
-      try {
-        const state = railHandle?.getState() ?? { peers: [], decisions: [], decisionCount: 0, peerName: "" };
+      // If the user pressed Enter on a decision, emit a focus-request so the
+      // launcher switches to that peer's pane.
+      if (result && result.action === "focus-peer" && result.peer) {
+        // Attempt to send a focus-request via the launcher-bridge (best effort).
+        let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
+        try {
+          const bridge = _require(
+            path.resolve(__dirname, "launcher-bridge"),
+          ) as { sendControl?: (env: Record<string, unknown>) => boolean };
+          sendControl = bridge.sendControl;
+        } catch {
+          // launcher-bridge not loaded — no focus switch, that is fine.
+        }
 
-        const result = await ctx.ui.custom(
-          (_tui, _theme, _keybindings, done) => {
-            const overlay = createDecisionsOverlayComponent({
-              peers: state.peers,
-              decisions: state.decisions ?? [],
-              done,
-            });
-            return overlay;
-          },
-          { overlay: true },
-        );
-
-        // If the user pressed Enter on a decision, emit a focus-request so the
-        // launcher switches to that peer's pane.
-        if (result && result.action === "focus-peer" && result.peer) {
-          // Attempt to send a focus-request via the launcher-bridge (best effort).
-          let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
+        if (sendControl) {
+          let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
           try {
-            const bridge = _require(
-              path.resolve(__dirname, "launcher-bridge"),
-            ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-            sendControl = bridge.sendControl;
+            const envMod = _require(getLauncherEnvelopePath()) as {
+              makeFocusRequestEnvelope: (args: { from: string; target: string }) => Record<string, unknown>;
+            };
+            makeFocusRequestEnvelope = envMod.makeFocusRequestEnvelope;
           } catch {
-            // launcher-bridge not loaded — no focus switch, that is fine.
+            // ignore
           }
 
-          if (sendControl) {
-            let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
-            try {
-              const envMod = _require(getLauncherEnvelopePath()) as {
-                makeFocusRequestEnvelope: (args: { from: string; target: string }) => Record<string, unknown>;
-              };
-              makeFocusRequestEnvelope = envMod.makeFocusRequestEnvelope;
-            } catch {
-              // ignore
-            }
-
-            if (makeFocusRequestEnvelope) {
-              const habitat = getHabitat();
-              sendControl(makeFocusRequestEnvelope({ from: habitat.agentName, target: result.peer }));
-            }
+          if (makeFocusRequestEnvelope) {
+            const habitat = getHabitat();
+            sendControl(makeFocusRequestEnvelope({ from: habitat.agentName, target: result.peer }));
           }
         }
-      } finally {
-        // Always restore the rail, even if the overlay threw.
-        railHandle?.setHidden(false);
       }
     },
   });

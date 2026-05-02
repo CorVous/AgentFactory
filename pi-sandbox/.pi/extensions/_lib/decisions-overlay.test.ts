@@ -342,43 +342,29 @@ describe("createDecisionsOverlayComponent — pin and dismiss", () => {
   });
 });
 
-// ── Rail hide/show contract (AC-4 / AC-5 coverage) ───────────────────────────
+// ── Rail visibility contract: rail stays visible across all overlays ─────────
 
-describe("MeshRailHandle hide/show contract on decisions overlay open/close", () => {
-  // This test exercises the hide/show contract in isolation, independent of
-  // the real ctx.ui.custom (no pi runtime needed). We simulate the pattern
-  // used by the /decisions handler: setHidden(true) before, setHidden(false) after.
-
-  it("rail is hidden while overlay is open and shown again after close", () => {
+describe("MeshRailHandle visibility contract while decisions overlay is open", () => {
+  it("rail render() keeps producing output while a decisions overlay is in use", () => {
+    // Both surfaces (the rail above the editor and the decisions overlay) coexist.
+    // The human keeps ambient peer-state context from the rail while picking an
+    // action in the overlay.
     const rail = createMeshRailComponent({ peerName: "me" });
 
-    expect(rail.isHidden()).toBe(false);
+    const before = rail.render(80);
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.join("\n")).toContain("me");
 
-    // Simulate /decisions handler: hide rail before opening overlay
-    rail.setHidden(true);
-    expect(rail.isHidden()).toBe(true);
-    expect(rail.render(80)).toEqual([]);
+    // Construct a decisions overlay on the same data the /decisions handler
+    // would pass; the rail must not be touched by overlay lifecycle.
+    const overlay = createDecisionsOverlayComponent({
+      peers: [{ name: "worker-a", state: "running", decisionPending: false }],
+      decisions: [],
+      done: () => {},
+    });
+    expect(overlay.render(80).length).toBeGreaterThan(0);
 
-    // Simulate overlay close: restore rail
-    rail.setHidden(false);
-    expect(rail.isHidden()).toBe(false);
-    expect(rail.render(80).length).toBeGreaterThan(0);
-  });
-
-  it("other overlays (non-decisions) do NOT hide the rail — rail stays visible throughout", () => {
-    // AC-5: other overlays must not hide the rail. This is guaranteed by design
-    // because only the /decisions handler calls getMeshRailHandle()?.setHidden(true).
-    // This test verifies that a rail created fresh (simulating a session where
-    // another overlay is open but /decisions was never invoked) is never hidden.
-    const rail = createMeshRailComponent({ peerName: "me" });
-
-    // Simulate another overlay (e.g. ctx.ui.confirm from deferred-confirm) opening.
-    // Nothing calls rail.setHidden() here — only /decisions does.
-    // The rail should remain visible throughout.
-    expect(rail.isHidden()).toBe(false);
-    expect(rail.render(80).length).toBeGreaterThan(0);
-
-    // Another overlay closes — still not hidden.
-    expect(rail.isHidden()).toBe(false);
+    const after = rail.render(80);
+    expect(after).toEqual(before);
   });
 });
