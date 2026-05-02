@@ -18,6 +18,12 @@ import path from "node:path";
 import { getHabitat } from "./_lib/habitat";
 import { getMeshRailHandle } from "./_lib/mesh-rail";
 import { createDecisionsOverlayComponent } from "./_lib/decisions-overlay";
+// IMPORTANT: this is a static jiti-resolved import, not createRequire().
+// Node's createRequire cannot resolve .ts files, so any attempt to load the
+// bridge dynamically (e.g. _require("./launcher-bridge")) silently throws and
+// the slash commands fall back to "standalone mode". Pulling the helpers in
+// statically lets jiti rewrite the path during transformation.
+import { sendControl as bridgeSendControl } from "./launcher-bridge";
 
 const _require = createRequire(import.meta.url);
 
@@ -55,26 +61,10 @@ export default function (pi: ExtensionAPI) {
       const habitat = getHabitat();
       const agentName = habitat.agentName;
 
-      // Load the launcher-bridge module to send the focus-request.
-      let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
-      try {
-        // The bridge is loaded by the launcher-bridge extension and stashes its
-        // API on globalThis. Access it via the module exports.
-        const bridge = _require(
-          path.resolve(__dirname, "launcher-bridge"),
-        ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-        sendControl = bridge.sendControl;
-      } catch {
-        // launcher-bridge not loaded or not available.
-      }
-
-      if (!sendControl) {
-        ctx.ui.notify(
-          "/focus: launcher-bridge not active (standalone mode). Cannot switch focus.",
-          "warning",
-        );
-        return;
-      }
+      // bridgeSendControl is the launcher-bridge's exported send helper. It
+      // returns false in standalone mode (no launcher socket), which we map to
+      // a friendly warning further down.
+      const sendControl = bridgeSendControl;
 
       // Build a focus-request envelope.
       let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
@@ -112,24 +102,8 @@ export default function (pi: ExtensionAPI) {
     handler: async (args: string, ctx) => {
       const filter = args.trim() || undefined;
 
-      // Load the launcher-bridge module to send the tail-toggle envelope.
-      let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
-      try {
-        const bridge = _require(
-          path.resolve(__dirname, "launcher-bridge"),
-        ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-        sendControl = bridge.sendControl;
-      } catch {
-        // launcher-bridge not loaded or not available.
-      }
-
-      if (!sendControl) {
-        ctx.ui.notify(
-          "/tail: launcher-bridge not active (standalone mode). Cannot toggle bus-tail.",
-          "warning",
-        );
-        return;
-      }
+      // bridgeSendControl is statically imported from launcher-bridge above.
+      const sendControl = bridgeSendControl;
 
       // Build a tail-toggle envelope.
       let makeTailToggleEnvelope:
@@ -192,21 +166,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Load the launcher-bridge.
-      let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
-      try {
-        const bridge = _require(
-          path.resolve(__dirname, "launcher-bridge"),
-        ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-        sendControl = bridge.sendControl;
-      } catch {
-        // launcher-bridge not loaded or not available.
-      }
-
-      if (!sendControl) {
-        ctx.ui.notify("/pin: launcher-bridge not active (standalone mode). Cannot pin dialog.", "warning");
-        return;
-      }
+      const sendControl = bridgeSendControl;
 
       // Build a pin-request envelope.
       let makePinRequestEnvelope: ((args: { msg_id: string; peer: string; kind: string; summary: string }) => Record<string, unknown>) | undefined;
@@ -252,20 +212,7 @@ export default function (pi: ExtensionAPI) {
         const habitat = getHabitat();
         const agentName = habitat.agentName;
 
-        let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
-        try {
-          const bridge = _require(
-            path.resolve(__dirname, "launcher-bridge"),
-          ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-          sendControl = bridge.sendControl;
-        } catch {
-          // launcher-bridge not loaded or not available.
-        }
-
-        if (!sendControl) {
-          ctx.ui.notify("/decisions: no UI and launcher-bridge not active (standalone mode).", "warning");
-          return;
-        }
+        const sendControl = bridgeSendControl;
 
         let makeDecisionsJumpEnvelope: ((args: { from: string }) => Record<string, unknown>) | undefined;
         try {
@@ -307,34 +254,23 @@ export default function (pi: ExtensionAPI) {
       );
 
       // If the user pressed Enter on a decision, emit a focus-request so the
-      // launcher switches to that peer's pane.
+      // launcher switches to that peer's pane. Best-effort: bridgeSendControl
+      // returns false in standalone mode and the user has already gotten what
+      // they wanted from the overlay.
       if (result && result.action === "focus-peer" && result.peer) {
-        // Attempt to send a focus-request via the launcher-bridge (best effort).
-        let sendControl: ((env: Record<string, unknown>) => boolean) | undefined;
+        let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
         try {
-          const bridge = _require(
-            path.resolve(__dirname, "launcher-bridge"),
-          ) as { sendControl?: (env: Record<string, unknown>) => boolean };
-          sendControl = bridge.sendControl;
+          const envMod = _require(getLauncherEnvelopePath()) as {
+            makeFocusRequestEnvelope: (args: { from: string; target: string }) => Record<string, unknown>;
+          };
+          makeFocusRequestEnvelope = envMod.makeFocusRequestEnvelope;
         } catch {
-          // launcher-bridge not loaded — no focus switch, that is fine.
+          // ignore — launcher-envelope module not resolvable
         }
 
-        if (sendControl) {
-          let makeFocusRequestEnvelope: ((args: { from: string; target: string }) => Record<string, unknown>) | undefined;
-          try {
-            const envMod = _require(getLauncherEnvelopePath()) as {
-              makeFocusRequestEnvelope: (args: { from: string; target: string }) => Record<string, unknown>;
-            };
-            makeFocusRequestEnvelope = envMod.makeFocusRequestEnvelope;
-          } catch {
-            // ignore
-          }
-
-          if (makeFocusRequestEnvelope) {
-            const habitat = getHabitat();
-            sendControl(makeFocusRequestEnvelope({ from: habitat.agentName, target: result.peer }));
-          }
+        if (makeFocusRequestEnvelope) {
+          const habitat = getHabitat();
+          bridgeSendControl(makeFocusRequestEnvelope({ from: habitat.agentName, target: result.peer }));
         }
       }
     },

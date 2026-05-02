@@ -90,6 +90,16 @@ export class FocusController extends EventEmitter {
   }
 
   /**
+   * Re-emit the current `mesh-rail-update` envelope. Used by the launcher to
+   * catch a freshly-connected peer up to the latest state without having to
+   * trigger a state mutation. No-op when no broadcast function has been
+   * injected.
+   */
+  broadcastRailUpdate() {
+    this._broadcastRailUpdate();
+  }
+
+  /**
    * Build and broadcast a `mesh-rail-update` envelope to all connected peers.
    * No-op when no broadcast function has been injected.
    */

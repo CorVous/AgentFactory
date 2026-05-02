@@ -456,4 +456,29 @@ describe("FocusController — setBroadcast / _broadcastRailUpdate", () => {
     expect(peer).toBeDefined();
     expect(peer.decisionPending).toBe(true);
   });
+
+  // Regression for "mesh-rail stuck at 0 peers" — peers connect to the
+  // launcher socket asynchronously, after registerPeer() has already
+  // broadcast. The launcher uses broadcastRailUpdate() on each
+  // client-connected to catch the late arrival up to the current state.
+  it("broadcastRailUpdate() re-emits the current snapshot on demand", () => {
+    const fc = createFocusController();
+    fc.registerPeer("peer-a");
+    fc.registerPeer("peer-b");
+    const emitted: any[] = [];
+    fc.setBroadcast((env) => emitted.push(env));
+
+    fc.broadcastRailUpdate();
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].kind).toBe("mesh-rail-update");
+    expect(emitted[0].peers.map((p: any) => p.name)).toEqual(["peer-a", "peer-b"]);
+  });
+
+  it("broadcastRailUpdate() is a no-op when no broadcast function is wired", () => {
+    const fc = createFocusController();
+    fc.registerPeer("peer-a");
+    // No setBroadcast call — must not throw.
+    expect(() => fc.broadcastRailUpdate()).not.toThrow();
+  });
 });
