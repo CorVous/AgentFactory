@@ -430,3 +430,125 @@ describe("per-node groups field", () => {
     expect(result.errors).toHaveLength(0);
   });
 });
+
+// ── @group in scalar fields ───────────────────────────────────────────────────
+
+describe("@group in scalar fields", () => {
+  it("supervisor: @reviewers with non-empty group passes", () => {
+    const topo: Topology = {
+      entry: "authority",
+      groups: { reviewers: ["authority"] },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node", supervisor: "@reviewers" },
+      ],
+    };
+    const result = validateTopology(topo);
+    // The @reviewers group has authority as the single member; no error expected.
+    expect(result.errors.filter((e) => /supervisor|reviewers/i.test(e))).toHaveLength(0);
+  });
+
+  it("supervisor: @empty → error contains 'supervisor' and 'empty'", () => {
+    const topo: Topology = {
+      entry: "authority",
+      groups: { empty: [] },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node", supervisor: "@empty" },
+      ],
+    };
+    const result = validateTopology(topo);
+    const relevantErrors = result.errors.filter((e) => /empty/i.test(e));
+    expect(relevantErrors.length).toBeGreaterThan(0);
+    expect(relevantErrors.some((e) => /supervisor/i.test(e))).toBe(true);
+  });
+
+  it("submitTo: @empty → error contains 'submitTo' and 'empty'", () => {
+    const topo: Topology = {
+      entry: "authority",
+      groups: { empty: [] },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        // w1 needs a supervisor to not violate the top-supervisor rule
+        { name: "w1", recipe: "mesh-node", supervisor: "authority", submitTo: "@empty" },
+      ],
+    };
+    const result = validateTopology(topo);
+    const relevantErrors = result.errors.filter((e) => /empty/i.test(e));
+    expect(relevantErrors.length).toBeGreaterThan(0);
+    expect(relevantErrors.some((e) => /submitTo/i.test(e))).toBe(true);
+  });
+
+  it("supervisor: @unknown → existing unknown-group error format", () => {
+    const topo: Topology = {
+      entry: "authority",
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node", supervisor: "@unknown-grp" },
+      ],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors.some((e) => /unknown-grp/i.test(e))).toBe(true);
+  });
+
+  it("top-supervisor uniqueness: node with supervisor: @reviewers (non-empty) is NOT a top candidate", () => {
+    // authority has no supervisor (top candidate); workers all have supervisor: @reviewers
+    // reviewers group → [authority] (a concrete non-empty group)
+    // So w1, w2 each have an effective supervisor (authority via @reviewers)
+    // Only authority should be the top candidate.
+    const topo: Topology = {
+      entry: "authority",
+      groups: { reviewers: ["authority"] },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node", supervisor: "@reviewers" },
+        { name: "w2", recipe: "mesh-node", supervisor: "@reviewers" },
+      ],
+    };
+    const result = validateTopology(topo);
+    // Should have exactly one top candidate (authority) → no supervisor error
+    expect(result.errors.filter((e) => /supervisor/i.test(e))).toHaveLength(0);
+  });
+
+  it("group_bindings.workers.supervisor: @reviewers (non-empty) → no top-candidate added for workers; passes", () => {
+    const topo: Topology = {
+      entry: "authority",
+      groups: {
+        workers: ["w1", "w2"],
+        reviewers: ["authority"],
+      },
+      group_bindings: {
+        workers: { supervisor: "@reviewers" },
+      },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node" },
+        { name: "w2", recipe: "mesh-node" },
+      ],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("group_bindings.workers.supervisor: @empty → empty-group error referencing group_bindings.workers.supervisor", () => {
+    const topo: Topology = {
+      entry: "authority",
+      groups: {
+        workers: ["w1"],
+        empty: [],
+      },
+      group_bindings: {
+        workers: { supervisor: "@empty" },
+      },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node" },
+      ],
+    };
+    const result = validateTopology(topo);
+    const relevantErrors = result.errors.filter((e) => /empty/i.test(e));
+    expect(relevantErrors.length).toBeGreaterThan(0);
+    // Error should mention the binding context
+    expect(relevantErrors.some((e) => /group_bindings.*workers.*supervisor|supervisor.*group_bindings.*workers/i.test(e))).toBe(true);
+  });
+});

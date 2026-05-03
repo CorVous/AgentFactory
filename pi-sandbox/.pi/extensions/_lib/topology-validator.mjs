@@ -19,6 +19,7 @@
  */
 
 import { aggregateGroupMembership } from "./group-membership.mjs";
+import { resolveRef } from "./ref-resolver.mjs";
 
 /**
  * @typedef {{
@@ -66,7 +67,7 @@ import { aggregateGroupMembership } from "./group-membership.mjs";
 
 /**
  * Expand a list that may contain @<group> references into concrete peer names.
- * Returns the expanded list; pushes to errors when a group is missing.
+ * Returns the expanded list; pushes to errors when a group is missing or empty.
  *
  * @param {string[]} list
  * @param {Map<string, string[]>} groups
@@ -80,18 +81,55 @@ function expandRefs(list, groups, context, errors) {
     if (item.startsWith("@")) {
       const groupName = item.slice(1);
       const members = groups.get(groupName);
-      if (!members) {
-        errors.push(
-          `unknown @group reference '@${groupName}' in ${context} — group is not defined`,
-        );
-      } else {
-        result.push(...members);
+      try {
+        const expanded = /** @type {string[]} */ (resolveRef(item, members, "expand-all", undefined));
+        result.push(...expanded);
+      } catch (e) {
+        if (/zero members/.test(e.message)) {
+          errors.push(
+            `@group reference '@${groupName}' in ${context} resolves to zero members`,
+          );
+        } else {
+          // unknown group
+          errors.push(
+            `unknown @group reference '@${groupName}' in ${context} — group is not defined`,
+          );
+        }
       }
     } else {
       result.push(item);
     }
   }
   return result;
+}
+
+/**
+ * Validate a scalar field that may be an @<group> ref.
+ * Uses a throwaway round-robin counter (just for validation — not for actual assignment).
+ * Pushes to errors on unknown/empty group.
+ *
+ * @param {string | undefined} value
+ * @param {Map<string, string[]>} groups
+ * @param {string} context  — e.g. "node 'w1'.supervisor"
+ * @param {string[]} errors
+ */
+function validateScalarRef(value, groups, context, errors) {
+  if (!value || !value.startsWith("@")) return;
+  const groupName = value.slice(1);
+  const members = groups.get(groupName);
+  try {
+    resolveRef(value, members, "round-robin", { value: 0 });
+  } catch (e) {
+    if (/zero members/.test(e.message)) {
+      errors.push(
+        `@group reference '@${groupName}' in ${context} resolves to zero members`,
+      );
+    } else {
+      errors.push(
+        `unknown @group reference '@${groupName}' in ${context} — group is not defined`,
+      );
+    }
+  }
 }
 
 /**
@@ -134,6 +172,30 @@ export function validateTopology(topo, recipeModelLoader) {
   }
 
   // ── Rule 3: exactly one peer with unset supervisor: ────────────────────────
+  //
+  // A node is NOT a top candidate when it has an effective supervisor, which
+  // includes `supervisor: "@group"` that resolves to ≥1 member. An @group ref
+  // to an empty group is treated as "unset" here (the empty-group rule in Rule 4
+  // will emit a hard error that blocks launch regardless).
+
+  /**
+   * Return true when the string value is an @group ref that resolves to ≥1 member.
+   * Return false when it's an empty-group ref or a non-@ literal without members.
+   * Non-@ literals (concrete names) are always treated as "set".
+   * @param {string | undefined} value
+   * @returns {boolean}
+   */
+  function supervisorIsSet(value) {
+    if (value === undefined) return false;
+    if (!value.startsWith("@")) return true; // concrete name → always set
+    const groupName = value.slice(1);
+    const members = groups.get(groupName);
+    // Unknown group: emit an error later in Rule 4; treat as "unset" so the
+    // top-supervisor check doesn't add a confusing second error.
+    if (!members || members.length === 0) return false;
+    return true;
+  }
+
   const topCandidates = [];
   for (const node of topo.nodes) {
     if (node.type !== undefined) continue;
@@ -158,7 +220,7 @@ export function validateTopology(topo, recipeModelLoader) {
       effectiveSupervisor = node.supervisor;
     }
 
-    if (effectiveSupervisor === undefined) {
+    if (!supervisorIsSet(effectiveSupervisor)) {
       topCandidates.push(node.name);
     }
   }
@@ -177,6 +239,13 @@ export function validateTopology(topo, recipeModelLoader) {
 
   // ── Rule 4: @group references must resolve + peer names must exist ─────────
   for (const node of topo.nodes) {
+    // Scalar fields: supervisor and submitTo
+    if (node.supervisor) {
+      validateScalarRef(node.supervisor, groups, `node '${node.name}'.supervisor`, errors);
+    }
+    if (node.submitTo) {
+      validateScalarRef(node.submitTo, groups, `node '${node.name}'.submitTo`, errors);
+    }
     if (node.acceptedFrom) {
       const expanded = expandRefs(
         node.acceptedFrom,
@@ -209,9 +278,25 @@ export function validateTopology(topo, recipeModelLoader) {
     }
   }
 
-  // Check group_bindings for @group refs to undefined groups
+  // Check group_bindings for @group refs to undefined groups (arrays and scalars)
   if (topo.group_bindings) {
     for (const [bindingName, binding] of Object.entries(topo.group_bindings)) {
+      if (binding.supervisor) {
+        validateScalarRef(
+          binding.supervisor,
+          groups,
+          `group_bindings.${bindingName}.supervisor`,
+          errors,
+        );
+      }
+      if (binding.submitTo) {
+        validateScalarRef(
+          binding.submitTo,
+          groups,
+          `group_bindings.${bindingName}.submitTo`,
+          errors,
+        );
+      }
       if (binding.acceptedFrom) {
         expandRefs(
           binding.acceptedFrom,

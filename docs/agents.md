@@ -719,19 +719,62 @@ never enumerated by the authority).
 
 ### Group references
 
-Any string value in `acceptedFrom`, `peers`, or a `group_bindings` array that
-starts with `@` is expanded to the group's member list at launch time. The bus
+`@<group>` references are supported in multiple topology fields, with different
+resolution policies depending on the field type:
+
+- **Array fields** (`acceptedFrom`, `peers`) — policy `expand-all`: the entire
+  group member list is spliced in at the ref position. Every member of the
+  referenced group is included.
+- **Scalar fields** (`supervisor`, `submitTo`) — policy `round-robin`: each call
+  to `resolveNode` for a node picks the next member of the group in a shared
+  counter that advances in node-declaration order across the entire topology. This
+  distributes workers evenly across a pool of supervisors without any per-node
+  configuration.
+
+All `@group` refs in binding arrays are expanded during resolution. The bus
 always sees concrete peer names — groups are a topology-level authoring
 convenience, not a bus-level concept.
 
 ```yaml
 groups:
   workers: [w1, w2, w3]
+  reviewers: [r1, r2]
 nodes:
+  - name: r1
+    recipe: mesh-authority
+  - name: r2
+    recipe: mesh-authority
+  - name: w1
+    recipe: mesh-node
+    supervisor: "@reviewers"   # round-robin → r1 (counter=0)
+  - name: w2
+    recipe: mesh-node
+    supervisor: "@reviewers"   # round-robin → r2 (counter=1)
+  - name: w3
+    recipe: mesh-node
+    supervisor: "@reviewers"   # round-robin → r1 (counter=2 % 2 = 0)
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]  # expands to [w1, w2, w3] before launch
+    acceptedFrom: ["@workers"] # expand-all → [w1, w2, w3]
 ```
+
+**Round-robin counter** is per-group and shared across all nodes in declaration
+order. Two nodes referencing the same group always land on different members
+(until the group wraps around). The counter is reset to zero at each launch —
+the assignments are deterministic but not persisted across runs.
+
+**Stderr logging.** For each `@group` scalar resolution, the launcher emits a
+line to stderr:
+```
+launch-mesh: worker <node-name> → <field> <member> (round-robin)
+```
+Example: `launch-mesh: worker w1 → supervisor r1 (round-robin)`.
+
+**Empty group is a hard error.** Referencing an `@group` that exists but has
+zero members (`groups.reviewers: []`) blocks launch for both scalar and array
+fields. `Habitat.supervisor` and `Habitat.submitTo` always carry concrete
+scalar peer names — resolution happens entirely in the launcher before the
+`--topology-overlay` JSON is built.
 
 ### Resolution order
 
@@ -743,15 +786,16 @@ For a given node, the effective Habitat overlay is computed as:
 2. **Per-node fields** — override everything from group bindings.
 3. **Recipe fields** — used for any field not set by the topology at all.
 
-`@group` refs in binding arrays are expanded during resolution. A ref to an
-undefined group is a hard launch error.
-
 ### Validation
 
 `scripts/launch-mesh.mjs` validates the full topology before spawning any node:
 
 - Duplicate node names → error.
 - `@group` references to undefined groups → error.
+- `@group` references to empty groups → error (both array and scalar fields).
+- `supervisor:` and `submitTo:` accept `@<group>` refs; the validator treats
+  them as "set" when the group resolves to ≥1 member (they count as having an
+  effective supervisor for the top-supervisor uniqueness check).
 - `acceptedFrom` / `peers` referencing a name not in `nodes` → error.
 
 ### Launcher integration
@@ -765,6 +809,5 @@ values). The `habitat` baseline extension materialises `habitatSpec` at
 ### Example — grouped mesh
 
 `pi-sandbox/meshes/grouped-mesh.yaml` shows a complete topology that exercises
-groups, group bindings, and per-node overrides. The existing
-`pi-sandbox/meshes/authority-mesh.yaml` (no peer fields) continues to launch
-unchanged.
+groups, group bindings, and per-node overrides. `pi-sandbox/meshes/authority-mesh.yaml`
+demonstrates `supervisor: "@authority"` round-robin resolution on its worker nodes.
