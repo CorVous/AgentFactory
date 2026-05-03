@@ -22,6 +22,7 @@ type TopologyNode = {
   supervisor?: string;
   acceptedFrom?: string[];
   peers?: string[];
+  groups?: string[];
 };
 
 type Topology = {
@@ -365,5 +366,67 @@ describe("TASK_RABBIT_MODEL warning", () => {
     };
     const result = validateTopology(topo, literalModelLoader);
     expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ── per-node groups: field ────────────────────────────────────────────────────
+
+describe("per-node groups field", () => {
+  it("passes when a node uses per-node groups to declare membership in an implicit group, and another node @refs it", () => {
+    // No top-level groups block — the group exists only because a node declares it.
+    const topo: Topology = {
+      entry: "authority",
+      nodes: [
+        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@workers"] },
+        { name: "w1", recipe: "mesh-node", supervisor: "authority", groups: ["workers"] },
+        { name: "w2", recipe: "mesh-node", supervisor: "authority", groups: ["workers"] },
+      ],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("rejects @group ref to a group name not declared by either top-level or per-node form", () => {
+    const topo: Topology = {
+      entry: "authority",
+      nodes: [
+        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@totally-unknown"] },
+        { name: "w1", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors.some((e) => /totally-unknown/i.test(e))).toBe(true);
+  });
+
+  it("counts per-node group_binding supervisor as effectively set (not a top candidate)", () => {
+    // Node w1 declares groups: [workers] and group_bindings has workers.supervisor.
+    // So w1 should NOT be a top candidate (it has an effective supervisor via binding).
+    const topo: Topology = {
+      entry: "authority",
+      groups: undefined,
+      group_bindings: { workers: { supervisor: "authority" } },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "w1", recipe: "mesh-node", groups: ["workers"] },
+      ],
+    };
+    const result = validateTopology(topo);
+    // Only authority should be top candidate; no duplicate-supervisor error.
+    expect(result.errors.filter((e) => /supervisor/i.test(e))).toHaveLength(0);
+  });
+
+  it("passes a mixed topology with both top-level groups and per-node groups for the same group", () => {
+    const topo: Topology = {
+      entry: "authority",
+      groups: { workers: ["w1"] },
+      group_bindings: { workers: { supervisor: "authority" } },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@workers"] },
+        { name: "w1", recipe: "mesh-node" },
+        { name: "w2", recipe: "mesh-node", groups: ["workers"] },
+      ],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors).toHaveLength(0);
   });
 });

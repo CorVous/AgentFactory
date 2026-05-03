@@ -117,6 +117,9 @@ const dupes = names.filter((n, i) => names.indexOf(n) !== i);
 if (dupes.length > 0) die(`duplicate node names: ${dupes.join(", ")}`);
 
 // ── Validate topology (entry:, relay deprecation, top supervisor, peer refs) ──
+// Ordering invariant: validateTopology is called AFTER auto-naming (above) so that
+// per-node `groups:` fields on formerly-anonymous nodes are resolved with their
+// assigned slugs by aggregateGroupMembership inside the validator.
 
 const { errors: topoErrors, warnings: topoWarnings } = validateTopology(topology, loadRecipeModel);
 

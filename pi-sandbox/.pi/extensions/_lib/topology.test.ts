@@ -115,6 +115,45 @@ nodes:
 `;
     expect(() => parseTopology(yaml)).toThrow(/duplicate node name/i);
   });
+
+  it("accepts per-node groups field as an array of strings", () => {
+    const yaml = `
+nodes:
+  - name: worker
+    recipe: mesh-node
+    groups: [workers, submitters]
+`;
+    const topo = parseTopology(yaml);
+    expect(topo.nodes[0].groups).toEqual(["workers", "submitters"]);
+  });
+
+  it("omits groups field when not supplied on a node", () => {
+    const yaml = `
+nodes:
+  - name: worker
+    recipe: mesh-node
+`;
+    const topo = parseTopology(yaml);
+    expect(topo.nodes[0].groups).toBeUndefined();
+  });
+
+  it("accepts a mix of named nodes with and without per-node groups", () => {
+    const yaml = `
+nodes:
+  - name: authority
+    recipe: mesh-authority
+  - name: worker-a
+    recipe: mesh-node
+    groups: [workers]
+  - name: worker-b
+    recipe: mesh-node
+    groups: [workers]
+`;
+    const topo = parseTopology(yaml);
+    expect(topo.nodes[0].groups).toBeUndefined();
+    expect(topo.nodes[1].groups).toEqual(["workers"]);
+    expect(topo.nodes[2].groups).toEqual(["workers"]);
+  });
 });
 
 // ── resolveNode ──────────────────────────────────────────────────────────────
@@ -398,5 +437,112 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     expect(() => resolveNode(topo, "nobody")).toThrow(/nobody/i);
+  });
+
+  // ── Per-node groups: field ───────────────────────────────────────────────
+
+  it("per-node groups causes @group ref to expand to that node's name", () => {
+    const yaml = `
+nodes:
+  - name: authority
+    recipe: mesh-authority
+    acceptedFrom: ["@workers"]
+  - name: w1
+    recipe: mesh-node
+    groups: [workers]
+  - name: w2
+    recipe: mesh-node
+    groups: [workers]
+`;
+    const topo = parseTopology(yaml);
+    const resolved = resolveNode(topo, "authority");
+    expect(resolved.acceptedFrom).toEqual(["w1", "w2"]);
+  });
+
+  it("per-node groups can reference a group not declared at top level (implicit group)", () => {
+    const yaml = `
+nodes:
+  - name: authority
+    recipe: mesh-authority
+    peers: ["@implicit"]
+  - name: anon-worker
+    recipe: mesh-node
+    groups: [implicit]
+`;
+    const topo = parseTopology(yaml);
+    const resolved = resolveNode(topo, "authority");
+    expect(resolved.peers).toEqual(["anon-worker"]);
+  });
+
+  it("mixes top-level and per-node groups for the same group name", () => {
+    const yaml = `
+groups:
+  workers: [w1]
+nodes:
+  - name: authority
+    recipe: mesh-authority
+    acceptedFrom: ["@workers"]
+  - name: w1
+    recipe: mesh-node
+  - name: w2
+    recipe: mesh-node
+    groups: [workers]
+`;
+    const topo = parseTopology(yaml);
+    const resolved = resolveNode(topo, "authority");
+    // top-level w1 first, then per-node w2
+    expect(resolved.acceptedFrom).toEqual(["w1", "w2"]);
+  });
+
+  it("per-node groups triggers group_binding for that node", () => {
+    const yaml = `
+group_bindings:
+  workers:
+    supervisor: authority
+nodes:
+  - name: authority
+    recipe: mesh-authority
+  - name: w1
+    recipe: mesh-node
+    groups: [workers]
+`;
+    const topo = parseTopology(yaml);
+    const resolved = resolveNode(topo, "w1");
+    expect(resolved.supervisor).toBe("authority");
+  });
+
+  it("anonymous node with groups field does not expand into @group refs (skipped)", () => {
+    // After auto-naming the anonymous node gets a name; before that, it's skipped.
+    // We test with the raw (pre-auto-naming) topology where the node has no name.
+    const yaml = `
+nodes:
+  - name: authority
+    recipe: mesh-authority
+    acceptedFrom: ["@workers"]
+  - recipe: mesh-node
+    supervisor: authority
+`;
+    // The anonymous node has no `groups:` field; @workers ref should fail.
+    const topo = parseTopology(yaml);
+    expect(() => resolveNode(topo, "authority")).toThrow(/group.*workers/i);
+  });
+
+  it("anonymous node stamped with a name + groups participates in @group expansion", () => {
+    // Simulate the launcher's auto-naming step: assign a name to the unnamed node
+    // before calling resolveNode so the aggregator picks it up.
+    const yaml = `
+nodes:
+  - name: authority
+    recipe: mesh-authority
+    acceptedFrom: ["@workers"]
+  - recipe: mesh-node
+    supervisor: authority
+    groups: [workers]
+`;
+    const topo = parseTopology(yaml);
+    // Simulate launcher auto-naming
+    topo.nodes[1].name = "cottontail-worker";
+    const resolved = resolveNode(topo, "authority");
+    expect(resolved.acceptedFrom).toEqual(["cottontail-worker"]);
   });
 });
