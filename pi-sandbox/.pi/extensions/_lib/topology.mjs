@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "yaml";
 import { aggregateGroupMembership } from "./group-membership.mjs";
+import { resolveRef } from "./ref-resolver.mjs";
 
 /**
  * @typedef {{
@@ -41,6 +42,7 @@ import { aggregateGroupMembership } from "./group-membership.mjs";
  *   submitTo?: string;
  *   acceptedFrom: string[];
  *   peers: string[];
+ *   _resolutions: Array<{field: string; group: string; member: string; policy: "round-robin"}>;
  * }} ResolvedNode
  */
 
@@ -132,6 +134,7 @@ export function parseTopology(yamlText) {
 
 /**
  * Expand a list that may contain @<group> references into concrete peer names.
+ * Uses the expand-all policy so every member of a referenced group is included.
  * @param {string[]} list
  * @param {Map<string, string[]> | undefined} groups
  * @param {string} context
@@ -143,8 +146,13 @@ function expandRefs(list, groups, context) {
     if (item.startsWith("@")) {
       const groupName = item.slice(1);
       const members = groups?.get(groupName);
-      if (!members) throw new Error(`topology: unknown group reference '@${groupName}' in ${context}`);
-      result.push(...members);
+      try {
+        const expanded = /** @type {string[]} */ (resolveRef(item, members, "expand-all", undefined));
+        result.push(...expanded);
+      } catch (e) {
+        // Translate to the legacy wording so existing tests stay green
+        throw new Error(`topology: unknown group reference '@${groupName}' in ${context}`);
+      }
     } else {
       result.push(item);
     }
@@ -157,9 +165,16 @@ function expandRefs(list, groups, context) {
  * Resolution order: group_bindings (last group wins) → per-node overrides.
  * @param {Topology} topo
  * @param {string} nodeName
+ * @param {Map<string, {value: number}>} [counterStates] — mutable round-robin counters keyed
+ *   by group name; shared across all resolveNode calls by the launcher so that consecutive
+ *   nodes targeting the same group land on different members. Lazily initialised to a fresh
+ *   Map when omitted so existing call sites without the parameter still work.
  * @returns {ResolvedNode}
  */
-export function resolveNode(topo, nodeName) {
+export function resolveNode(topo, nodeName, counterStates) {
+  // Default to a fresh empty Map so callers that omit the arg still work.
+  if (!counterStates) counterStates = new Map();
+
   const node = topo.nodes.find((n) => n.name === nodeName);
   if (!node) throw new Error(`topology: node '${nodeName}' not found in topology`);
 
@@ -211,12 +226,51 @@ export function resolveNode(topo, nodeName) {
     }
   }
 
+  /** @type {Array<{field: string; group: string; member: string; policy: "round-robin"}>} */
+  const resolutions = [];
+
+  /**
+   * Resolve a scalar field that may be an @group ref using round-robin policy.
+   * Returns the concrete string value and populates `resolutions` on `@` refs.
+   * @param {string | undefined} value
+   * @param {string} field
+   * @returns {string | undefined}
+   */
+  function resolveScalar(value, field) {
+    if (value === undefined || !value.startsWith("@")) return value;
+    const groupName = value.slice(1);
+    const members = groups.get(groupName);
+    // Lazily create the counter for this group if it doesn't exist yet.
+    if (!counterStates.has(groupName)) counterStates.set(groupName, { value: 0 });
+    const counter = counterStates.get(groupName);
+    try {
+      const member = /** @type {string} */ (resolveRef(value, members, "round-robin", counter));
+      resolutions.push({ field, group: groupName, member, policy: "round-robin" });
+      return member;
+    } catch (e) {
+      // Translate to include field context
+      throw new Error(`topology: node '${nodeName}'.${field}: ${e.message}`);
+    }
+  }
+
+  const resolvedSupervisor = resolveScalar(supervisor, "supervisor");
+  const resolvedSubmitTo = resolveScalar(submitTo, "submitTo");
+
+  // Validate resolved concrete scalar names exist in the topology
+  if (resolvedSupervisor !== undefined && !nodeNames.has(resolvedSupervisor)) {
+    throw new Error(`topology: node '${nodeName}'.supervisor references unknown node '${resolvedSupervisor}'`);
+  }
+  if (resolvedSubmitTo !== undefined && !nodeNames.has(resolvedSubmitTo)) {
+    throw new Error(`topology: node '${nodeName}'.submitTo references unknown node '${resolvedSubmitTo}'`);
+  }
+
   /** @type {ResolvedNode} */
   const result = {
     acceptedFrom: resolvedAcceptedFrom,
     peers: resolvedPeers,
+    _resolutions: resolutions,
   };
-  if (supervisor !== undefined) result.supervisor = supervisor;
-  if (submitTo !== undefined) result.submitTo = submitTo;
+  if (resolvedSupervisor !== undefined) result.supervisor = resolvedSupervisor;
+  if (resolvedSubmitTo !== undefined) result.submitTo = resolvedSubmitTo;
   return result;
 }

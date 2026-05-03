@@ -141,10 +141,22 @@ if (entryPeer) {
 }
 
 // Pre-compute per-node overlays (validates @group refs and peer references early).
+// One shared counterStates Map is used across all resolveNode calls so that
+// round-robin assignment for @group scalar refs is deterministic in node-declaration order.
+const counterStates = new Map();
 const nodeOverlays = new Map();
 for (const node of topology.nodes) {
   try {
-    nodeOverlays.set(node.name, resolveNode(topology, node.name));
+    const resolved = resolveNode(topology, node.name, counterStates);
+    // Log any @group scalar resolutions to stderr for observability.
+    for (const { field, member, policy } of resolved._resolutions) {
+      process.stderr.write(
+        `launch-mesh: worker ${node.name} → ${field} ${member} (${policy})\n`,
+      );
+    }
+    // Strip the debug payload before building the overlay JSON.
+    const { _resolutions: _unused, ...overlay } = resolved;
+    nodeOverlays.set(node.name, overlay);
   } catch (e) {
     die(`topology overlay error for node '${node.name}': ${e.message}`);
   }

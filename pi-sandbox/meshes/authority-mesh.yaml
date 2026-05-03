@@ -10,6 +10,11 @@
 # needs an explicit name because it is referenced by `entry:` and by the workers'
 # `supervisor:` fields. Workers discover each other at runtime via agent_list.
 #
+# The workers use `supervisor: "@authority"` — an @group ref to a single-member
+# group — to demonstrate Slice 2 round-robin resolution. With a single member the
+# result is identical to `supervisor: authority`, but the pattern scales naturally
+# when the group grows (e.g. adding a second authority for load-balanced supervision).
+#
 # Human interaction is provided by the launcher TUI (see ADR-0004).
 # The former `type: relay` human node has been removed.
 #
@@ -21,6 +26,12 @@ bus_root: /tmp/pi-mesh-authority
 
 # The peer the launcher TUI focuses on first.
 entry: authority
+
+# Single-member group — workers use @authority as their supervisor ref so that
+# adding a second authority later is a one-line change in this group rather than
+# editing every worker node individually. Resolution is round-robin per launch.
+groups:
+  authority: [authority]
 
 nodes:
   - name: authority
@@ -35,7 +46,7 @@ nodes:
 
   - recipe: mesh-node
     sandbox: /tmp/pi-mesh-authority/analyst
-    supervisor: authority
+    supervisor: "@authority"
     task: |
       You are a research worker in a mesh. Start by calling agent_list to
       discover the authority and other peers. Wait for requests from peers.
@@ -45,7 +56,7 @@ nodes:
 
   - recipe: mesh-writer
     sandbox: /tmp/pi-mesh-authority/writer
-    supervisor: authority
+    supervisor: "@authority"
     task: |
       You are a drafting worker in a mesh. Start by calling agent_list to
       discover the authority and other peers. Wait for drafting requests.
