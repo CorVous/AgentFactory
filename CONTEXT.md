@@ -50,6 +50,10 @@ Directory holding peer Unix sockets at `${BUS_ROOT}/${instance_name}.sock`.
 **Mesh**:
 A running collection of **Peers** sharing one **Bus Root**. Humans never run a mesh directly; every mesh is launched under a **Top Supervisor** (tier ≥ `LEAD_HARE_MODEL` recommended) and the human participates only through the **TUI**.
 
+**Group**:
+A topology-level pool of **Peers** sharing a role. Membership is declared per-node via `groups: [<name>]` on the node, or by listing names in the topology's `groups: { <name>: [peer1, peer2] }` block; both forms are aggregated at launch. Group references (`@<name>`) are accepted in `supervisor:`, `submitTo:`, `acceptedFrom:`, `peers:`, and `entry:`. In array fields (`acceptedFrom`, `peers`), `@group` expands to all members; in scalar routing fields (`supervisor`, `submitTo`), a single member is picked round-robin per worker at launch and logged to stderr; in `entry:` the first-listed member is picked deterministically. Groups are an authoring convenience — the **Bus Root** always addresses concrete **Instance Names**, never a group. `@group` syntax is topology-only; **Recipes** stay name-bound.
+_Avoid_: cluster, pool (overloaded with worker-pool / submission-pool semantics)
+
 **Submission**:
 A typed envelope from a worker to its **submitTo** peer carrying staged artifacts (writes, edits, moves, deletes) for review and atomic apply.
 
