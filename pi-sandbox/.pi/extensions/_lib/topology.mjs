@@ -1,4 +1,5 @@
 import { parse as parseYaml } from "yaml";
+import { aggregateGroupMembership } from "./group-membership.mjs";
 
 /**
  * @typedef {{
@@ -11,6 +12,7 @@ import { parse as parseYaml } from "yaml";
  *   submitTo?: string;
  *   acceptedFrom?: string[];
  *   peers?: string[];
+ *   groups?: string[];
  * }} TopologyNode
  */
 
@@ -70,6 +72,9 @@ export function parseTopology(yamlText) {
       ...(Array.isArray(n.peers)
         ? { peers: n.peers.filter((s) => typeof s === "string") }
         : {}),
+      ...(Array.isArray(n.groups)
+        ? { groups: n.groups.filter((s) => typeof s === "string") }
+        : {}),
     };
   });
 
@@ -128,7 +133,7 @@ export function parseTopology(yamlText) {
 /**
  * Expand a list that may contain @<group> references into concrete peer names.
  * @param {string[]} list
- * @param {Record<string, string[]> | undefined} groups
+ * @param {Map<string, string[]> | undefined} groups
  * @param {string} context
  * @returns {string[]}
  */
@@ -137,7 +142,7 @@ function expandRefs(list, groups, context) {
   for (const item of list) {
     if (item.startsWith("@")) {
       const groupName = item.slice(1);
-      const members = groups?.[groupName];
+      const members = groups?.get(groupName);
       if (!members) throw new Error(`topology: unknown group reference '@${groupName}' in ${context}`);
       result.push(...members);
     } else {
@@ -159,14 +164,13 @@ export function resolveNode(topo, nodeName) {
   if (!node) throw new Error(`topology: node '${nodeName}' not found in topology`);
 
   const nodeNames = new Set(topo.nodes.map((n) => n.name));
-  const groups = topo.groups;
+  // Use the aggregator so per-node groups: declarations participate in @group expansion.
+  const groups = aggregateGroupMembership(topo);
 
   // Collect all groups this node belongs to (order: groups in declaration order)
   const memberGroups = [];
-  if (groups) {
-    for (const [groupName, members] of Object.entries(groups)) {
-      if (members.includes(nodeName)) memberGroups.push(groupName);
-    }
+  for (const [groupName, members] of groups) {
+    if (members.includes(nodeName)) memberGroups.push(groupName);
   }
 
   // Apply group_bindings in declaration order; later groups overwrite earlier

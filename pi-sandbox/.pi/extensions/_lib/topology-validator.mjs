@@ -18,6 +18,8 @@
  * caller passes via recipeLoader).
  */
 
+import { aggregateGroupMembership } from "./group-membership.mjs";
+
 /**
  * @typedef {{
  *   name: string;
@@ -67,7 +69,7 @@
  * Returns the expanded list; pushes to errors when a group is missing.
  *
  * @param {string[]} list
- * @param {Record<string, string[]> | undefined} groups
+ * @param {Map<string, string[]>} groups
  * @param {string} context
  * @param {string[]} errors
  * @returns {string[]}
@@ -77,7 +79,7 @@ function expandRefs(list, groups, context, errors) {
   for (const item of list) {
     if (item.startsWith("@")) {
       const groupName = item.slice(1);
-      const members = groups?.[groupName];
+      const members = groups.get(groupName);
       if (!members) {
         errors.push(
           `unknown @group reference '@${groupName}' in ${context} — group is not defined`,
@@ -104,6 +106,11 @@ export function validateTopology(topo, recipeModelLoader) {
   const warnings = [];
 
   const nodeNames = new Set(topo.nodes.map((n) => n.name));
+
+  // Build the unified group-membership map (merges top-level groups block + per-node
+  // groups: fields). All @group expansions below use this Map so per-node declarations
+  // participate in ref resolution.
+  const groups = aggregateGroupMembership(topo);
 
   // ── Rule 1: required `entry:` field ────────────────────────────────────────
   if (!topo.entry) {
@@ -133,9 +140,10 @@ export function validateTopology(topo, recipeModelLoader) {
 
     let effectiveSupervisor;
 
-    // Group_bindings first (last group wins per topology.mjs semantics)
-    if (topo.groups && topo.group_bindings) {
-      for (const [groupName, members] of Object.entries(topo.groups)) {
+    // Group_bindings first (last group wins per topology.mjs semantics).
+    // Use the aggregated groups Map so per-node group declarations are included.
+    if (topo.group_bindings) {
+      for (const [groupName, members] of groups) {
         if (members.includes(node.name)) {
           const binding = topo.group_bindings[groupName];
           if (binding?.supervisor !== undefined) {
@@ -172,7 +180,7 @@ export function validateTopology(topo, recipeModelLoader) {
     if (node.acceptedFrom) {
       const expanded = expandRefs(
         node.acceptedFrom,
-        topo.groups,
+        groups,
         `node '${node.name}'.acceptedFrom`,
         errors,
       );
@@ -187,7 +195,7 @@ export function validateTopology(topo, recipeModelLoader) {
     if (node.peers) {
       const expanded = expandRefs(
         node.peers,
-        topo.groups,
+        groups,
         `node '${node.name}'.peers`,
         errors,
       );
@@ -207,7 +215,7 @@ export function validateTopology(topo, recipeModelLoader) {
       if (binding.acceptedFrom) {
         expandRefs(
           binding.acceptedFrom,
-          topo.groups,
+          groups,
           `group_bindings.${bindingName}.acceptedFrom`,
           errors,
         );
@@ -215,7 +223,7 @@ export function validateTopology(topo, recipeModelLoader) {
       if (binding.peers) {
         expandRefs(
           binding.peers,
-          topo.groups,
+          groups,
           `group_bindings.${bindingName}.peers`,
           errors,
         );
