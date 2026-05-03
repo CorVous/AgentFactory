@@ -7,8 +7,11 @@
 #
 # The two worker nodes omit `name:` and receive auto-generated <breed>-<shortName>
 # slugs at launch time (e.g. "cottontail-node", "rex-writer"). Only `authority`
-# needs an explicit name because it is referenced by `entry:` and by the workers'
-# `supervisor:` fields. Workers discover each other at runtime via agent_list.
+# needs an explicit name because it is referenced by the workers' `supervisor:`
+# fields. Workers discover each other at runtime via agent_list.
+#
+# The `entry:` field is omitted — the launcher synthesises the focused peer from
+# the unique top supervisor (authority), per Slice 3 synthesis rules.
 #
 # The workers use `supervisor: "@authority"` — an @group ref to a single-member
 # group — to demonstrate Slice 2 round-robin resolution. With a single member the
@@ -23,9 +26,6 @@
 #   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
 
 bus_root: /tmp/pi-mesh-authority
-
-# The peer the launcher TUI focuses on first.
-entry: authority
 
 # Single-member group — workers use @authority as their supervisor ref so that
 # adding a second authority later is a one-line change in this group rather than

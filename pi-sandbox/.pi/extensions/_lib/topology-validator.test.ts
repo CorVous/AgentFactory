@@ -117,12 +117,48 @@ describe("valid topologies", () => {
 // ── entry: field ──────────────────────────────────────────────────────────────
 
 describe("entry: field", () => {
-  it("rejects a topology missing entry:", () => {
+  it("passes a topology with no entry: when a unique top supervisor exists", () => {
     const topo: Topology = {
-      nodes: [{ name: "authority", recipe: "mesh-authority" }],
+      // no entry: — synthesis from unique top supervisor covers it
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
     };
     const result = validateTopology(topo);
-    expect(result.errors.some((e) => /entry/i.test(e))).toBe(true);
+    // No entry-related errors expected; the unique top supervisor is synthesised
+    expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("fails validation when no entry: and zero top supervisors (all nodes have a supervisor)", () => {
+    const topo: Topology = {
+      // no entry:
+      nodes: [
+        { name: "authority", recipe: "mesh-authority", supervisor: "external" },
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    const result = validateTopology(topo);
+    // The top-supervisor uniqueness rule (Rule 3) fires — no separate entry error
+    expect(result.errors.some((e) => /supervisor/i.test(e))).toBe(true);
+    // No entry-specific error (entry is simply omitted)
+    expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
+  });
+
+  it("fails validation when no entry: and multiple top supervisors", () => {
+    const topo: Topology = {
+      // no entry:
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "rogue", recipe: "mesh-authority" }, // also no supervisor
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    const result = validateTopology(topo);
+    // The top-supervisor uniqueness rule fires — no separate entry error
+    expect(result.errors.some((e) => /supervisor/i.test(e))).toBe(true);
+    expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
   });
 
   it("rejects entry that names a non-existent peer", () => {
@@ -134,9 +170,39 @@ describe("entry: field", () => {
     expect(result.errors.some((e) => /nobody/i.test(e))).toBe(true);
   });
 
-  it("does not add an entry-missing error when entry is present and valid", () => {
+  it("does not add an entry-related error when entry is present and valid", () => {
     const result = validateTopology(minimalTopo());
     expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
+  });
+
+  it("rejects entry: @unknown-group with distinct error message", () => {
+    const topo: Topology = {
+      entry: "@no-such-group",
+      nodes: [{ name: "authority", recipe: "mesh-authority" }],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors.some((e) => /no-such-group/i.test(e) && /unknown/i.test(e))).toBe(true);
+  });
+
+  it("rejects entry: @empty (zero members) with distinct error message", () => {
+    const topo: Topology = {
+      entry: "@empty",
+      groups: { empty: [] },
+      nodes: [{ name: "authority", recipe: "mesh-authority" }],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors.some((e) => /empty/i.test(e) && /zero members/i.test(e))).toBe(true);
+  });
+
+  it("passes entry: @group with non-empty members", () => {
+    const topo: Topology = {
+      entry: "@leaders",
+      groups: { leaders: ["authority"] },
+      nodes: [{ name: "authority", recipe: "mesh-authority" }],
+    };
+    const result = validateTopology(topo);
+    expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
   });
 });
 
