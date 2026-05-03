@@ -5,7 +5,10 @@
  * Coverage:
  *   - entry == top supervisor (allowed)
  *   - entry differs from top supervisor (allowed)
- *   - missing entry caught
+ *   - missing entry synthesises from unique top supervisor
+ *   - explicit entry @group resolves to first-listed member
+ *   - explicit entry @unknown-group → error
+ *   - explicit entry @empty-group → error
  *   - crash-auto-shift returns top supervisor name
  *   - group_binding supervisor resolution
  */
@@ -58,10 +61,73 @@ describe("resolveEntry", () => {
     expect(result.topSupervisor).toBe("authority");
   });
 
-  it("missing entry is caught with an error", () => {
+  it("missing entry synthesises from unique top supervisor", () => {
     const result = resolveEntry(authorityWorkerTopo(undefined));
+    expect(result.errors).toHaveLength(0);
+    expect(result.entryPeer).toBe("authority");
+    expect(result.entryPeer).toBe(result.topSupervisor);
+  });
+
+  it("missing entry returns null entryPeer when top supervisor is non-unique (no extra error pushed)", () => {
+    const topo: Topology = {
+      // no entry:
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "other-authority", recipe: "mesh-authority" }, // also no supervisor
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    const result = resolveEntry(topo);
+    // entryPeer is null because there is no unique top supervisor
+    expect(result.entryPeer).toBeNull();
+    // No error is pushed by the resolver — the validator (run first) handles this
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("explicit entry @group resolves to first-listed member deterministically", () => {
+    const topo: Topology = {
+      entry: "@leaders",
+      groups: { leaders: ["authority", "backup"] },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "backup", recipe: "mesh-authority", supervisor: "authority" },
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    // Call twice to verify determinism (not round-robin)
+    const result1 = resolveEntry(topo);
+    const result2 = resolveEntry(topo);
+    expect(result1.errors).toHaveLength(0);
+    expect(result1.entryPeer).toBe("authority");
+    expect(result2.entryPeer).toBe("authority");
+  });
+
+  it("explicit entry @unknown-group returns unknown-group error", () => {
+    const topo: Topology = {
+      entry: "@no-such-group",
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    const result = resolveEntry(topo);
     expect(result.errors.length).toBeGreaterThan(0);
-    expect(result.errors.some((e) => /entry/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /no-such-group/i.test(e) && /unknown/i.test(e))).toBe(true);
+    expect(result.entryPeer).toBeNull();
+  });
+
+  it("explicit entry @empty (zero members) returns zero-members error", () => {
+    const topo: Topology = {
+      entry: "@empty",
+      groups: { empty: [] },
+      nodes: [
+        { name: "authority", recipe: "mesh-authority" },
+        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      ],
+    };
+    const result = resolveEntry(topo);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors.some((e) => /empty/i.test(e) && /zero members/i.test(e))).toBe(true);
     expect(result.entryPeer).toBeNull();
   });
 

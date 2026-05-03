@@ -4,7 +4,7 @@
  *
  * Validation rules:
  *   ERRORS (block launch):
- *   - Missing required `entry:` field at the topology root
+ *   - Explicit `entry:` that doesn't resolve (unknown name, unknown @group, @group with zero members)
  *   - Zero or multiple peers with unset `supervisor:` (exactly one top supervisor required)
  *   - Nodes with an unknown `type:` value (the only valid nodes are pi-agent nodes with no `type:` set)
  *   - `@group` references to undefined groups (in per-node and group_binding arrays)
@@ -150,15 +150,18 @@ export function validateTopology(topo, recipeModelLoader) {
   // participate in ref resolution.
   const groups = aggregateGroupMembership(topo);
 
-  // ── Rule 1: required `entry:` field ────────────────────────────────────────
-  if (!topo.entry) {
-    errors.push(
-      "topology is missing required 'entry:' field — add `entry: <peer-name>` at the root",
-    );
-  } else if (!nodeNames.has(topo.entry)) {
-    errors.push(
-      `'entry: ${topo.entry}' does not match any node name in the topology`,
-    );
+  // ── Rule 1: explicit `entry:` field (optional; missing is allowed) ────────
+  // When entry is omitted, the launcher synthesises it from the unique top
+  // supervisor (Rule 3 guarantees uniqueness). Only validate when explicitly set.
+  if (topo.entry) {
+    if (topo.entry.startsWith("@")) {
+      // @group ref — reuse validateScalarRef for consistent error messages.
+      validateScalarRef(topo.entry, groups, "entry", errors);
+    } else if (!nodeNames.has(topo.entry)) {
+      errors.push(
+        `'entry: ${topo.entry}' does not match any node name in the topology`,
+      );
+    }
   }
 
   // ── Rule 2: unknown node type ──────────────────────────────────────────────
