@@ -7,8 +7,12 @@ Workspace for building and running multi-agent compositions on top of `@mariozec
 ### Identity
 
 **Recipe**:
-A YAML file in `pi-sandbox/agents/<name>.yaml` defining a **Role** — prompt, tools, model **Tier**.
-_Avoid_: agent file, config, template
+A YAML file in `pi-sandbox/agents/<name>.yaml` defining a **Role** — prompt, tools, model **Tier**, and an `extends:` reference to a **Template**. Recipes never list rails directly; the **Template** owns that.
+_Avoid_: agent file, config
+
+**Template**:
+A YAML file in `pi-sandbox/templates/<name>.yaml` carrying only the `extensions:` list — the **Rails** that turn on for any **Recipe** that extends it. Templates may extend other templates (single inheritance). The runner resolves the chain into one effective extension list before launching pi.
+_Avoid_: base, preset, profile
 
 **Role**:
 The reusable identity a **Recipe** defines.
