@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
+import { rejectDeprecatedPeerFields, mergeBaselineTools } from "./_lib/recipe-validation.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = path.join(REPO_ROOT, "pi-sandbox");
@@ -30,6 +31,12 @@ const BASELINE_EXTENSIONS = [
   // gated by the recipe's `tools:` allowlist, so loading the extension
   // by default does not change the tool surface seen by the model.
   "agent-bus",
+  // supervisor must appear before intercept so intercept can wrap
+  // supervisor's globalThis dispatch hook at session_start. Both
+  // self-gate via getHabitat().acceptedFrom when the topology does not
+  // assign any inbound peers to this instance.
+  "supervisor",
+  "intercept",
 ];
 
 // When launched under the mesh launcher (PI_MESH_PEER=1), load the launcher
@@ -128,6 +135,7 @@ function loadRecipe(name) {
       die(`recipe ${file} 'shortName' must be a lowercase slug ([a-z][a-z0-9-]*)`);
     }
   }
+  rejectDeprecatedPeerFields(recipe, name, die);
   return recipe;
 }
 
@@ -175,60 +183,6 @@ function applyAgentsField(recipe, name) {
   return { allowed: declared, extensions, tools };
 }
 
-// Implicit-wire the supervisor extension, the intercept extension, and the
-// respond_to_request tool when a recipe sets any of the supervisor-related
-// peer fields (acceptedFrom, supervisor, submitTo).
-//
-// Intercept is always auto-loaded alongside supervisor — it decorates the
-// supervisor dispatch hook and is a silent no-op when no supervisor inbound
-// rail is active (empty acceptedFrom).
-//
-// supervisor must appear before intercept in the extension list so that
-// intercept can wrap supervisor's globalThis dispatch hook at session_start.
-//
-// Inverse rejection: if a recipe explicitly lists 'supervisor' or 'intercept'
-// in extensions or 'respond_to_request' in tools without setting any
-// supervisory field, that's a misconfiguration — fail loudly.
-function applySupervisorField(recipe, name, extensions, tools) {
-  const supervisoryFields =
-    (Array.isArray(recipe.acceptedFrom) && recipe.acceptedFrom.length > 0) ||
-    (typeof recipe.supervisor === "string" && recipe.supervisor) ||
-    (typeof recipe.submitTo === "string" && recipe.submitTo);
-
-  const explicitExt = extensions.includes("supervisor");
-  const explicitInterceptExt = extensions.includes("intercept");
-  const explicitTool = tools.includes("respond_to_request");
-
-  if (!supervisoryFields) {
-    if (explicitExt) {
-      die(
-        `recipe ${name} loads extension 'supervisor' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
-          `set at least one supervisory field (or drop the extension)`,
-      );
-    }
-    if (explicitInterceptExt) {
-      die(
-        `recipe ${name} loads extension 'intercept' but has no 'acceptedFrom', 'supervisor', or 'submitTo' — ` +
-          `set at least one supervisory field (or drop the extension)`,
-      );
-    }
-    if (explicitTool) {
-      die(
-        `recipe ${name} declares tool 'respond_to_request' but has no supervisory fields — ` +
-          `set 'acceptedFrom', 'supervisor', or 'submitTo' (or drop the tool)`,
-      );
-    }
-    return { extensions, tools };
-  }
-
-  // supervisor must come before intercept so intercept can wrap supervisor's
-  // globalThis dispatch hook at session_start.
-  const newExtensions = extensions.slice();
-  if (!explicitExt) newExtensions.push("supervisor");
-  if (!explicitInterceptExt) newExtensions.push("intercept");
-  const newTools = explicitTool ? tools : [...tools, "respond_to_request"];
-  return { extensions: newExtensions, tools: newTools };
-}
 
 function resolveModel(tierOrId) {
   const requested = tierOrId || "TASK_RABBIT_MODEL";
@@ -272,17 +226,23 @@ function resolveSkillPaths(names) {
 // fragments ahead of the recipe's own `prompt:` so each YAML only needs
 // to describe the agent's role, not the standard tool rules.
 //
-// Conditional rule: `deferred-confirm` is a baseline extension and
-// always loaded, but its fragment (apply order, atomic batch semantics)
-// is only relevant when at least one `deferred-*` tool extension is
-// loaded.
-function loadPromptFragments(extensionNames) {
+// Conditional rules:
+//   - `deferred-confirm` is a baseline extension and always loaded, but
+//     its fragment (apply order, atomic batch semantics) is only relevant
+//     when at least one `deferred-*` tool extension is loaded.
+//   - `supervisor` and `intercept` are baseline extensions and always
+//     loaded, but their fragments (inbound rail docs) are only relevant
+//     when the resolved Habitat has supervisory peer fields set — i.e.
+//     acceptedFrom is non-empty, or supervisor/submitTo is set. This is
+//     computed AFTER the topology overlay is merged (hasSupervisoryHabitat).
+function loadPromptFragments(extensionNames, hasSupervisoryHabitat = false) {
   const hasDeferredTool = extensionNames.some(
     (n) => n.startsWith("deferred-") && n !== "deferred-confirm",
   );
   const fragments = [];
   for (const name of extensionNames) {
     if (name === "deferred-confirm" && !hasDeferredTool) continue;
+    if ((name === "supervisor" || name === "intercept") && !hasSupervisoryHabitat) continue;
     const p = path.join(EXTENSIONS_DIR, `${name}.prompt.md`);
     if (existsSync(p)) fragments.push(readFileSync(p, "utf8").trim());
   }
@@ -302,8 +262,11 @@ if (!existsSync(sandboxRoot)) die(`sandbox dir does not exist: ${sandboxRoot}`);
 const recipeModel = recipe.model || "TASK_RABBIT_MODEL";
 const model = resolveModel(recipeModel);
 const wiredAgents = applyAgentsField(recipe, args.name);
-const wiredSupervisor = applySupervisorField(recipe, args.name, wiredAgents.extensions, wiredAgents.tools);
-const wired = { ...wiredAgents, extensions: wiredSupervisor.extensions, tools: wiredSupervisor.tools };
+const wired = wiredAgents;
+// Merge baseline tools (respond_to_request) into the recipe's allowlist
+// so the supervisor rail is always accessible, even on recipes that don't
+// declare any supervisory peer fields.
+wired.tools = mergeBaselineTools(wired.tools);
 
 // PI_MESH_PEER=1 is set by launch-mesh.mjs for all peers. It signals
 // run-agent.mjs to load the launcher-bridge + slash-commands baseline extensions
@@ -315,38 +278,12 @@ const isMeshPeer = process.env.PI_MESH_PEER === "1";
 const extensionPaths = resolveExtensionPaths(wired.extensions, isMeshPeer);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
-// Build the effective system prompt: tool/extension fragments first
-// (in load order), then the recipe's own role-specific prompt.
-const effectiveBaseline = isMeshPeer
-  ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
-  : BASELINE_EXTENSIONS;
-const mergedExtensions = [
-  ...effectiveBaseline,
-  ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
-];
-const promptFragments = loadPromptFragments(mergedExtensions);
-const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
-
-const piArgs = [
-  "--no-context-files",
-  "--no-extensions",
-  "--no-skills",
-  "--provider",
-  recipe.provider || "openrouter",
-  "--model",
-  model,
-  "--tools",
-  wired.tools.join(","),
-  "--system-prompt",
-  systemPrompt,
-];
-for (const p of extensionPaths) piArgs.push("-e", p);
-for (const p of skillPaths) piArgs.push("--skill", p);
-
 // --agent-name passthrough is parsed only to capture the value into the
 // Habitat spec; pi receives it solely via --habitat-spec.
 // --topology-overlay is set by launch-mesh and atomic-delegate; it carries
 // the resolved peer fields and is merged into habitatSpec below.
+// Parse passthrough early so topologyOverlayJson is available when gating
+// supervisor/intercept prompt fragments (Step 6).
 let agentName = null;                                     // null → generate
 let topologyOverlayJson = "";
 const passthrough = [];
@@ -383,30 +320,13 @@ if (agentName === null) {
 
 const recipeSkills = Array.isArray(recipe.skills) ? recipe.skills.filter((s) => typeof s === "string") : [];
 
-// Phase 3b: peer relationship fields — validate types and extract values.
-if (recipe.supervisor !== undefined && typeof recipe.supervisor !== "string") {
-  die(`recipe ${args.name} 'supervisor' must be a string`);
-}
-if (recipe.submitTo !== undefined && typeof recipe.submitTo !== "string") {
-  die(`recipe ${args.name} 'submitTo' must be a string`);
-}
-if (recipe.acceptedFrom !== undefined && !Array.isArray(recipe.acceptedFrom)) {
-  die(`recipe ${args.name} 'acceptedFrom' must be an array of strings`);
-}
-if (recipe.peers !== undefined && !Array.isArray(recipe.peers)) {
-  die(`recipe ${args.name} 'peers' must be an array of strings`);
-}
-const recipeAcceptedFrom = Array.isArray(recipe.acceptedFrom)
-  ? recipe.acceptedFrom.filter((s) => typeof s === "string")
-  : [];
-const recipePeers = Array.isArray(recipe.peers)
-  ? recipe.peers.filter((s) => typeof s === "string")
-  : [];
-
 // Serialise the resolved Habitat into one --habitat-spec flag instead of
 // many individual flags + env-var mirrors. The habitat.ts baseline
 // extension materialises this at session_start; all other rails read
 // their axis from getHabitat() rather than re-parsing flags/env.
+// Peer relationship fields (supervisor, submitTo, acceptedFrom, peers)
+// are topology-only since #112; they reach the Habitat exclusively via
+// the --topology-overlay block below.
 const habitatSpec = {
   agentName,
   scratchRoot: sandboxRoot,
@@ -420,10 +340,6 @@ const habitatSpec = {
     : {}),
   ...(TIER_VARS.has(recipeModel) ? { tier: recipeModel } : {}),
   type: args.name,
-  ...(typeof recipe.supervisor === "string" && recipe.supervisor ? { supervisor: recipe.supervisor } : {}),
-  ...(typeof recipe.submitTo === "string" && recipe.submitTo ? { submitTo: recipe.submitTo } : {}),
-  ...(recipeAcceptedFrom.length > 0 ? { acceptedFrom: recipeAcceptedFrom } : {}),
-  ...(recipePeers.length > 0 ? { peers: recipePeers } : {}),
 };
 // Apply topology overlay — fields from the topology YAML or atomic-delegate
 // take precedence over recipe-derived values. Fields absent in the overlay
@@ -449,6 +365,44 @@ if (topologyOverlayJson) {
     habitatSpec.agents = overlay.agents.filter((s) => typeof s === "string");
   }
 }
+
+// Build the effective system prompt: tool/extension fragments first (in load
+// order), then the recipe's own role-specific prompt.
+//
+// supervisor.prompt.md and intercept.prompt.md are gated on whether the
+// resolved Habitat (after overlay merge) has any supervisory peer fields set.
+// When a standalone agent is launched without a topology overlay those
+// fragments are skipped to avoid misleading tool documentation in the prompt.
+const hasSupervisoryHabitat =
+  (Array.isArray(habitatSpec.acceptedFrom) && habitatSpec.acceptedFrom.length > 0) ||
+  Boolean(habitatSpec.supervisor) ||
+  Boolean(habitatSpec.submitTo);
+
+const effectiveBaseline = isMeshPeer
+  ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
+  : BASELINE_EXTENSIONS;
+const mergedExtensions = [
+  ...effectiveBaseline,
+  ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
+];
+const promptFragments = loadPromptFragments(mergedExtensions, hasSupervisoryHabitat);
+const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
+
+const piArgs = [
+  "--no-context-files",
+  "--no-extensions",
+  "--no-skills",
+  "--provider",
+  recipe.provider || "openrouter",
+  "--model",
+  model,
+  "--tools",
+  wired.tools.join(","),
+  "--system-prompt",
+  systemPrompt,
+];
+for (const p of extensionPaths) piArgs.push("-e", p);
+for (const p of skillPaths) piArgs.push("--skill", p);
 
 piArgs.push("--habitat-spec", JSON.stringify(habitatSpec));
 piArgs.push(...args.passthrough);

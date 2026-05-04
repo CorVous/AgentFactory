@@ -130,15 +130,11 @@ provider: openrouter              # optional; defaults to openrouter
 noEditAdd: [my_writer]            # optional; force-include in no-edit rail
 noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 agents: [deferred-writer]         # optional; recipes this agent may delegate to
-supervisor: lead-hare             # optional; peer name to escalate approvals to
-submitTo: collector               # optional; peer name to ship submissions to
-acceptedFrom: [worker-a, worker-b] # optional; peers allowed to send to this one
-peers: [planner, reviewer]        # optional; peers this one may address
 ```
 
-> **Phase 3b note:** `supervisor`, `acceptedFrom`, and `peers` are declarable and materialised into the `Habitat` but no rail enforces them yet. `acceptedFrom` becomes active in Phase 3c when the supervisor inbound rail and peer allowlist are wired.
+> **Peer wiring is topology-only.** Recipes no longer accept `supervisor`, `submitTo`, `acceptedFrom`, or `peers` — the runner rejects them at parse time. All peer relationships are declared in the topology YAML and reach the agent's Habitat via `--topology-overlay` at launch. See "Topology YAML" below.
 
-When `submitTo` is set on a recipe, the `deferred-*` end-of-turn flow ships the aggregated artifacts to that peer as a `submission` bus envelope instead of rendering a local approval dialog. The worker waits for an `approval-result` reply: on approval it logs `"submission applied by supervisor"` (the supervisor handles the actual writes); on rejection it discards the queue and logs the reason. A `revision-requested` reply is treated as rejection in Phase 4a — revision threading lands in Phase 4c. Recipes that do **not** set `submitTo` keep the local UI-or-fail approval flow unchanged.
+When the resolved Habitat (from the topology overlay) sets `submitTo`, the `deferred-*` end-of-turn flow ships the aggregated artifacts to that peer as a `submission` bus envelope instead of rendering a local approval dialog. The worker waits for an `approval-result` reply: on approval it logs `"submission applied by supervisor"` (the supervisor handles the actual writes); on rejection it discards the queue and logs the reason. Agents whose Habitat does not set `submitTo` keep the local UI-or-fail approval flow unchanged.
 
 ### `prompt:` and extension fragments
 
@@ -584,27 +580,20 @@ Negative cases worth probing manually:
   `extensions: [atomic-delegate]` and no `agents:` → runner exits with
   `loads extension 'atomic-delegate' but has no 'agents:' list`.
 
-## Supervisor inbound rail — Phase 3c
+## Supervisor inbound rail
 
 The **supervisor** extension (`pi-sandbox/.pi/extensions/supervisor.ts`) implements
 the inbound review loop described in [ADR-0003](../docs/adr/0003-supervisor-llm-in-review-loop.md).
-It is auto-wired by the runner when a recipe declares any of the supervisory
-peer fields (`acceptedFrom`, `supervisor`, or `submitTo`). The extension registers
-the `respond_to_request` tool and a globalThis dispatch hook that `agent-bus` calls
-when a typed non-message envelope arrives.
+The extension registers the `respond_to_request` tool and a globalThis dispatch hook
+that `agent-bus` calls when a typed non-message envelope arrives.
 
 ### Automatic wiring
 
-```yaml
-# Any of these triggers auto-load of the supervisor extension +
-# respond_to_request tool:
-acceptedFrom: [worker-a, worker-b]
-supervisor: lead-hare
-submitTo: canonical-store
-```
-
-Explicitly declaring `extensions: [supervisor]` or `tools: [respond_to_request]`
-**without** any of those fields causes the runner to `die()` with a clear error.
+`supervisor`, `intercept`, and `respond_to_request` are **baseline** — loaded for
+every agent by default. Both extensions self-gate via `getHabitat().acceptedFrom`:
+when the topology overlay sets no inbound peers, the supervisor and intercept rails
+are silent no-ops and the `respond_to_request` tool returns a "no pending request"
+message rather than crashing.
 
 ### Inbound envelope kinds handled
 

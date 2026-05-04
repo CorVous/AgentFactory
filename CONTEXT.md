@@ -7,7 +7,7 @@ Workspace for building and running multi-agent compositions on top of `@mariozec
 ### Identity
 
 **Recipe**:
-A YAML file in `pi-sandbox/agents/<name>.yaml` defining a **Role** — prompt, tools, model **Tier**, declared peer relationships.
+A YAML file in `pi-sandbox/agents/<name>.yaml` defining a **Role** — prompt, tools, model **Tier**.
 _Avoid_: agent file, config, template
 
 **Role**:
