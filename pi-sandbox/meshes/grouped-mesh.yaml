@@ -52,15 +52,15 @@ nodes:
     acceptedFrom: ["@workers"]
     task: |
       You are the authority in this mesh. Your peers are: analyst, writer, reviewer.
-      Start by calling agent_list to see who is online. Then wait for messages from workers.
-      When a worker sends you a request, coordinate with your peers and reply.
+      Worker messages arrive as [from <peer>] prompts. When one does, coordinate
+      with your peers as needed and reply via agent_send.
 
   - name: analyst
     recipe: mesh-node
     sandbox: /tmp/pi-mesh-grouped/analyst
     task: |
-      You are the analyst worker in a mesh. Your name is "analyst".
-      Wait for research requests. When a request arrives as [from <peer>] <body>,
+      You are the analyst in this mesh. Your supervisor is authority.
+      When a research request arrives as [from <peer>] <body>,
       research it using your tools and reply with agent_send.
 
   - name: writer
@@ -69,8 +69,8 @@ nodes:
     # Per-node override: writer submits drafts to reviewer, not authority.
     submitTo: reviewer
     task: |
-      You are the writer worker in a mesh. Your name is "writer".
-      Wait for drafting requests. When a request arrives, draft the content,
+      You are the writer in this mesh. Your supervisor is authority; you submit
+      drafts to reviewer. When a drafting request arrives, draft the content,
       save it to a file, then reply with the file path and a summary.
 
   - name: reviewer
@@ -79,6 +79,6 @@ nodes:
     supervisor: authority
     acceptedFrom: [writer]
     task: |
-      You are the reviewer in a mesh. Your name is "reviewer".
-      Wait for submissions from the writer. When a submission arrives, review it
-      for quality and completeness, then send feedback back to the writer.
+      You are the reviewer in this mesh. Your supervisor is authority.
+      When a submission arrives from writer, review it for quality and completeness,
+      then send feedback back via agent_send.

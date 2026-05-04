@@ -13,11 +13,11 @@
 //     - name: authority           # instance name (--agent-name)
 //       recipe: mesh-authority    # recipe in pi-sandbox/agents/
 //       sandbox: /tmp/mesh/auth   # optional; auto-created
-//       task: "..."               # optional; sent to the peer as the first user message
+//       task: "..."               # optional; appended to system prompt as per-instance role context
 //     - name: analyst
 //       recipe: mesh-node
 //       supervisor: authority     # all non-root nodes must declare a supervisor
-//       task: "wait for requests"
+//       task: "you are the analyst; handle research requests from authority"
 // NOTE: type:relay nodes are no longer supported (see ADR-0004); the validator
 //       will reject any topology that still declares them.
 
@@ -438,9 +438,11 @@ for (let i = 0; i < topology.nodes.length; i++) {
   // non-focused peers keep emitting ANSI into their virtual buffers, so a
   // /focus switch repaints a real TUI snapshot rather than RPC JSON.
   //
-  // The optional `task:` field is forwarded as a positional argument to pi
-  // (interactive mode treats trailing positionals as the first user message),
-  // replacing the previous `--mode rpc` + JSON-over-stdin bootstrap.
+  // The optional `task:` field is forwarded as --task so run-agent.mjs can
+  // append it to the system prompt as per-instance role context. Delivering
+  // it as system-prompt context (not a positional first-user-message) keeps
+  // peers idle until a real inbound event arrives rather than firing an LLM
+  // turn immediately at mesh start.
   const peerArgs = [
     RUNNER,
     recipe,
@@ -452,7 +454,7 @@ for (let i = 0; i < topology.nodes.length; i++) {
   ];
 
   if (typeof task === "string" && task.trim()) {
-    peerArgs.push(task);
+    peerArgs.push("--task", task);
   }
 
   const peerEnv = {

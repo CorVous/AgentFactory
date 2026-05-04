@@ -286,6 +286,7 @@ const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skill
 // supervisor/intercept prompt fragments (Step 6).
 let agentName = null;                                     // null → generate
 let topologyOverlayJson = "";
+let taskText = "";                                        // appended to system prompt
 const passthrough = [];
 for (let i = 0; i < args.passthrough.length; i++) {
   if (args.passthrough[i] === "--agent-name" && i + 1 < args.passthrough.length) {
@@ -293,6 +294,9 @@ for (let i = 0; i < args.passthrough.length; i++) {
   } else if (args.passthrough[i] === "--topology-overlay" && i + 1 < args.passthrough.length) {
     topologyOverlayJson = args.passthrough[++i];
     // do not push --topology-overlay into passthrough; pi doesn't know this flag
+  } else if (args.passthrough[i] === "--task" && i + 1 < args.passthrough.length) {
+    taskText = args.passthrough[++i];
+    // do not push --task into passthrough; it's consumed here as system-prompt context
   } else {
     passthrough.push(args.passthrough[i]);
   }
@@ -386,7 +390,9 @@ const mergedExtensions = [
   ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
 ];
 const promptFragments = loadPromptFragments(mergedExtensions, hasSupervisoryHabitat);
-const systemPrompt = [...promptFragments, recipe.prompt.trim()].join("\n\n");
+const promptParts = [...promptFragments, recipe.prompt.trim()];
+if (taskText.trim()) promptParts.push(taskText.trim());
+const systemPrompt = promptParts.join("\n\n");
 
 const piArgs = [
   "--no-context-files",
