@@ -122,7 +122,11 @@ export function createSupervisorInbox(): SupervisorInbox {
     async respondToRequest(opts: RespondOpts): Promise<RespondResult> {
       const entry = pending.get(opts.msg_id);
       if (!entry) {
-        return { ok: false, error: `msg_id '${opts.msg_id}' not found in pending inbox` };
+        const emptyMsg =
+          pending.size === 0
+            ? `respond_to_request: no pending request matches msg_id '${opts.msg_id}' (inbox is empty or msg_id was already resolved)`
+            : `msg_id '${opts.msg_id}' not found in pending inbox`;
+        return { ok: false, error: emptyMsg };
       }
 
       const { env } = entry;

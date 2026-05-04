@@ -992,9 +992,20 @@ describe("respondToRequest — escalate", () => {
 // ---------------------------------------------------------------------------
 
 describe("respondToRequest — unknown msg_id", () => {
-  it("returns error for an unknown msg_id", async () => {
+  it("returns error for an unknown msg_id when inbox has other pending entries", async () => {
     setHabitat(BASE_HABITAT);
     const inbox = createSupervisorInbox();
+    // Add a pending entry so the inbox is non-empty.
+    const other = makeApprovalRequestEnvelope({
+      from: "worker-a",
+      to: "supervisor",
+      title: "T",
+      summary: "S",
+      preview: "P",
+    });
+    inbox.dispatchEnvelope(other, vi.fn());
+    expect(inbox.pendingCount()).toBe(1);
+
     const sendEnvelope = vi.fn();
     const result = await inbox.respondToRequest({
       msg_id: "nonexistent-id",
@@ -1004,6 +1015,27 @@ describe("respondToRequest — unknown msg_id", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/not found/i);
+    expect(sendEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("returns a 'no pending request' message when the inbox is empty", async () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+    // Inbox is completely empty — no entries at all.
+    expect(inbox.pendingCount()).toBe(0);
+
+    const sendEnvelope = vi.fn();
+    const result = await inbox.respondToRequest({
+      msg_id: "any-msg-id",
+      action: "approve",
+      sendEnvelope,
+      agentName: "supervisor",
+    });
+    expect(result.ok).toBe(false);
+    // Should include the "no pending request" wording for the empty-inbox case.
+    expect(result.error).toMatch(/no pending request/i);
+    expect(result.error).toContain("any-msg-id");
+    expect(result.error).toMatch(/inbox is empty or msg_id was already resolved/i);
     expect(sendEnvelope).not.toHaveBeenCalled();
   });
 });
