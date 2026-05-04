@@ -1,9 +1,11 @@
 // supervisor extension — inbound rail for approval-request and submission
 // envelopes, plus the respond_to_request tool.
 //
-// Auto-wired by run-agent.mjs when a recipe sets acceptedFrom, supervisor,
-// or submitTo. Registers a globalThis hook so agent-bus.ts can forward
-// typed inbound envelopes here instead of the general inbox.
+// Loaded as a baseline extension by run-agent.mjs for every agent. Both
+// this extension and intercept self-gate via getHabitat().acceptedFrom —
+// no-ops when the topology assigns no inbound peers. Registers a globalThis
+// hook so agent-bus.ts can forward typed inbound envelopes here instead of
+// the general inbox.
 //
 // The testable core lives in _lib/supervisor-inbox.ts.
 //
