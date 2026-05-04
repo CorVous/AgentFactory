@@ -7,8 +7,12 @@ Workspace for building and running multi-agent compositions on top of `@mariozec
 ### Identity
 
 **Recipe**:
-A YAML file in `pi-sandbox/agents/<name>.yaml` defining a **Role** — prompt, tools, model **Tier**.
-_Avoid_: agent file, config, template
+A YAML file in `pi-sandbox/agents/<name>.yaml` defining a **Role** — prompt, tools, model **Tier**, and the role-specific extras (skills, agents, additional **Rails** in its own `extensions:` list). Every recipe extends a **Template** (defaulting to `base`) which provides the universal rail bundle.
+_Avoid_: agent file, config
+
+**Template**:
+A YAML file in `pi-sandbox/templates/<name>.yaml` carrying only the universal `extensions:` list — the **Rails** every **Recipe** that extends it gets. The shipped default `base` template carries every rail a peer needs (containment, supervisor inbound, bus, launcher integration). Recipes append further rails (e.g. `mesh-authority`, `deferred-write`) via their own `extensions:` field.
+_Avoid_: preset, profile
 
 **Role**:
 The reusable identity a **Recipe** defines.
