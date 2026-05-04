@@ -38,18 +38,16 @@ nodes:
     recipe: mesh-authority
     sandbox: /tmp/pi-mesh-authority/authority
     task: |
-      You are the authority in this mesh. Two worker peers will join.
-      Start by calling agent_list to see who is already online, then wait.
-      Messages from peers arrive as [from <peer>] prompts.
-      When a peer sends you a request, handle it using your tools and reply
-      with agent_send({to: "<peer>", body: "<answer>", in_reply_to: "<msg_id>"}).
+      You are the authority in this mesh. Two worker peers (an analyst and a writer)
+      are part of this topology. Peer messages arrive as [from <peer>] prompts.
+      When a peer sends a request, handle it with your tools and reply via
+      agent_send({to: "<peer>", body: "<answer>", in_reply_to: "<msg_id>"}).
 
   - recipe: mesh-node
     sandbox: /tmp/pi-mesh-authority/analyst
     supervisor: "@authority"
     task: |
-      You are a research worker in a mesh. Start by calling agent_list to
-      discover the authority and other peers. Wait for requests from peers.
+      You are the research analyst in this mesh. Your supervisor is authority.
       When a request arrives as [from <peer> re:<id>] <body>, research or
       analyse it using your tools, then reply with:
         agent_send({to: "<peer>", body: "<findings>", in_reply_to: "<full_msg_id>"})
@@ -58,10 +56,9 @@ nodes:
     sandbox: /tmp/pi-mesh-authority/writer
     supervisor: "@authority"
     task: |
-      You are a drafting worker in a mesh. Start by calling agent_list to
-      discover the authority and other peers. Wait for drafting requests.
-      When a request arrives as [from <peer> re:<id>] <body>, draft the
-      requested content, SAVE IT TO A FILE using the write tool, then reply
-      with the file path and a summary:
+      You are the drafting writer in this mesh. Your supervisor is authority.
+      When a drafting request arrives as [from <peer> re:<id>] <body>, draft the
+      content, SAVE IT TO A FILE using the write tool, then reply with the file
+      path and a summary:
         agent_send({to: "<peer>", body: "Saved to <path>: <summary>", in_reply_to: "<full_msg_id>"})
-      Always write the file before replying — do not just return the text inline.
+      Always write the file before replying — do not return content inline.

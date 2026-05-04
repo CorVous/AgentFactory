@@ -683,7 +683,7 @@ nodes:
   - name: authority             # instance name on the bus (--agent-name)
     recipe: mesh-authority      # pi-sandbox/agents/<recipe>.yaml
     sandbox: /tmp/mesh/auth     # optional; auto-created under /tmp if omitted
-    task: "..."                 # optional; passed to pi as the first user message
+    task: "..."                 # optional; appended to system prompt as per-instance role context
 
   # Habitat-overlay fields — override recipe + group_bindings values:
   - name: w1
