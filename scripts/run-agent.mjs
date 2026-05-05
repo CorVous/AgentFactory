@@ -8,10 +8,12 @@ import { generateInstanceName, probeBusRoot } from "./agent-naming.mjs";
 import { createPtyPool } from "./_lib/pty-pool.mjs";
 import { createMultiplexer } from "./_lib/multiplexer.mjs";
 import { rejectDeprecatedPeerFields, mergeBaselineTools } from "./_lib/recipe-validation.mjs";
+import { resolveRecipe } from "./_lib/recipe-resolver.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SANDBOX_ROOT = path.join(REPO_ROOT, "pi-sandbox");
 const AGENTS_DIR = path.join(SANDBOX_ROOT, "agents");
+const TEMPLATES_DIR = path.join(SANDBOX_ROOT, "templates");
 const EXTENSIONS_DIR = path.join(SANDBOX_ROOT, ".pi", "extensions");
 const SKILLS_DIR = path.join(SANDBOX_ROOT, "skills");
 const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
@@ -389,6 +391,56 @@ const mergedExtensions = [
   ...effectiveBaseline,
   ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
 ];
+
+// ── Slice 2 shadow-mode comparator ───────────────────────────────────────────
+// Call resolveRecipe and compare its effective extension list with the one the
+// JS runner just computed. On mismatch, panic loudly so divergence is caught
+// immediately. On match, silent — runtime behaviour is unchanged.
+//
+// Slice 2 shadow-mode shim: today's recipes are bare (no `extends:`), so the
+// resolver returns only recipe-level extensions. We prepend effectiveBaseline
+// here for a like-for-like comparison. Once recipes start carrying
+// `extends: peer`, the JS baseline prefix will collapse to a no-op (all
+// baseline entries will already be present from the template chain).
+{
+  let resolverResult;
+  try {
+    resolverResult = resolveRecipe(args.name, {
+      agentsDir: AGENTS_DIR,
+      templatesDir: TEMPLATES_DIR,
+      extensionsDir: EXTENSIONS_DIR,
+    });
+  } catch (e) {
+    die(`recipe-resolver shadow failed for '${args.name}': ${e.message}`);
+  }
+
+  // Deduplicate baseline + resolver extension list (first-occurrence).
+  const seenShadow = new Set();
+  const shadowEffective = [];
+  for (const n of [...effectiveBaseline, ...resolverResult.extensionList]) {
+    if (!seenShadow.has(n)) {
+      seenShadow.add(n);
+      shadowEffective.push(n);
+    }
+  }
+
+  const mismatch =
+    mergedExtensions.length !== shadowEffective.length ||
+    mergedExtensions.some((n, i) => n !== shadowEffective[i]);
+
+  if (mismatch) {
+    process.stderr.write(
+      `run-agent: recipe-resolver shadow mismatch for '${args.name}':\n` +
+        `  js-baseline:   ${JSON.stringify(mergedExtensions)}\n` +
+        `  resolver+shim: ${JSON.stringify(shadowEffective)}\n` +
+        `  in js but not resolver: ${JSON.stringify(mergedExtensions.filter((n) => !shadowEffective.includes(n)))}\n` +
+        `  in resolver but not js: ${JSON.stringify(shadowEffective.filter((n) => !mergedExtensions.includes(n)))}\n`,
+    );
+    process.exit(1);
+  }
+}
+// ── End shadow comparator ─────────────────────────────────────────────────────
+
 const promptFragments = loadPromptFragments(mergedExtensions, hasSupervisoryHabitat);
 const promptParts = [...promptFragments, recipe.prompt.trim()];
 if (taskText.trim()) promptParts.push(taskText.trim());
