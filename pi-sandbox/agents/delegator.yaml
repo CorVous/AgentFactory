@@ -13,6 +13,7 @@
 #   > "delegate to recipe peer-chatter with task 'list files in cwd'"
 #   > "delegate to recipe deferred-writer with task 'draft README.md'"
 
+extends: peer
 model: LEAD_HARE_MODEL
 shortName: captain
 

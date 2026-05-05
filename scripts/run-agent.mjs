@@ -18,42 +18,6 @@ const EXTENSIONS_DIR = path.join(SANDBOX_ROOT, ".pi", "extensions");
 const SKILLS_DIR = path.join(SANDBOX_ROOT, "skills");
 const PI_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "pi");
 
-const BASELINE_EXTENSIONS = [
-  // Must be first — materialises the Habitat before any rail reads it.
-  "habitat",
-  "sandbox",
-  "no-startup-help",
-  "agent-header",
-  "agent-footer",
-  "hide-extensions-list",
-  "deferred-confirm",
-  // Bus binding is a baseline now: atomic-delegate, supervisor rail,
-  // and the deferred-* submission flow all need a bound bus socket.
-  // The agent_send / agent_inbox / agent_list / agent_call tools stay
-  // gated by the recipe's `tools:` allowlist, so loading the extension
-  // by default does not change the tool surface seen by the model.
-  "agent-bus",
-  // supervisor must appear before intercept so intercept can wrap
-  // supervisor's globalThis dispatch hook at session_start. Both
-  // self-gate via getHabitat().acceptedFrom when the topology does not
-  // assign any inbound peers to this instance.
-  "supervisor",
-  "intercept",
-];
-
-// When launched under the mesh launcher (PI_MESH_PEER=1), load the launcher
-// bridge, focus-state, and slash-commands extensions as additional baselines.
-// These are silent no-ops when the launcher socket is absent (standalone mode).
-//
-// mesh-rail renders the mesh-status widget above the editor; only meaningful
-// under the launcher. Like the others, it degrades silently if hasUI is false
-// (print mode / no TUI).
-const MESH_PEER_EXTENSIONS = [
-  "launcher-bridge",
-  "slash-commands",
-  "bus-tail-emitter",
-  "mesh-rail",
-];
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
 function die(msg) {
@@ -196,23 +160,12 @@ function resolveModel(tierOrId) {
   return requested;
 }
 
-function resolveExtensionPaths(names, isMeshPeer = false) {
-  const seen = new Set();
-  const baseline = isMeshPeer
-    ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
-    : BASELINE_EXTENSIONS;
-  const merged = [...baseline, ...names];
-  return merged
-    .filter((n) => {
-      if (seen.has(n)) return false;
-      seen.add(n);
-      return true;
-    })
-    .map((n) => {
-      const p = path.join(EXTENSIONS_DIR, `${n}.ts`);
-      if (!existsSync(p)) die(`extension not found: ${p}`);
-      return p;
-    });
+function resolveExtensionPaths(names) {
+  return names.map((n) => {
+    const p = path.join(EXTENSIONS_DIR, `${n}.ts`);
+    if (!existsSync(p)) die(`extension not found: ${p}`);
+    return p;
+  });
 }
 
 function resolveSkillPaths(names) {
@@ -270,14 +223,19 @@ const wired = wiredAgents;
 // declare any supervisory peer fields.
 wired.tools = mergeBaselineTools(wired.tools);
 
-// PI_MESH_PEER=1 is set by launch-mesh.mjs for all peers. It signals
-// run-agent.mjs to load the launcher-bridge + slash-commands baseline extensions
-// so peers can receive focus-changed signals and send /focus requests.
-// When run standalone via `npm run agent`, PI_MESH_PEER is unset,
-// so the launcher extensions degrade gracefully (socket not found = no-op).
-const isMeshPeer = process.env.PI_MESH_PEER === "1";
+// Resolve the effective extension list from the recipe (via resolveRecipe).
+// The resolver is now authoritative: it reads the recipe's `extends:` chain
+// (peer.yaml includes both baseline and mesh-peer rails) and deduplicates.
+// PI_MESH_PEER=1 is still read by the PTY-in-PTY check below for stdio
+// handling, but no longer gates extension loading.
+const resolved = resolveRecipe(args.name, {
+  agentsDir: AGENTS_DIR,
+  templatesDir: TEMPLATES_DIR,
+  extensionsDir: EXTENSIONS_DIR,
+});
+const mergedExtensions = resolved.extensionList;
 
-const extensionPaths = resolveExtensionPaths(wired.extensions, isMeshPeer);
+const extensionPaths = resolveExtensionPaths(mergedExtensions);
 const skillPaths = resolveSkillPaths(Array.isArray(recipe.skills) ? recipe.skills : []);
 
 // --agent-name passthrough is parsed only to capture the value into the
@@ -384,63 +342,6 @@ const hasSupervisoryHabitat =
   Boolean(habitatSpec.supervisor) ||
   Boolean(habitatSpec.submitTo);
 
-const effectiveBaseline = isMeshPeer
-  ? [...BASELINE_EXTENSIONS, ...MESH_PEER_EXTENSIONS]
-  : BASELINE_EXTENSIONS;
-const mergedExtensions = [
-  ...effectiveBaseline,
-  ...wired.extensions.filter((n) => !effectiveBaseline.includes(n)),
-];
-
-// ── Slice 2 shadow-mode comparator ───────────────────────────────────────────
-// Call resolveRecipe and compare its effective extension list with the one the
-// JS runner just computed. On mismatch, panic loudly so divergence is caught
-// immediately. On match, silent — runtime behaviour is unchanged.
-//
-// Slice 2 shadow-mode shim: today's recipes are bare (no `extends:`), so the
-// resolver returns only recipe-level extensions. We prepend effectiveBaseline
-// here for a like-for-like comparison. Once recipes start carrying
-// `extends: peer`, the JS baseline prefix will collapse to a no-op (all
-// baseline entries will already be present from the template chain).
-{
-  let resolverResult;
-  try {
-    resolverResult = resolveRecipe(args.name, {
-      agentsDir: AGENTS_DIR,
-      templatesDir: TEMPLATES_DIR,
-      extensionsDir: EXTENSIONS_DIR,
-    });
-  } catch (e) {
-    die(`recipe-resolver shadow failed for '${args.name}': ${e.message}`);
-  }
-
-  // Deduplicate baseline + resolver extension list (first-occurrence).
-  const seenShadow = new Set();
-  const shadowEffective = [];
-  for (const n of [...effectiveBaseline, ...resolverResult.extensionList]) {
-    if (!seenShadow.has(n)) {
-      seenShadow.add(n);
-      shadowEffective.push(n);
-    }
-  }
-
-  const mismatch =
-    mergedExtensions.length !== shadowEffective.length ||
-    mergedExtensions.some((n, i) => n !== shadowEffective[i]);
-
-  if (mismatch) {
-    process.stderr.write(
-      `run-agent: recipe-resolver shadow mismatch for '${args.name}':\n` +
-        `  js-baseline:   ${JSON.stringify(mergedExtensions)}\n` +
-        `  resolver+shim: ${JSON.stringify(shadowEffective)}\n` +
-        `  in js but not resolver: ${JSON.stringify(mergedExtensions.filter((n) => !shadowEffective.includes(n)))}\n` +
-        `  in resolver but not js: ${JSON.stringify(shadowEffective.filter((n) => !mergedExtensions.includes(n)))}\n`,
-    );
-    process.exit(1);
-  }
-}
-// ── End shadow comparator ─────────────────────────────────────────────────────
-
 const promptFragments = loadPromptFragments(mergedExtensions, hasSupervisoryHabitat);
 const promptParts = [...promptFragments, recipe.prompt.trim()];
 if (taskText.trim()) promptParts.push(taskText.trim());
@@ -493,12 +394,15 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const isTTY = Boolean(process.stdout.isTTY);
 const isPrintMode = args.passthrough.includes("-p") || args.passthrough.includes("--print");
 
-// PTY-in-PTY fix (slice 3): when run-agent.mjs is launched as a PI_MESH_PEER=1
-// child of launch-mesh.mjs, its stdout is already inside the launcher's managed
-// PTY. Creating another PTY here would cause PTY-in-PTY nesting and break
-// terminal rendering. In that case, fall through to the inherited-stdio path so
-// pi writes directly to the launcher's PTY buffer.
-const isInsideManagedPty = isMeshPeer && isTTY;
+// PTY-in-PTY fix: when run-agent.mjs is launched as a PI_MESH_PEER=1 child of
+// launch-mesh.mjs, its stdout is already inside the launcher's managed PTY.
+// Creating another PTY here would cause PTY-in-PTY nesting and break terminal
+// rendering. In that case, fall through to the inherited-stdio path so pi
+// writes directly to the launcher's PTY buffer.
+// PI_MESH_PEER=1 no longer gates extension loading (the resolver handles that
+// via `extends: peer` in every recipe); it only controls stdio mode here.
+const isLauncherChild = process.env.PI_MESH_PEER === "1";
+const isInsideManagedPty = isLauncherChild && isTTY;
 
 if (isTTY && !isPrintMode && !isInsideManagedPty) {
   // Interactive launcher path: PTY + virtual buffer + multiplexer.

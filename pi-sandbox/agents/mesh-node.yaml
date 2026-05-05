@@ -10,6 +10,7 @@
 # Or spawned by the authority agent via mesh_spawn:
 #   mesh_spawn({recipe: "mesh-node", name: "analyst", task: "wait for requests"})
 
+extends: peer
 model: TASK_RABBIT_MODEL
 shortName: node
 
@@ -35,6 +36,3 @@ tools:
   - agent_send
   - agent_inbox
   - agent_call
-
-extensions:
-  - agent-bus

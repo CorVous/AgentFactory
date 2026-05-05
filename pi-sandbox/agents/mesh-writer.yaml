@@ -3,6 +3,7 @@
 # Launched via the mesh launcher or mesh_spawn; sandbox keeps writes
 # inside the node's working directory.
 
+extends: peer
 model: TASK_RABBIT_MODEL
 shortName: writer
 
@@ -30,6 +31,3 @@ tools:
   - agent_send
   - agent_inbox
   - agent_call
-
-extensions:
-  - agent-bus

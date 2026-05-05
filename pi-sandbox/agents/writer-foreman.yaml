@@ -11,6 +11,7 @@
 #
 # Run: `npm run agent -- writer-foreman --sandbox /tmp/foreman-test`
 
+extends: peer
 model: LEAD_HARE_MODEL
 shortName: foreman
 

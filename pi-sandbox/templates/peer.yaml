@@ -1,13 +1,9 @@
 # Universal-rail bundle for mesh peers.
 #
-# This template is the canonical source for the rails every peer agent
-# inherits — the union of BASELINE_EXTENSIONS and MESH_PEER_EXTENSIONS in
-# scripts/run-agent.mjs, in their load order. Recipes will eventually
-# `extends: peer` to pick up these rails and append per-role rails on top.
-#
-# NOTE: Slice 1 only ships this artifact and a hermetic loader. The runner
-# still drives runtime behaviour from the JS arrays in run-agent.mjs.
-# Editing this file does NOT change runtime behaviour yet.
+# This template is the canonical and authoritative source for the rails every
+# peer agent inherits. All recipes declare `extends: peer` to pick up these
+# rails; the runner resolves the extension list via resolveRecipe() (Slice 3).
+# Editing this file changes runtime behaviour for every recipe that extends it.
 extensions:
   - habitat
   - sandbox
