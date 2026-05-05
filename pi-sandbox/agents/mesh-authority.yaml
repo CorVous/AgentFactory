@@ -13,6 +13,7 @@
 # Or via the mesh launcher:
 #   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
 
+extends: peer
 model: LEAD_HARE_MODEL
 shortName: authority
 
@@ -53,7 +54,6 @@ tools:
   - delegate
 
 extensions:
-  - agent-bus
   - mesh-authority
 
 agents:

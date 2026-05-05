@@ -350,3 +350,110 @@ tools:
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Real-repo regression test: Slice 3 cutover invariants
+//
+// These tests resolve representative real recipes against the actual YAML
+// files in pi-sandbox/agents/ and pi-sandbox/templates/ to guard that:
+//   1. Every recipe resolves without error after `extends: peer` is added.
+//   2. The extensionList starts with the full peer-template chain in order.
+//   3. No duplicate `agent-bus` (or any other entry) appears in the list.
+// ---------------------------------------------------------------------------
+
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
+const REAL_AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
+const REAL_TEMPLATES_DIR = path.join(REPO_ROOT, "pi-sandbox", "templates");
+const REAL_EXTENSIONS_DIR = path.join(
+  REPO_ROOT,
+  "pi-sandbox",
+  ".pi",
+  "extensions",
+);
+const REAL_FS_CONTEXT = {
+  agentsDir: REAL_AGENTS_DIR,
+  templatesDir: REAL_TEMPLATES_DIR,
+  extensionsDir: REAL_EXTENSIONS_DIR,
+};
+
+// The peer template's extension chain in declaration order.
+const PEER_TEMPLATE_EXTENSIONS = [
+  "habitat",
+  "sandbox",
+  "no-startup-help",
+  "agent-header",
+  "agent-footer",
+  "hide-extensions-list",
+  "deferred-confirm",
+  "supervisor",
+  "intercept",
+  "agent-bus",
+  "launcher-bridge",
+  "slash-commands",
+  "bus-tail-emitter",
+  "mesh-rail",
+];
+
+describe("recipe-resolver real-repo recipes", () => {
+  it("peer-chatter: resolves without error and extensionList begins with the full peer-template chain", () => {
+    const result = resolveRecipe("peer-chatter", REAL_FS_CONTEXT);
+    expect(result.extensionList.slice(0, PEER_TEMPLATE_EXTENSIONS.length)).toEqual(
+      PEER_TEMPLATE_EXTENSIONS,
+    );
+  });
+
+  it("peer-chatter: no duplicate agent-bus in extensionList", () => {
+    const result = resolveRecipe("peer-chatter", REAL_FS_CONTEXT);
+    const occurrences = result.extensionList.filter((n) => n === "agent-bus");
+    expect(occurrences).toHaveLength(1);
+  });
+
+  it("deferred-writer: resolves without error and extensionList begins with the full peer-template chain", () => {
+    const result = resolveRecipe("deferred-writer", REAL_FS_CONTEXT);
+    expect(result.extensionList.slice(0, PEER_TEMPLATE_EXTENSIONS.length)).toEqual(
+      PEER_TEMPLATE_EXTENSIONS,
+    );
+  });
+
+  it("deferred-writer: no duplicate entries in extensionList", () => {
+    const result = resolveRecipe("deferred-writer", REAL_FS_CONTEXT);
+    const seen = new Set<string>();
+    for (const ext of result.extensionList) {
+      expect(seen.has(ext)).toBe(false);
+      seen.add(ext);
+    }
+  });
+
+  it("all real recipes resolve without error", () => {
+    const recipes = fs
+      .readdirSync(REAL_AGENTS_DIR)
+      .filter((f) => f.endsWith(".yaml"))
+      .map((f) => f.slice(0, -".yaml".length));
+    for (const name of recipes) {
+      expect(() => resolveRecipe(name, REAL_FS_CONTEXT)).not.toThrow();
+    }
+  });
+
+  it("all real recipes with extends: peer have extensionList starting with the full peer-template chain", () => {
+    const recipes = fs
+      .readdirSync(REAL_AGENTS_DIR)
+      .filter((f) => f.endsWith(".yaml"))
+      .map((f) => f.slice(0, -".yaml".length));
+    for (const name of recipes) {
+      const raw = fs.readFileSync(
+        path.join(REAL_AGENTS_DIR, `${name}.yaml`),
+        "utf8",
+      );
+      if (!raw.includes("extends: peer")) continue;
+      const result = resolveRecipe(name, REAL_FS_CONTEXT);
+      expect(result.extensionList.slice(0, PEER_TEMPLATE_EXTENSIONS.length)).toEqual(
+        PEER_TEMPLATE_EXTENSIONS,
+      );
+    }
+  });
+});

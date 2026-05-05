@@ -3,6 +3,7 @@
 # Read-only via the tools allowlist. All filesystem activity is sandboxed
 # to the directory you launched `npm run agent` from (or --sandbox <dir>).
 
+extends: peer
 model: LEAD_HARE_MODEL
 shortName: reviewer
 

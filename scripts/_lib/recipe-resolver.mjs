@@ -1,12 +1,13 @@
 // recipe-resolver.mjs — resolves a named agent recipe into an effective recipe
-// descriptor, mirroring the logic in scripts/run-agent.mjs without touching
-// process state (no process.exit, no console writes).
+// descriptor. The runner (scripts/run-agent.mjs) calls resolveRecipe() as the
+// sole source of the extension list (Slice 3 cutover); no duplicate JS-baseline
+// arrays remain in the runner.
 //
 // Exports a single named function: resolveRecipe(name, fsContext) → effectiveRecipe
 //
-// This module is intentionally a shadow read only (Slice 2). Runtime behaviour
-// of npm run agent and npm run mesh is unchanged; the runner calls this after
-// computing mergedExtensions and compares for divergence.
+// This module is hermetic: reads from the filesystem via fsContext paths only,
+// throws on any validation failure, and never writes to process state
+// (no process.exit, no console writes).
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";

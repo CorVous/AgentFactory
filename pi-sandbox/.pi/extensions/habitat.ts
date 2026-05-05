@@ -7,8 +7,8 @@
 // without the runner), a minimal Habitat is assembled from ctx.cwd
 // and PI_AGENT_NAME so the session still boots cleanly.
 //
-// This extension must be first in BASELINE_EXTENSIONS so it runs
-// before any rail that calls getHabitat() in its own session_start.
+// This extension must be first in the peer template's extension list so it
+// runs before any rail that calls getHabitat() in its own session_start.
 
 import os from "node:os";
 import path from "node:path";
