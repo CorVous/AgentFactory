@@ -1,0 +1,25 @@
+# Universal-rail bundle for mesh peers.
+#
+# This template is the canonical source for the rails every peer agent
+# inherits — the union of BASELINE_EXTENSIONS and MESH_PEER_EXTENSIONS in
+# scripts/run-agent.mjs, in their load order. Recipes will eventually
+# `extends: peer` to pick up these rails and append per-role rails on top.
+#
+# NOTE: Slice 1 only ships this artifact and a hermetic loader. The runner
+# still drives runtime behaviour from the JS arrays in run-agent.mjs.
+# Editing this file does NOT change runtime behaviour yet.
+extensions:
+  - habitat
+  - sandbox
+  - no-startup-help
+  - agent-header
+  - agent-footer
+  - hide-extensions-list
+  - deferred-confirm
+  - supervisor
+  - intercept
+  - agent-bus
+  - launcher-bridge
+  - slash-commands
+  - bus-tail-emitter
+  - mesh-rail
