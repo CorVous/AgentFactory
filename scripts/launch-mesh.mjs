@@ -200,9 +200,9 @@ function repaintBusTail() {
 // The focused peer's buffer is rendered live to the launcher's terminal.
 // Focus can be switched by a peer sending a focus-request to the launcher socket.
 //
-// PTY-in-PTY fix: run-agent.mjs checks PI_MESH_PEER=1 and uses inherited
-// stdio when its own stdout is already inside the launcher's managed PTY,
-// preventing PTY-in-PTY nesting. Every peer now runs the full pi TUI
+// PTY-in-PTY fix: run-agent.mjs is invoked with `--inherit-pty` and uses
+// inherited stdio when its own stdout is already inside the launcher's managed
+// PTY, preventing PTY-in-PTY nesting. Every peer now runs the full pi TUI
 // (no `--mode rpc`); the multiplexer accumulates each peer's ANSI into a
 // VirtualBuffer and paints the focused peer's snapshot on /focus switch.
 //
@@ -448,6 +448,7 @@ for (let i = 0; i < topology.nodes.length; i++) {
     recipe,
     "--sandbox", sandbox,
     "--agent-bus", busRoot,
+    "--inherit-pty",
     "--",
     "--agent-name", name,
     "--topology-overlay", JSON.stringify(overlay),
@@ -461,13 +462,6 @@ for (let i = 0; i < topology.nodes.length; i++) {
     ...process.env,
     PI_AGENT_NAME: name,
     PI_AGENT_BUS_ROOT: busRoot,
-    // PI_MESH_PEER=1 signals run-agent.mjs to:
-    //   1. Load the launcher-bridge + slash-commands baseline extensions.
-    //   2. Use inherited stdio (not a nested PTY) when spawning pi — this
-    //      fixes the PTY-in-PTY nesting issue from slice 2 where each peer
-    //      spawned its own PTY even though its stdout was already inside the
-    //      launcher's managed PTY.
-    PI_MESH_PEER: "1",
   };
 
   pool.spawn({

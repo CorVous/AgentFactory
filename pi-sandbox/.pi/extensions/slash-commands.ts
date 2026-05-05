@@ -9,7 +9,7 @@
 // The commands send typed envelopes to the launcher via the `launcher-bridge`.
 // If the bridge is not connected (standalone mode), the commands print a warning.
 //
-// Auto-loaded by run-agent.mjs when PI_MESH_PEER=1 or alongside launcher-bridge.
+// Loaded as part of the peer template (alongside launcher-bridge).
 // Silent no-op when the launcher socket is absent.
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";

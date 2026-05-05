@@ -26,7 +26,7 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
-  const out = { name: null, sandbox: null, agentBus: null, passthrough: [] };
+  const out = { name: null, sandbox: null, agentBus: null, inheritPty: false, passthrough: [] };
   let passthroughOnly = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -40,6 +40,8 @@ function parseArgs(argv) {
       out.sandbox = argv[++i] ?? die("--sandbox requires a directory");
     } else if (a === "--agent-bus") {
       out.agentBus = argv[++i] ?? die("--agent-bus requires a directory");
+    } else if (a === "--inherit-pty") {
+      out.inheritPty = true;
     } else if (a === "--help" || a === "-h") {
       printHelp();
       process.exit(0);
@@ -59,6 +61,8 @@ function printHelp() {
       `system prompt, tool allowlist, extensions, and skills. The sandbox\n` +
       `extension restricts all fs activity to <dir> (default: cwd where you\n` +
       `invoked npm run agent) and disables bash entirely.\n\n` +
+      `  --inherit-pty   Pass when the launcher's PTY already wraps this runner's\n` +
+      `                  stdio (skips nested PTY allocation).\n\n` +
       `Run without a name to list available agents.\n`,
   );
 }
@@ -226,8 +230,9 @@ wired.tools = mergeBaselineTools(wired.tools);
 // Resolve the effective extension list from the recipe (via resolveRecipe).
 // The resolver is now authoritative: it reads the recipe's `extends:` chain
 // (peer.yaml includes both baseline and mesh-peer rails) and deduplicates.
-// PI_MESH_PEER=1 is still read by the PTY-in-PTY check below for stdio
-// handling, but no longer gates extension loading.
+// Extension loading is fully recipe-driven (peer.yaml's extends chain). The
+// PTY-in-PTY check below reads the `--inherit-pty` CLI flag — no env vars
+// are consulted.
 const resolved = resolveRecipe(args.name, {
   agentsDir: AGENTS_DIR,
   templatesDir: TEMPLATES_DIR,
@@ -394,14 +399,11 @@ if (!existsSync(PI_BIN)) die(`pi binary missing: ${PI_BIN} (run npm install)`);
 const isTTY = Boolean(process.stdout.isTTY);
 const isPrintMode = args.passthrough.includes("-p") || args.passthrough.includes("--print");
 
-// PTY-in-PTY fix: when run-agent.mjs is launched as a PI_MESH_PEER=1 child of
-// launch-mesh.mjs, its stdout is already inside the launcher's managed PTY.
-// Creating another PTY here would cause PTY-in-PTY nesting and break terminal
-// rendering. In that case, fall through to the inherited-stdio path so pi
-// writes directly to the launcher's PTY buffer.
-// PI_MESH_PEER=1 no longer gates extension loading (the resolver handles that
-// via `extends: peer` in every recipe); it only controls stdio mode here.
-const isLauncherChild = process.env.PI_MESH_PEER === "1";
+// PTY-in-PTY fix: when launched with `--inherit-pty` (passed by launch-mesh.mjs),
+// this runner's stdout is already inside the launcher's managed PTY. Allocating
+// another PTY here would nest PTYs and break terminal rendering — fall through
+// to the inherited-stdio path so pi writes directly to the launcher's PTY buffer.
+const isLauncherChild = args.inheritPty;
 const isInsideManagedPty = isLauncherChild && isTTY;
 
 if (isTTY && !isPrintMode && !isInsideManagedPty) {
