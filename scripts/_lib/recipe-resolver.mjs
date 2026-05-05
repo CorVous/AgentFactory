@@ -107,7 +107,7 @@ function loadTemplateChain(templateName, fsContext, visited) {
  *   resolver returning just the recipe body keeps this module hermetic.
  * - `habitatSpecPartial` contains only the recipe-derived Habitat fields the
  *   runner builds before the topology overlay: skills, agents (= wired.allowed),
- *   noEditAdd, noEditSkip, description (when set), and tier (when model is a
+ *   skills, agents, description (when set), and tier (when model is a
  *   TIER_VAR). It does NOT include agentName, scratchRoot, busRoot, or type —
  *   those are runner/topology concerns.
  */
@@ -159,6 +159,23 @@ export function resolveRecipe(name, fsContext) {
   rejectDeprecatedPeerFields(recipe, name, (msg) => {
     throw new Error(`recipe-resolver: ${msg}`);
   });
+
+  // Reject noEditAdd / noEditSkip — removed per ADR-0006: the no-edit rail
+  // discovers create-only tools via pi.getAllTools() introspection plus a
+  // static fallback. Recipes that need a different set drop the extension.
+  // See docs/adr/0006-templates-compose-baseline-rails.md.
+  if (recipe.noEditAdd !== undefined) {
+    throw new Error(
+      `recipe-resolver: recipe '${name}' sets 'noEditAdd', which was removed in ADR-0006. ` +
+        `Drop the field; the no-edit rail uses pi.getAllTools() introspection instead.`,
+    );
+  }
+  if (recipe.noEditSkip !== undefined) {
+    throw new Error(
+      `recipe-resolver: recipe '${name}' sets 'noEditSkip', which was removed in ADR-0006. ` +
+        `Drop the field; the no-edit rail uses pi.getAllTools() introspection instead.`,
+    );
+  }
 
   // ── Step 2: extends: resolution ───────────────────────────────────────────
 
@@ -249,12 +266,6 @@ export function resolveRecipe(name, fsContext) {
       ? recipe.skills.filter((s) => typeof s === "string").slice()
       : [],
     agents: declaredAgents.slice(),
-    noEditAdd: Array.isArray(recipe.noEditAdd)
-      ? recipe.noEditAdd.filter((s) => typeof s === "string").slice()
-      : [],
-    noEditSkip: Array.isArray(recipe.noEditSkip)
-      ? recipe.noEditSkip.filter((s) => typeof s === "string").slice()
-      : [],
     ...(typeof recipe.description === "string" && recipe.description.trim()
       ? { description: recipe.description.trim() }
       : {}),

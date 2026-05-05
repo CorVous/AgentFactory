@@ -220,7 +220,7 @@ describe("recipe-resolver", () => {
   // Return shape: habitatSpecPartial contains expected fields
   // ---------------------------------------------------------------------------
 
-  it("habitatSpecPartial includes skills, agents, noEditAdd, noEditSkip", () => {
+  it("habitatSpecPartial includes skills, agents, description, and tier", () => {
     writeExtension("deferred-write");
     writeRecipe("child-agent", `prompt: I am a child.\ntools:\n  - read\n`);
     writeExtension("atomic-delegate");
@@ -234,10 +234,6 @@ describe("recipe-resolver", () => {
         `  - deferred-write`,
         `skills:`,
         `  - pi-agent-builder`,
-        `noEditAdd:`,
-        `  - my_writer`,
-        `noEditSkip:`,
-        `  - deferred_write`,
         `agents:`,
         `  - child-agent`,
         `description: A helpful agent`,
@@ -247,10 +243,32 @@ describe("recipe-resolver", () => {
     const result = resolveRecipe("my-agent", fsContext);
     expect(result.habitatSpecPartial.skills).toEqual(["pi-agent-builder"]);
     expect(result.habitatSpecPartial.agents).toEqual(["child-agent"]);
-    expect(result.habitatSpecPartial.noEditAdd).toEqual(["my_writer"]);
-    expect(result.habitatSpecPartial.noEditSkip).toEqual(["deferred_write"]);
     expect(result.habitatSpecPartial.description).toBe("A helpful agent");
     expect(result.habitatSpecPartial.tier).toBe("TASK_RABBIT_MODEL");
+  });
+
+  // ---------------------------------------------------------------------------
+  // noEditAdd / noEditSkip are rejected with ADR-0006 diagnostic
+  // ---------------------------------------------------------------------------
+
+  it("recipe declaring noEditAdd is rejected with ADR-0006 diagnostic", () => {
+    writeRecipe(
+      "bad-noedit-add",
+      `prompt: You are a helper.\ntools:\n  - read\nnoEditAdd:\n  - my_writer\n`,
+    );
+    expect(() => resolveRecipe("bad-noedit-add", fsContext)).toThrow(
+      /recipe-resolver:.*noEditAdd.*ADR-0006/,
+    );
+  });
+
+  it("recipe declaring noEditSkip is rejected with ADR-0006 diagnostic", () => {
+    writeRecipe(
+      "bad-noedit-skip",
+      `prompt: You are a helper.\ntools:\n  - read\nnoEditSkip:\n  - deferred_write\n`,
+    );
+    expect(() => resolveRecipe("bad-noedit-skip", fsContext)).toThrow(
+      /recipe-resolver:.*noEditSkip.*ADR-0006/,
+    );
   });
 
   // ---------------------------------------------------------------------------
