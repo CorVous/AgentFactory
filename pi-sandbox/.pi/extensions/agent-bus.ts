@@ -7,8 +7,8 @@
 //
 // busRoot and agentName are read from getHabitat() (materialised by the
 // habitat baseline extension before this session_start runs). The
-// resolution chain (--agent-bus → $PI_AGENT_BUS_ROOT → default) happens
-// in scripts/run-agent.mjs and lands as Habitat.busRoot. The bus root
+// resolution chain (--agent-bus → default) happens in scripts/run-agent.mjs
+// and lands as Habitat.busRoot. The bus root
 // deliberately lives outside scratchRoot so the sandbox extension's
 // path rejection doesn't trip on socket paths; the bus extension only
 // opens sockets, never invokes path-bearing tools, so the sandbox
@@ -314,11 +314,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    if (getHabitat().debug === true) {
-      const dump = `agent-bus: name=${state.name} sock=${state.sockPath}`;
-      ctx.ui.notify(dump, "info");
-      process.stderr.write(`[agent-bus] ${dump}\n`);
-    }
+    try {
+      if (getHabitat().debug === true) {
+        const dump = `agent-bus: name=${state.name} sock=${state.sockPath}`;
+        ctx.ui.notify(dump, "info");
+        process.stderr.write(`[agent-bus] ${dump}\n`);
+      }
+    } catch { /* Habitat not available */ }
 
   });
 

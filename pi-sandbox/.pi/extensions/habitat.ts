@@ -5,7 +5,7 @@
 // The runner serialises the fully-resolved Habitat into a single
 // --habitat-spec <json> flag. On fallback (direct `pi` invocations
 // without the runner), a minimal Habitat is assembled from ctx.cwd
-// and PI_AGENT_NAME so the session still boots cleanly.
+// (agentName defaults to "anonymous"; debug is always false in this path).
 //
 // This extension must be first in the peer template's extension list so it
 // runs before any rail that calls getHabitat() in its own session_start.
