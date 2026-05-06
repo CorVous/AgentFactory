@@ -1,5 +1,6 @@
 // run-agent.test.mjs — source-level assertions for the --inherit-pty flag in
-// run-agent.mjs (Slice 5: replace PI_MESH_PEER env var).
+// run-agent.mjs (Slice 5: replace PI_MESH_PEER env var) and
+// Slice 6: --debug flag + drop env-var fallbacks.
 //
 // Contract: pure file-content assertions; no exec, no model API calls, no network.
 // Hermetic by construction — reads the sibling source file and pattern-matches.
@@ -46,5 +47,37 @@ describe("run-agent.mjs — --inherit-pty flag parsing", () => {
 
   it("printHelp documents the --inherit-pty flag", () => {
     expect(SRC).toMatch(/--inherit-pty/);
+  });
+});
+
+describe("run-agent.mjs — --debug flag parsing (Slice 6)", () => {
+  it("initialises debug: false in the parseArgs output object", () => {
+    expect(SRC).toMatch(/debug\s*:\s*false/);
+  });
+
+  it("parses --debug and sets out.debug = true", () => {
+    expect(SRC).toMatch(/--debug/);
+    expect(SRC).toMatch(/debug\s*=\s*true/);
+  });
+
+  it("consumes --debug as a boolean flag (no value arg consumed)", () => {
+    const lines = SRC.split("\n");
+    const flagLine = lines.findIndex((l) => l.includes('"--debug"'));
+    expect(flagLine).toBeGreaterThanOrEqual(0);
+    const context = lines.slice(flagLine, flagLine + 3).join("\n");
+    expect(context).not.toMatch(/argv\[.*\+\+i.*\]/);
+  });
+
+  it("printHelp documents the --debug flag", () => {
+    expect(SRC).toMatch(/--debug/);
+    expect(SRC).toMatch(/Habitat\.debug/);
+  });
+
+  it("habitatSpec carries the debug field from args.debug", () => {
+    expect(SRC).toMatch(/debug\s*:\s*args\.debug/);
+  });
+
+  it("does not reference PI_AGENT_BUS_ROOT (Slice 6: env-var fallback dropped)", () => {
+    expect(SRC).not.toMatch(/PI_AGENT_BUS_ROOT/);
   });
 });

@@ -460,8 +460,6 @@ for (let i = 0; i < topology.nodes.length; i++) {
 
   const peerEnv = {
     ...process.env,
-    PI_AGENT_NAME: name,
-    PI_AGENT_BUS_ROOT: busRoot,
   };
 
   pool.spawn({

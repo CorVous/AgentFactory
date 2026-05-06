@@ -184,11 +184,14 @@ export default function (pi: ExtensionAPI) {
           }
           syncObserver(state);
 
-          if (process.env.AGENT_DEBUG === "1") {
-            process.stderr.write(
-              `[bus-tail-emitter] tail-toggle: on=${on} filter=${state.filter ?? "none"}\n`,
-            );
-          }
+          try {
+            const { getHabitat: _getHabitat } = _require(path.resolve(__dirname, "_lib/habitat")) as { getHabitat: () => { debug: boolean } };
+            if (_getHabitat().debug === true) {
+              process.stderr.write(
+                `[bus-tail-emitter] tail-toggle: on=${on} filter=${state.filter ?? "none"}\n`,
+              );
+            }
+          } catch { /* Habitat not available */ }
         }
       });
     }

@@ -28,14 +28,14 @@ export default function (pi: ExtensionAPI) {
       try {
         const h = materialiseHabitat(raw);
         setHabitat(h);
-        if (process.env.AGENT_DEBUG === "1") {
+        if (h.debug === true) {
           const dump = `habitat: agentName=${h.agentName} scratchRoot=${h.scratchRoot} busRoot=${h.busRoot}` +
             (h.supervisor ? ` supervisor=${h.supervisor}` : "") +
             (h.submitTo ? ` submitTo=${h.submitTo}` : "") +
             (h.acceptedFrom.length ? ` acceptedFrom=[${h.acceptedFrom.join(",")}]` : "") +
             (h.peers.length ? ` peers=[${h.peers.join(",")}]` : "");
           ctx.ui.notify(dump, "info");
-          process.stderr.write(`[AGENT_DEBUG] ${dump}\n`);
+          process.stderr.write(`[habitat] ${dump}\n`);
         }
         return;
       } catch (e) {
@@ -45,11 +45,9 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Fallback for direct `pi` invocations that don't pass --habitat-spec.
-    const agentName = (process.env.PI_AGENT_NAME || "anonymous").trim() || "anonymous";
+    const agentName = "anonymous";
     const scratchRoot = path.resolve(ctx.cwd);
-    const busRoot =
-      process.env.PI_AGENT_BUS_ROOT ||
-      path.join(os.homedir(), ".pi-agent-bus", path.basename(scratchRoot));
+    const busRoot = path.join(os.homedir(), ".pi-agent-bus", path.basename(scratchRoot));
 
     const fallback: Habitat = {
       agentName,
@@ -63,10 +61,10 @@ export default function (pi: ExtensionAPI) {
     };
     setHabitat(fallback);
 
-    if (process.env.AGENT_DEBUG === "1") {
+    if (fallback.debug === true) {
       const dump = `habitat: fallback agentName=${fallback.agentName} scratchRoot=${fallback.scratchRoot}`;
       ctx.ui.notify(dump, "info");
-      process.stderr.write(`[AGENT_DEBUG] ${dump}\n`);
+      process.stderr.write(`[habitat] ${dump}\n`);
     }
   });
 }

@@ -24,6 +24,7 @@ import { parse as parseYaml } from "yaml";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { generateInstanceName } from "./_lib/agent-naming.js";
+import { getHabitat } from "./_lib/habitat";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
 const RUNNER_PATH = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
@@ -148,14 +149,15 @@ export default function (pi: ExtensionAPI) {
         : path.join(os.tmpdir(), `pi-mesh-${instanceName}`);
       mkdirSync(sandbox, { recursive: true });
 
-      const busRoot = process.env.PI_AGENT_BUS_ROOT;
+      const busRoot = getHabitat().busRoot;
 
       const args = [
         RUNNER_PATH,
         params.recipe,
         "--sandbox",
         sandbox,
-        ...(busRoot ? ["--agent-bus", busRoot] : []),
+        "--agent-bus",
+        busRoot,
         "--",
         "--agent-name",
         instanceName,
@@ -166,11 +168,7 @@ export default function (pi: ExtensionAPI) {
       const child = spawn(process.execPath, args, {
         cwd: REPO_ROOT,
         stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          PI_AGENT_NAME: instanceName,
-          ...(busRoot ? { PI_AGENT_BUS_ROOT: busRoot } : {}),
-        },
+        env: { ...process.env },
       });
 
       // Send the initial task as the first RPC prompt command.
@@ -189,9 +187,11 @@ export default function (pi: ExtensionAPI) {
 
       child.once("exit", (code, sig) => {
         registry.delete(instanceName);
-        if (process.env.AGENT_DEBUG === "1") {
-          process.stderr.write(`[mesh-authority] node "${instanceName}" exited (code=${code} signal=${sig})\n`);
-        }
+        try {
+          if (getHabitat().debug === true) {
+            process.stderr.write(`[mesh-authority] node "${instanceName}" exited (code=${code} signal=${sig})\n`);
+          }
+        } catch { /* Habitat not available */ }
       });
 
       return {

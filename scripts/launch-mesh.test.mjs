@@ -1,5 +1,6 @@
 // launch-mesh.test.mjs — source-level assertions for the --inherit-pty peerArgs
-// change in launch-mesh.mjs (Slice 5: replace PI_MESH_PEER env var).
+// change in launch-mesh.mjs (Slice 5: replace PI_MESH_PEER env var) and
+// Slice 6 env-var elimination (drop PI_AGENT_NAME, PI_AGENT_BUS_ROOT from peerEnv).
 //
 // Contract: pure file-content assertions; no exec, no model API calls, no network.
 // Hermetic by construction — reads the sibling source file and pattern-matches.
@@ -36,9 +37,13 @@ describe("launch-mesh.mjs — --inherit-pty in peerArgs", () => {
     expect(SRC).not.toMatch(/PI_MESH_PEER/);
   });
 
-  it("peerEnv still includes PI_AGENT_NAME and PI_AGENT_BUS_ROOT", () => {
-    // These env vars carry peer identity information and must remain.
-    expect(SRC).toMatch(/PI_AGENT_NAME/);
-    expect(SRC).toMatch(/PI_AGENT_BUS_ROOT/);
+  it("does not set PI_AGENT_NAME in peerEnv (Slice 6: identity flows via CLI flags)", () => {
+    // After Slice 6, identity is passed via --agent-name in peerArgs, not env vars.
+    expect(SRC).not.toMatch(/PI_AGENT_NAME/);
+  });
+
+  it("does not set PI_AGENT_BUS_ROOT in peerEnv (Slice 6: bus root flows via --agent-bus)", () => {
+    // After Slice 6, bus root is passed via --agent-bus in peerArgs, not env vars.
+    expect(SRC).not.toMatch(/PI_AGENT_BUS_ROOT/);
   });
 });

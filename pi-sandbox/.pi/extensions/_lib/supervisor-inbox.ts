@@ -77,11 +77,13 @@ export function createSupervisorInbox(): SupervisorInbox {
       if (kind !== "approval-request" && kind !== "submission") return;
 
       if (!isAllowed(env.from)) {
-        if (process.env.AGENT_DEBUG === "1") {
-          process.stderr.write(
-            `[supervisor] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
-          );
-        }
+        try {
+          if (getHabitat().debug === true) {
+            process.stderr.write(
+              `[supervisor] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
+            );
+          }
+        } catch { /* Habitat not available */ }
         return;
       }
 

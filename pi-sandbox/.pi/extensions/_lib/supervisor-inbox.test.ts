@@ -132,9 +132,8 @@ describe("dispatchEnvelope — acceptedFrom", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("logs a debug message to stderr when dropping from unknown peer (AGENT_DEBUG=1)", () => {
-    process.env.AGENT_DEBUG = "1";
-    setHabitat(BASE_HABITAT);
+  it("logs a debug message to stderr when dropping from unknown peer (debug: true in Habitat)", () => {
+    setHabitat({ ...BASE_HABITAT, debug: true });
     const inbox = createSupervisorInbox();
     const env = makeApprovalRequestEnvelope({
       from: "intruder",
@@ -150,8 +149,27 @@ describe("dispatchEnvelope — acceptedFrom", () => {
     });
     inbox.dispatchEnvelope(env, vi.fn());
     stderrSpy.mockRestore();
-    delete process.env.AGENT_DEBUG;
     expect(stderrLines.some((l) => l.includes("intruder"))).toBe(true);
+  });
+
+  it("does NOT log a debug message when debug: false in Habitat", () => {
+    setHabitat({ ...BASE_HABITAT, debug: false });
+    const inbox = createSupervisorInbox();
+    const env = makeApprovalRequestEnvelope({
+      from: "intruder",
+      to: "supervisor",
+      title: "x",
+      summary: "s",
+      preview: "p",
+    });
+    const stderrLines: string[] = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((s) => {
+      stderrLines.push(String(s));
+      return true;
+    });
+    inbox.dispatchEnvelope(env, vi.fn());
+    stderrSpy.mockRestore();
+    expect(stderrLines.some((l) => l.includes("intruder"))).toBe(false);
   });
 
   it("queues a submission from any peer in acceptedFrom", () => {
