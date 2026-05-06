@@ -14,7 +14,7 @@
 // is forwarded to the launcher as a `tail-event` via the launcher-bridge's
 // sendControl.
 //
-// Auto-loaded by run-agent.mjs when PI_MESH_PEER=1 (same as launcher-bridge).
+// Loaded as part of the peer template (pi-sandbox/templates/peer.yaml).
 // Silent no-op when the launcher socket is absent (launcher-bridge not ready).
 
 import path from "node:path";

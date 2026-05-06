@@ -1,7 +1,7 @@
 // mesh-rail.ts — in-peer baseline extension that renders a mesh-status widget
 // above the editor (chat input bar) summarising peer name, peer count, and
-// decisions count. Auto-loaded by run-agent.mjs only when PI_MESH_PEER=1 (i.e.
-// the peer is running under the launcher); raw `npm run pi` and standalone
+// decisions count. Loaded via the peer template (pi-sandbox/templates/peer.yaml),
+// so the peer is running under the launcher; raw `npm run pi` and standalone
 // `npm run agent` do not load it. Mounted via `ctx.ui.setWidget(..., {
 // placement: "aboveEditor" })`, so it sits in the layout flow directly above
 // the input area rather than floating as an overlay.
@@ -47,7 +47,7 @@ export default function (pi: ExtensionAPI) {
 
     // Stash the TUI reference so the focus-in handler below can call
     // requestRender(true). Extensions only get a TUI handle via component
-    // factories; this widget always mounts under PI_MESH_PEER, so the
+    // factories; this widget is part of the peer template, so the
     // factory is guaranteed to run before any focus-changed event matters.
     let tuiRef: { requestRender?: (force?: boolean) => void } | undefined;
 
