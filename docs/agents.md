@@ -127,8 +127,6 @@ tools: [read, ls, grep, deferred_write]
 extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm] baseline
 skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
 provider: openrouter              # optional; defaults to openrouter
-noEditAdd: [my_writer]            # optional; force-include in no-edit rail
-noEditSkip: [deferred_write]      # optional; exempt from no-edit rail
 agents: [deferred-writer]         # optional; recipes this agent may delegate to
 ```
 
@@ -165,9 +163,8 @@ qualify). Recipe-derived values reach the extensions as registered CLI
 flags: `--sandbox-root <path>` (always set), `--agent-name <name>`
 (always set), `--agent-description <text>` (when `description:` is set),
 `--agent-tier <TIER_VAR>` (when `model:` is a tier var name),
-`--no-edit-add` / `--no-edit-skip` (when the matching list is
-non-empty), and `--allowed-agents <a,b,c>` (when `agents:` is set).
-All seven appear under "Extension CLI Flags" in `pi --help`.
+and `--allowed-agents <a,b,c>` (when `agents:` is set).
+All five appear under "Extension CLI Flags" in `pi --help`.
 
 When `agents:` is non-empty the runner also implicitly:
 
@@ -211,9 +208,9 @@ field entirely.
   session start from `pi.getAllTools()`: any tool whose schema declares
   `path: string` plus a content-shaped string field
   (`content` | `text` | `body`). The static fallback covers `write` and
-  `deferred_write`. Override per recipe with `noEditAdd` (force-include)
-  or `noEditSkip` (force-exclude). Drop the extension entirely if you
-  want an agent that can overwrite or edit existing files.
+  `deferred_write`. Drop the extension entirely if you want an agent
+  that can overwrite or edit existing files, or compose a custom
+  extension if you need a different create-only tool set.
 
 Non-interactive runs refuse to write because there's no UI to confirm.
 

@@ -297,8 +297,6 @@ const habitatSpec = {
   busRoot,
   skills: recipeSkills,
   agents: wired.allowed,
-  noEditAdd: Array.isArray(recipe.noEditAdd) ? recipe.noEditAdd.filter((s) => typeof s === "string") : [],
-  noEditSkip: Array.isArray(recipe.noEditSkip) ? recipe.noEditSkip.filter((s) => typeof s === "string") : [],
   ...(typeof recipe.description === "string" && recipe.description.trim()
     ? { description: recipe.description.trim() }
     : {}),

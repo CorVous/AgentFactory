@@ -28,8 +28,33 @@ describe("materialiseHabitat", () => {
     const h = materialiseHabitat(MINIMAL_VALID);
     expect(h.skills).toEqual([]);
     expect(h.agents).toEqual([]);
-    expect(h.noEditAdd).toEqual([]);
-    expect(h.noEditSkip).toEqual([]);
+  });
+
+  it("defaults debug to false when absent", () => {
+    const h = materialiseHabitat(MINIMAL_VALID);
+    expect(h.debug).toBe(false);
+  });
+
+  it("preserves debug: true when explicitly set", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      debug: true,
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.debug).toBe(true);
+  });
+
+  it("falls back to false for non-boolean debug", () => {
+    const spec = JSON.stringify({
+      agentName: "a",
+      scratchRoot: "/tmp/s",
+      busRoot: "/tmp/b",
+      debug: "yes",
+    });
+    const h = materialiseHabitat(spec);
+    expect(h.debug).toBe(false);
   });
 
   it("optional string fields are undefined when absent", () => {
@@ -49,8 +74,6 @@ describe("materialiseHabitat", () => {
       type: "deferred-writer",
       skills: ["pi-agent-builder"],
       agents: ["deferred-writer"],
-      noEditAdd: ["my_tool"],
-      noEditSkip: ["deferred_write"],
     });
     const h = materialiseHabitat(spec);
     expect(h.description).toBe("Does things");
@@ -58,8 +81,6 @@ describe("materialiseHabitat", () => {
     expect(h.type).toBe("deferred-writer");
     expect(h.skills).toEqual(["pi-agent-builder"]);
     expect(h.agents).toEqual(["deferred-writer"]);
-    expect(h.noEditAdd).toEqual(["my_tool"]);
-    expect(h.noEditSkip).toEqual(["deferred_write"]);
   });
 
   it("throws on malformed JSON", () => {

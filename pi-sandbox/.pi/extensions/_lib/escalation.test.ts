@@ -10,8 +10,7 @@ const BASE_HABITAT: Habitat = {
   busRoot: "/tmp/bus",
   skills: [],
   agents: [],
-  noEditAdd: [],
-  noEditSkip: [],
+  debug: false,
   acceptedFrom: [],
   peers: [],
 };

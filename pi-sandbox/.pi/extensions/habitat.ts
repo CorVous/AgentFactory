@@ -57,8 +57,7 @@ export default function (pi: ExtensionAPI) {
       busRoot,
       skills: [],
       agents: [],
-      noEditAdd: [],
-      noEditSkip: [],
+      debug: false,
       acceptedFrom: [],
       peers: [],
     };

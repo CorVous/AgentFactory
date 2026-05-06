@@ -13,9 +13,8 @@
 //   pi.getAllTools(); the static fallback covers pi 0.70's built-in
 //   `write` plus our `deferred_write`.
 //
-// Recipe overrides via Habitat (getHabitat().noEditAdd / noEditSkip),
-// forwarded by scripts/run-agent.mjs from the recipe's noEditAdd /
-// noEditSkip fields.
+// To change the set of create-only tools, drop this extension and compose
+// a custom one, or simply omit it if overwrite/edit is desired.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -49,18 +48,6 @@ export default function (pi: ExtensionAPI) {
         "warning",
       );
     }
-
-    let noEditAdd: string[] = [];
-    let noEditSkip: string[] = [];
-    try {
-      const h = getHabitat();
-      noEditAdd = h.noEditAdd;
-      noEditSkip = h.noEditSkip;
-    } catch {
-      // Habitat not yet set; use empty lists (no recipe overrides).
-    }
-    for (const t of noEditAdd) createOnlyTools.add(t);
-    for (const t of noEditSkip) createOnlyTools.delete(t);
 
     if (process.env.AGENT_DEBUG === "1") {
       const dump = `no-edit createOnlyTools = [${[...createOnlyTools].sort().join(", ")}]`;

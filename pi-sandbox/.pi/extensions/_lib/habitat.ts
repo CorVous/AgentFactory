@@ -15,9 +15,8 @@ export interface Habitat {
   skills: string[];
   agents: string[];
 
-  // No-edit rail config (carried forward; recipe-schema removal deferred)
-  noEditAdd: string[];
-  noEditSkip: string[];
+  // Verbose diagnostic logging toggle (forwarded by --debug; default false).
+  debug: boolean;
 
   // Phase 3b: peer relationships
   supervisor?: string;
@@ -68,8 +67,7 @@ export function materialiseHabitat(rawJson: string): Habitat {
     type: optionalString(obj, "type"),
     skills: stringList(obj, "skills"),
     agents: stringList(obj, "agents"),
-    noEditAdd: stringList(obj, "noEditAdd"),
-    noEditSkip: stringList(obj, "noEditSkip"),
+    debug: typeof obj.debug === "boolean" ? obj.debug : false,
     supervisor: optionalString(obj, "supervisor"),
     submitTo: optionalString(obj, "submitTo"),
     acceptedFrom: stringList(obj, "acceptedFrom"),
