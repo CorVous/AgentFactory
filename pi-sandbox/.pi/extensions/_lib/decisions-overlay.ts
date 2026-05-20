@@ -11,7 +11,7 @@
 //   d                   — dismiss selected decision
 //   Escape              — close without action
 
-import type { Component } from "@mariozechner/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import type { MeshRailPeer, DecisionItem } from "./mesh-rail";
 
 export interface DecisionsOverlayOptions {

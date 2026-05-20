@@ -122,7 +122,7 @@ Returning nothing is fine. Returning partial (only `message` or only `systemProm
 Fires right before a tool executes. **Can block. Can mutate input.**
 
 ```ts
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 
 pi.on("tool_call", async (event, ctx) => {
   if (isToolCallEventType("bash", event)) {
@@ -163,7 +163,7 @@ if (isToolCallEventType<"my_tool", MyToolInput>("my_tool", event)) {
 Fires after a tool finishes, before the result becomes a message. **Can patch the result.** Handlers chain like middleware.
 
 ```ts
-import { isBashToolResult } from "@mariozechner/pi-coding-agent";
+import { isBashToolResult } from "@earendil-works/pi-coding-agent";
 
 pi.on("tool_result", async (event, ctx) => {
   // event.toolName, event.toolCallId, event.input
@@ -312,7 +312,7 @@ After a successful switch, `session_shutdown` fires for the old instance, then `
 Fires when the user types `!cmd` or `!!cmd` in the editor. Can intercept:
 
 ```ts
-import { createLocalBashOperations } from "@mariozechner/pi-coding-agent";
+import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 
 pi.on("user_bash", (event, ctx) => {
   // event.command, event.excludeFromContext (true for !!), event.cwd

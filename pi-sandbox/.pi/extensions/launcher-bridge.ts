@@ -16,7 +16,7 @@
 
 import path from "node:path";
 import { createRequire } from "node:module";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getHabitat } from "./_lib/habitat";
 import { createFocusState } from "./_lib/focus-state.mjs";
 

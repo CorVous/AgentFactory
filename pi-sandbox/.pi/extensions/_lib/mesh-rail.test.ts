@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   createMeshRailComponent,
   setMeshRailHandle,

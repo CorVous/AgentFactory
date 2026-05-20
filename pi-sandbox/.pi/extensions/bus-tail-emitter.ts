@@ -19,7 +19,7 @@
 
 import path from "node:path";
 import { createRequire } from "node:module";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const _require = createRequire(import.meta.url);
 

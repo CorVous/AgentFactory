@@ -53,16 +53,16 @@ Pi looks for the `pi-package` keyword in npm for discovery. The `pi` field decla
     "themes": ["agent/themes/my-theme.json"]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^X.Y.Z"
+    "@earendil-works/pi-coding-agent": "^X.Y.Z"
   }
 }
 ```
 
-**Verify the exact `pi` field shape against the installed pi version** — this is evolving. `cat $(npm root -g)/@mariozechner/pi-coding-agent/package.json` to see real-world examples in `examples/` or the docs directory.
+**Verify the exact `pi` field shape against the installed pi version** — this is evolving. `cat $(npm root -g)/@earendil-works/pi-coding-agent/package.json` to see real-world examples in `examples/` or the docs directory.
 
 ## Dependencies
 
-- Use `peerDependencies` for `@mariozechner/pi-coding-agent` so your package doesn't force a specific pi version.
+- Use `peerDependencies` for `@earendil-works/pi-coding-agent` so your package doesn't force a specific pi version.
 - Runtime deps go in `dependencies`. Pi installs them via npm/pnpm — don't bundle them.
 - Dev-only deps (typescript, types) go in `devDependencies`.
 

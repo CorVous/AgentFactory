@@ -12,7 +12,7 @@
 // Loaded as part of the peer template (alongside launcher-bridge).
 // Silent no-op when the launcher socket is absent.
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { getHabitat } from "./_lib/habitat";

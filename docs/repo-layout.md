@@ -1,6 +1,6 @@
 # Repo layout
 
-- `package.json` — ESM project, pins `@mariozechner/pi-coding-agent`.
+- `package.json` — ESM project, pins `@earendil-works/pi-coding-agent`.
   Defines `npm run pi` (raw pi from `pi-sandbox/`) and `npm run agent`
   (recipe-driven runner).
 - `models.env` — tier → model-ID mapping. See [model-tiers.md](./model-tiers.md).

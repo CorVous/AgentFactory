@@ -15,8 +15,8 @@ Don't use a sub-agent when a single tool call would suffice. Sub-agents cost tok
 ## The basic pattern
 
 ```ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { createAgentSession, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
