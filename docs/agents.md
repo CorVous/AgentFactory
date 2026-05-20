@@ -307,7 +307,7 @@ flow up through whatever escalation chain is configured.
 
 ### Debugging the rails
 
-Set `AGENT_DEBUG=1` in the environment when launching an agent and the
+Pass `-- --debug` when launching an agent and the
 `sandbox` and `no-edit` extensions will dump their resolved tool sets
 via `ctx.ui.notify` on `session_start`. Useful when you've added a new
 write tool and want to confirm it was picked up by introspection.
@@ -320,7 +320,7 @@ drive a full TUI session under tmux:
 ```sh
 set -a; source models.env; set +a
 tmux new-session -d -s pi-test -x 200 -y 50 \
-  'AGENT_DEBUG=1 npm run agent -- deferred-writer'
+  'npm run agent -- deferred-writer -- --debug'
 sleep 5                                              # let pi boot + print debug
 tmux send-keys -t pi-test 'draft hello.txt saying hi' Enter
 sleep 30                                             # wait for the model
@@ -445,8 +445,8 @@ Registers three tools and one CLI flag:
 - `agent_list()` — probe `${BUS_ROOT}/*.sock` for live peers; clean up
   stale socks left by crashed peers.
 - `--agent-bus-root <dir>` — the rendezvous directory. Resolution
-  order: this flag → `$PI_AGENT_BUS_ROOT` → `~/.pi-agent-bus/<basename
-  of sandbox-root>`. The runner sets the flag automatically and accepts
+  order: this flag → `~/.pi-agent-bus/<basename of sandbox-root>`.
+  The runner sets the flag automatically and accepts
   `--agent-bus <dir>` (parallel to `--sandbox <dir>`) to override.
 
 Each agent listens on `${BUS_ROOT}/${name}.sock` (name comes from
@@ -536,7 +536,7 @@ To exercise the **atomic delegate** end-to-end, drive
 set -a; source models.env; set +a
 mkdir -p /tmp/foreman-test
 tmux new-session -d -s foreman -x 200 -y 50 \
-  'AGENT_DEBUG=1 npm run agent -- writer-foreman --sandbox /tmp/foreman-test'
+  'npm run agent -- writer-foreman --sandbox /tmp/foreman-test -- --debug'
 sleep 5
 tmux send-keys -t foreman \
   'draft hello.txt with text "Hi"' Enter
@@ -598,7 +598,7 @@ message rather than crashing.
 |------|--------|-------------|
 | `approval-request` | peer in `acceptedFrom` | Queued; model prompted |
 | `submission` | peer in `acceptedFrom` | Queued; model prompted |
-| Either kind from unknown peer | anyone not in `acceptedFrom` | Dropped silently (stderr under `AGENT_DEBUG=1`) |
+| Either kind from unknown peer | anyone not in `acceptedFrom` | Dropped silently (stderr when `--debug`) |
 | `message` | any peer | Free-flow (unrestricted, existing behaviour) |
 
 ### Four-action flow via `respond_to_request`

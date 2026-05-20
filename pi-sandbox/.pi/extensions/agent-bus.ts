@@ -7,8 +7,8 @@
 //
 // busRoot and agentName are read from getHabitat() (materialised by the
 // habitat baseline extension before this session_start runs). The
-// resolution chain (--agent-bus → $PI_AGENT_BUS_ROOT → default) happens
-// in scripts/run-agent.mjs and lands as Habitat.busRoot. The bus root
+// resolution chain (--agent-bus → default) happens in scripts/run-agent.mjs
+// and lands as Habitat.busRoot. The bus root
 // deliberately lives outside scratchRoot so the sandbox extension's
 // path rejection doesn't trip on socket paths; the bus extension only
 // opens sockets, never invokes path-bearing tools, so the sandbox
@@ -207,11 +207,13 @@ function handleIncoming(state: BusState, env: Envelope) {
       acceptedFrom = getHabitat().acceptedFrom;
     } catch { /* Habitat not yet available — default to empty (drop) */ }
     if (!acceptedFrom.includes(env.from)) {
-      if (process.env.AGENT_DEBUG === "1") {
-        process.stderr.write(
-          `[agent-bus] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
-        );
-      }
+      try {
+        if (getHabitat().debug === true) {
+          process.stderr.write(
+            `[agent-bus] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
+          );
+        }
+      } catch { /* Habitat not yet available */ }
       return;
     }
 
@@ -298,7 +300,7 @@ export default function (pi: ExtensionAPI) {
       busRoot = path.resolve(h.busRoot);
     } catch {
       // Habitat not available (direct pi invocation); fall back to ctx.cwd-derived defaults.
-      name = (process.env.PI_AGENT_NAME || "anonymous").trim() || "anonymous";
+      name = "anonymous";
       const sandboxRoot = path.resolve(ctx.cwd);
       busRoot = path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
     }
@@ -312,11 +314,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    if (process.env.AGENT_DEBUG === "1") {
-      const dump = `agent-bus: name=${state.name} sock=${state.sockPath}`;
-      ctx.ui.notify(dump, "info");
-      process.stderr.write(`[AGENT_DEBUG] ${dump}\n`);
-    }
+    try {
+      if (getHabitat().debug === true) {
+        const dump = `agent-bus: name=${state.name} sock=${state.sockPath}`;
+        ctx.ui.notify(dump, "info");
+        process.stderr.write(`[agent-bus] ${dump}\n`);
+      }
+    } catch { /* Habitat not available */ }
 
   });
 

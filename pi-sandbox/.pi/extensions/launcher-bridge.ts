@@ -161,15 +161,17 @@ export default function (pi: ExtensionAPI) {
     try {
       await client.connect(busRoot, 1000);
       state.ready = true;
-      if (process.env.AGENT_DEBUG === "1") {
+      if (getHabitat().debug === true) {
         ctx.ui.notify("launcher-bridge: connected to launcher socket", "info");
       }
     } catch {
       // Launcher socket not present — standalone mode. Degrade gracefully.
       state.client = null;
-      if (process.env.AGENT_DEBUG === "1") {
-        ctx.ui.notify("launcher-bridge: launcher socket not found (standalone mode)", "info");
-      }
+      try {
+        if (getHabitat().debug === true) {
+          ctx.ui.notify("launcher-bridge: launcher socket not found (standalone mode)", "info");
+        }
+      } catch { /* Habitat not available */ }
     }
   });
 

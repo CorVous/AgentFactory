@@ -261,9 +261,11 @@ export default function (pi: ExtensionAPI) {
     // ordering for the message kind; typed envelopes come here.
     state.sendUserMessage = (text, opts) => pi.sendUserMessage(text, opts);
 
-    if (process.env.AGENT_DEBUG === "1") {
-      ctx.ui.notify("supervisor: inbound rail active", "info");
-    }
+    try {
+      if (getHabitat().debug === true) {
+        ctx.ui.notify("supervisor: inbound rail active", "info");
+      }
+    } catch { /* Habitat not available */ }
   });
 
   pi.registerTool({

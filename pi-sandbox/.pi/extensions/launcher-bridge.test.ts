@@ -1,6 +1,7 @@
 /**
  * launcher-bridge.test.ts — source-level assertions for the launcher-bridge
- * extension post Slice 5 (replace PI_MESH_PEER env var with --inherit-pty flag).
+ * extension post Slice 5 (replace PI_MESH_PEER env var with --inherit-pty flag)
+ * and Slice 6 (replace AGENT_DEBUG env var with getHabitat().debug).
  *
  * Contract: pure file-content assertions; no jiti, no pi runtime, no I/O
  * beyond reading the sibling source file.
@@ -31,9 +32,15 @@ describe("launcher-bridge.ts — PI_MESH_PEER removal (Slice 5)", () => {
     // Confirm PI_MESH_PEER is not present in the header (or anywhere).
     expect(SRC).not.toMatch(/PI_MESH_PEER/);
   });
+});
 
-  it("AGENT_DEBUG=1 branch for standalone mode is still present", () => {
-    // The AGENT_DEBUG notify branches (connected / standalone) should survive.
-    expect(SRC).toMatch(/AGENT_DEBUG/);
+describe("launcher-bridge.ts — AGENT_DEBUG env var replaced with getHabitat().debug (Slice 6)", () => {
+  it("does not reference process.env.AGENT_DEBUG anywhere", () => {
+    expect(SRC).not.toMatch(/process\.env\.AGENT_DEBUG/);
+  });
+
+  it("debug branch uses getHabitat().debug === true", () => {
+    // The AGENT_DEBUG notify branches were replaced with getHabitat().debug === true.
+    expect(SRC).toMatch(/getHabitat\(\)\.debug\s*===\s*true/);
   });
 });

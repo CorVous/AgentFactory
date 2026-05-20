@@ -26,12 +26,16 @@ function die(msg) {
 }
 
 function parseArgs(argv) {
-  const out = { name: null, sandbox: null, agentBus: null, inheritPty: false, passthrough: [] };
+  const out = { name: null, sandbox: null, agentBus: null, inheritPty: false, debug: false, passthrough: [] };
   let passthroughOnly = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (passthroughOnly) {
-      out.passthrough.push(a);
+      if (a === "--debug") {
+        out.debug = true;
+      } else {
+        out.passthrough.push(a);
+      }
       continue;
     }
     if (a === "--") {
@@ -42,6 +46,8 @@ function parseArgs(argv) {
       out.agentBus = argv[++i] ?? die("--agent-bus requires a directory");
     } else if (a === "--inherit-pty") {
       out.inheritPty = true;
+    } else if (a === "--debug") {
+      out.debug = true;
     } else if (a === "--help" || a === "-h") {
       printHelp();
       process.exit(0);
@@ -54,6 +60,8 @@ function parseArgs(argv) {
   return out;
 }
 
+export { parseArgs };
+
 function printHelp() {
   process.stdout.write(
     `Usage: npm run agent -- <name> [--sandbox <dir>] [pi flags...]\n\n` +
@@ -62,7 +70,8 @@ function printHelp() {
       `extension restricts all fs activity to <dir> (default: cwd where you\n` +
       `invoked npm run agent) and disables bash entirely.\n\n` +
       `  --inherit-pty   Pass when the launcher's PTY already wraps this runner's\n` +
-      `                  stdio (skips nested PTY allocation).\n\n` +
+      `                  stdio (skips nested PTY allocation).\n` +
+      `  --debug         Set Habitat.debug = true; rails dump diagnostics on session_start.\n\n` +
       `Run without a name to list available agents.\n`,
   );
 }
@@ -208,6 +217,8 @@ function loadPromptFragments(extensionNames, hasSupervisoryHabitat = false) {
   return fragments;
 }
 
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if (isMain) {
 const args = parseArgs(process.argv.slice(2));
 if (!args.name) {
   listAgents();
@@ -270,7 +281,6 @@ args.passthrough = passthrough;
 
 const busRoot =
   args.agentBus ||
-  process.env.PI_AGENT_BUS_ROOT ||
   path.join(os.homedir(), ".pi-agent-bus", path.basename(sandboxRoot));
 
 // If no manual --agent-name was provided in passthrough, generate one
@@ -302,6 +312,7 @@ const habitatSpec = {
   busRoot,
   skills: recipeSkills,
   agents: wired.allowed,
+  debug: args.debug,
   ...(typeof recipe.description === "string" && recipe.description.trim()
     ? { description: recipe.description.trim() }
     : {}),
@@ -470,3 +481,4 @@ if (isTTY && !isPrintMode && !isInsideManagedPty) {
     else process.exit(code ?? 0);
   });
 }
+} // end isMain

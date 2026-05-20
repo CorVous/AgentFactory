@@ -45,11 +45,13 @@ export default function (pi: ExtensionAPI) {
       );
     }
 
-    if (process.env.AGENT_DEBUG === "1") {
-      const dump = `sandbox pathTools = [${[...pathTools].sort().join(", ")}]`;
-      ctx.ui.notify(dump, "info");
-      process.stderr.write(`[AGENT_DEBUG] ${dump}\n`);
-    }
+    try {
+      if (getHabitat().debug === true) {
+        const dump = `sandbox pathTools = [${[...pathTools].sort().join(", ")}]`;
+        ctx.ui.notify(dump, "info");
+        process.stderr.write(`[sandbox] ${dump}\n`);
+      }
+    } catch { /* Habitat not available */ }
   });
 
   pi.on("tool_call", async (event, ctx) => {

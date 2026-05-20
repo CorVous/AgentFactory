@@ -361,9 +361,11 @@ function buildInterceptDispatch(
     // Fire the dialog flow asynchronously — do not await here so the bus
     // connection handler returns promptly.
     void handleHumanDecision(env).catch((err) => {
-      if (process.env.AGENT_DEBUG === "1") {
-        process.stderr.write(`[intercept] handleHumanDecision error: ${String(err)}\n`);
-      }
+      try {
+        if (getHabitat().debug === true) {
+          process.stderr.write(`[intercept] handleHumanDecision error: ${String(err)}\n`);
+        }
+      } catch { /* Habitat not available */ }
     });
 
     // Returning true tells agent-bus the envelope was consumed.
@@ -415,9 +417,11 @@ export default function (pi: ExtensionAPI) {
     // Only wire if the supervisor inbound rail is active.
     if (!hasSupervisorInboundRail(acceptedFrom)) {
       state.active = false;
-      if (process.env.AGENT_DEBUG === "1") {
-        ctx.ui.notify("intercept: no supervisor inbound rail — no-op", "info");
-      }
+      try {
+        if (getHabitat().debug === true) {
+          ctx.ui.notify("intercept: no supervisor inbound rail — no-op", "info");
+        }
+      } catch { /* Habitat not available */ }
       return;
     }
 
@@ -438,9 +442,11 @@ export default function (pi: ExtensionAPI) {
     state.originalDispatch = originalDispatch;
     g.__pi_supervisor_dispatch__ = buildInterceptDispatch(originalDispatch);
 
-    if (process.env.AGENT_DEBUG === "1") {
-      ctx.ui.notify("intercept: focus-driven intercept rail active", "info");
-    }
+    try {
+      if (getHabitat().debug === true) {
+        ctx.ui.notify("intercept: focus-driven intercept rail active", "info");
+      }
+    } catch { /* Habitat not available */ }
   });
 
   pi.on("session_end", async () => {
