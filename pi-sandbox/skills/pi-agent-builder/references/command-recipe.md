@@ -5,7 +5,7 @@ Commands are what the **user** types in the TUI, as `/name [args]`. They're for 
 ## Minimal working example
 
 ```ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("stats", {

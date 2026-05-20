@@ -5,7 +5,7 @@
 // (supervisor.ts's `escalate` action) is now the only escalation path
 // that crosses agent boundaries.
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface ApprovalRequest {
   title: string;

@@ -8,8 +8,8 @@
 // removable via the public API, so the banner sits with one blank line
 // above and below.
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Container, Text } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Container, Text } from "@earendil-works/pi-tui";
 import { prettify } from "./_lib/agent-naming";
 import { getHabitat } from "./_lib/habitat";
 

@@ -1,7 +1,7 @@
 # AgentFactory
 
 Workspace for building and testing **pi agents** using
-[`@mariozechner/pi-coding-agent`](https://github.com/badlogic/pi-mono). Pi is
+[`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi-mono). Pi is
 installed as a regular npm dependency so the `pi` CLI is available via
 `node_modules/.bin/pi`.
 

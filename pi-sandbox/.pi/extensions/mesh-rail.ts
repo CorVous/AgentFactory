@@ -9,7 +9,7 @@
 // Signals from the launcher (peer-state, decisions count) are received via the
 // `launcher-bridge` onMeshRailUpdate subscription and drive live re-renders.
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getHabitat } from "./_lib/habitat";
 import {
   createMeshRailComponent,

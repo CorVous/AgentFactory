@@ -5,7 +5,7 @@ Tools are what the LLM calls mid-conversation. Their output lands in the context
 ## Minimal working example
 
 ```ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -160,7 +160,7 @@ hook telling it *when* to use the tool as its last action. Without the
 guideline, the model may keep the tool in rotation and call other
 things after it, which nullifies the batch-terminate condition.
 
-See `node_modules/@mariozechner/pi-coding-agent/examples/extensions/structured-output.ts`
+See `node_modules/@earendil-works/pi-coding-agent/examples/extensions/structured-output.ts`
 for pi's own minimal demo.
 
 **Do NOT use `terminate` when:**

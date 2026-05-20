@@ -17,7 +17,7 @@
 // isolation (loader.js uses `moduleCache: false` and a fresh createJiti
 // per extension).
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestHumanApproval } from "./_lib/escalation";
 import { getHabitat } from "./_lib/habitat";
 import {

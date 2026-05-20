@@ -3,7 +3,7 @@
 // surrounds the header with spacers, so this leaves a small gap at
 // the top of the chat area but removes the help text itself.
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {

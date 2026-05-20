@@ -17,7 +17,7 @@
 // focused elsewhere. After the human decides, decision-pending(on:false)
 // clears the badge.
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getHabitat } from "./_lib/habitat";
 import { createSupervisorInbox, type InboundEnvelope } from "./_lib/supervisor-inbox";

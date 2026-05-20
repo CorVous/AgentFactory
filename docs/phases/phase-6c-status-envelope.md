@@ -241,7 +241,7 @@ Update `docs/agents.md` with a "Status reporting" section describing:
 
 ## What to do if you hit something unexpected
 
-- **The widget API differs from what `delegation-boxes` used.** Pi may have evolved; consult `@mariozechner/pi-coding-agent` types or examples for the current widget contract. The deleted `delegation-boxes` is reference, not gospel.
+- **The widget API differs from what `delegation-boxes` used.** Pi may have evolved; consult `@earendil-works/pi-coding-agent` types or examples for the current widget contract. The deleted `delegation-boxes` is reference, not gospel.
 - **`submitTo` is unset for a top-level user agent** — emitter is inert, no problem.
 - **Multiple peers send status to the same `submitTo` with overlapping `from` names.** Shouldn't happen (instance names are unique), but if it does, last-write-wins via the cache's keying. Document if encountered.
 - **`acceptedFrom` enforcement breaks unattended status emission.** If a peer's `submitTo` doesn't have `acceptedFrom` including the worker, status drops. This is by design — the supervisor's allowlist is authoritative — but worth flagging in the PR if it causes test setup pain.

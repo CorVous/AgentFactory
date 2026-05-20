@@ -14,8 +14,8 @@
 // internal layout changes. If a future pi exposes a quietStartup
 // setter via the extension API, prefer that and delete this rail.
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import type { Component } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const SECTION_LABEL = "[Extensions]";

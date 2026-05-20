@@ -13,9 +13,9 @@
 
 import os from "node:os";
 import path from "node:path";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { renderBar } from "./_lib/context-bar";
 import { getHabitat } from "./_lib/habitat";
 

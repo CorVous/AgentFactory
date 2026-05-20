@@ -1,6 +1,6 @@
 # AgentFactory
 
-Workspace for building and running multi-agent compositions on top of `@mariozechner/pi-coding-agent`. Agents are pi processes composed via **Recipes** that declare both their **Role** and the wiring of any peers they spawn; the system enforces containment via **Rails** so each peer's blast radius is explicit and auditable.
+Workspace for building and running multi-agent compositions on top of `@earendil-works/pi-coding-agent`. Agents are pi processes composed via **Recipes** that declare both their **Role** and the wiring of any peers they spawn; the system enforces containment via **Rails** so each peer's blast radius is explicit and auditable.
 
 ## Language
 

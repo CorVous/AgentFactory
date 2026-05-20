@@ -5,7 +5,7 @@ description: Build Pi coding agent extensions and sub-agents in TypeScript. Use 
 
 # Pi Agent Builder
 
-This skill teaches you to build high-quality extensions and sub-agents for the **Pi coding agent** (`@mariozechner/pi-coding-agent`). Pi is deliberately minimal — it ships a small tool set and defers sub-agents, plan mode, permission gates, browser automation, and similar features to extensions. Your job is to build those extensions well.
+This skill teaches you to build high-quality extensions and sub-agents for the **Pi coding agent** (`@earendil-works/pi-coding-agent`). Pi is deliberately minimal — it ships a small tool set and defers sub-agents, plan mode, permission gates, browser automation, and similar features to extensions. Your job is to build those extensions well.
 
 The cardinal rule: **when in doubt, read Pi's own docs and source.** Pi is self-documenting — `~/.nvm/.../pi-coding-agent/README.md`, `docs/extensions.md`, `docs/compaction.md`, and `examples/extensions/` are the ground truth. If an API detail isn't in this skill, grep the installed package before guessing.
 
@@ -29,7 +29,7 @@ If the user asks about something adjacent — "how do I use pi skills?", "what's
 Every extension is a TypeScript module with a default-exported function that receives an `ExtensionAPI`. The factory can be sync or async; pi awaits async factories before `session_start`, so use async for one-time startup work (fetching model lists, remote config).
 
 ```ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -176,9 +176,9 @@ Pi's API changes. Before writing non-trivial code, verify against the installed 
 # Find the installed package
 npm root -g
 # Read the current API surface
-cat ~/.nvm/versions/node/*/lib/node_modules/@mariozechner/pi-coding-agent/dist/extensions/types.d.ts
+cat ~/.nvm/versions/node/*/lib/node_modules/@earendil-works/pi-coding-agent/dist/extensions/types.d.ts
 # Read the current docs
-ls ~/.nvm/versions/node/*/lib/node_modules/@mariozechner/pi-coding-agent/docs/
+ls ~/.nvm/versions/node/*/lib/node_modules/@earendil-works/pi-coding-agent/docs/
 ```
 
 If a field, event, or method in this skill doesn't exist in the installed types, **trust the types, not the skill**, and flag the discrepancy to the user.

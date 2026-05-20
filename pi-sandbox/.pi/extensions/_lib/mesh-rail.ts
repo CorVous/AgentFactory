@@ -2,7 +2,7 @@
 // The extension default export in ../mesh-rail.ts is a thin wrapper that wires
 // session_start to ctx.ui.setWidget with placement "aboveEditor".
 
-import { truncateToWidth, type Component } from "@mariozechner/pi-tui";
+import { truncateToWidth, type Component } from "@earendil-works/pi-tui";
 
 export interface MeshRailPeer {
   name: string;

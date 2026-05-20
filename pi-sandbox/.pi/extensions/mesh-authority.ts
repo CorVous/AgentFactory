@@ -21,7 +21,7 @@ import os from "node:os";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { generateInstanceName } from "./_lib/agent-naming.js";
 import { getHabitat } from "./_lib/habitat";

@@ -33,7 +33,7 @@ Default to `spawn`. Reach for `fork` only when the task genuinely depends on par
 The cleanest implementation shells out to `pi` as a subprocess. This sidesteps the complexity of embedding pi-in-pi and gives you natural isolation.
 
 ```ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 
