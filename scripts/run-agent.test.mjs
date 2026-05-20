@@ -1,9 +1,11 @@
 // run-agent.test.mjs — source-level assertions for the --inherit-pty flag in
 // run-agent.mjs (Slice 5: replace PI_MESH_PEER env var) and
 // Slice 6: --debug flag + drop env-var fallbacks.
+// Issue #137 regression: --debug after the -- separator must be consumed by
+// the runner (not forwarded to pi).
 //
-// Contract: pure file-content assertions; no exec, no model API calls, no network.
-// Hermetic by construction — reads the sibling source file and pattern-matches.
+// Contract: no exec, no model API calls, no network.
+// Hermetic by construction — reads/imports the sibling source file.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -12,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(path.join(__dirname, "run-agent.mjs"), "utf8");
+
+import { parseArgs } from "./run-agent.mjs";
 
 describe("run-agent.mjs — --inherit-pty flag parsing", () => {
   it("initialises inheritPty: false in the parseArgs output object", () => {
@@ -79,5 +83,24 @@ describe("run-agent.mjs — --debug flag parsing (Slice 6)", () => {
 
   it("does not reference PI_AGENT_BUS_ROOT (Slice 6: env-var fallback dropped)", () => {
     expect(SRC).not.toMatch(/PI_AGENT_BUS_ROOT/);
+  });
+});
+
+describe("run-agent.mjs — --debug after the -- separator (Issue #137 regression)", () => {
+  it("--debug after -- sets debug: true and is NOT forwarded to pi", () => {
+    const result = parseArgs(["deferred-writer", "--", "--debug"]);
+    expect(result.debug).toBe(true);
+    expect(result.passthrough).not.toContain("--debug");
+  });
+
+  it("--debug after -- with other passthrough args preserves the rest", () => {
+    const result = parseArgs(["deferred-writer", "--", "--debug", "-p", "hello"]);
+    expect(result.debug).toBe(true);
+    expect(result.passthrough).toEqual(["-p", "hello"]);
+  });
+
+  it("--debug before -- still works (pre-separator position unchanged)", () => {
+    const result = parseArgs(["deferred-writer", "--debug"]);
+    expect(result.debug).toBe(true);
   });
 });

@@ -31,7 +31,11 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (passthroughOnly) {
-      out.passthrough.push(a);
+      if (a === "--debug") {
+        out.debug = true;
+      } else {
+        out.passthrough.push(a);
+      }
       continue;
     }
     if (a === "--") {
@@ -55,6 +59,8 @@ function parseArgs(argv) {
   }
   return out;
 }
+
+export { parseArgs };
 
 function printHelp() {
   process.stdout.write(
@@ -211,6 +217,8 @@ function loadPromptFragments(extensionNames, hasSupervisoryHabitat = false) {
   return fragments;
 }
 
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+if (isMain) {
 const args = parseArgs(process.argv.slice(2));
 if (!args.name) {
   listAgents();
@@ -473,3 +481,4 @@ if (isTTY && !isPrintMode && !isInsideManagedPty) {
     else process.exit(code ?? 0);
   });
 }
+} // end isMain
