@@ -1,14 +1,20 @@
 // recipe-loader.ts — engine pi extension that implements `pi --recipe <name>`.
 //
 // Registers the --recipe flag. On session_start, if --recipe is set:
-//   1. Resolves the recipe YAML from the bundled recipes directory or cwd.
-//   2. Resolves the model (tier var or literal ID).
-//   3. Builds a Habitat and calls setHabitat.
-//   4. Calls pi.setModel and pi.setActiveTools.
+//   1. Resolves the recipe YAML (project → global → bundled precedence).
+//   2. Resolves skills to absolute directory paths.
+//   3. Resolves the model (tier var or literal ID).
+//   4. Builds a Habitat and calls setHabitat.
+//   5. Calls pi.setModel and pi.setActiveTools.
+//
+// On before_agent_start, if --recipe is set:
+//   6. Assembles the full system prompt (extension fragments + recipe prompt).
 //
 // If --recipe is NOT set, this extension is inert: it returns immediately,
 // leaving pi in its default configuration (loaded-but-inert guarantee per ADR-0010).
 
+import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -16,11 +22,52 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { buildHabitat } from "../lib/build-habitat.js";
 import { resolveRecipe } from "../lib/resolve-recipe.js";
 import { resolveModel } from "../lib/resolve-model.js";
+import { resolveSkills } from "../lib/resolve-skills.js";
+import { assemblePrompt } from "../lib/assemble-prompt.js";
 import { setHabitat } from "../lib/habitat-glue.js";
 
-// Bundled recipes directory — ships with the package.
+// Bundled recipes/templates/skills directories — ship with the package.
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUNDLED_RECIPES_DIR = path.join(PACKAGE_DIR, "agent", "recipes");
+const BUNDLED_TEMPLATES_DIR = path.join(PACKAGE_DIR, "agent", "templates");
+const BUNDLED_SKILLS_DIR = path.join(PACKAGE_DIR, "agent", "skills");
+const BUNDLED_EXTENSIONS_DIR = path.join(PACKAGE_DIR, "agent", "extensions");
+
+/**
+ * Returns the precedence-ordered list of recipe directories:
+ * project (<cwd>/.pi/recipes/) → global (~/.pi/agent/recipes/) → bundled.
+ */
+function getRecipeDirs(cwd: string): string[] {
+  return [
+    path.join(cwd, ".pi", "recipes"),
+    path.join(os.homedir(), ".pi", "agent", "recipes"),
+    BUNDLED_RECIPES_DIR,
+  ];
+}
+
+/**
+ * Returns the precedence-ordered list of template directories:
+ * project (<cwd>/.pi/templates/) → global (~/.pi/agent/templates/) → bundled.
+ */
+function getTemplateDirs(cwd: string): string[] {
+  return [
+    path.join(cwd, ".pi", "templates"),
+    path.join(os.homedir(), ".pi", "agent", "templates"),
+    BUNDLED_TEMPLATES_DIR,
+  ];
+}
+
+/**
+ * Returns the precedence-ordered list of skill directories:
+ * project (<cwd>/.pi/skills/) → global (~/.pi/agent/skills/) → bundled.
+ */
+function getSkillDirs(cwd: string): string[] {
+  return [
+    path.join(cwd, ".pi", "skills"),
+    path.join(os.homedir(), ".pi", "agent", "skills"),
+    BUNDLED_SKILLS_DIR,
+  ];
+}
 
 /**
  * Find a model in the registry by a `provider/model-id` string.
@@ -41,9 +88,23 @@ function findModelByString(
   return ctx.modelRegistry.find(provider, modelId);
 }
 
+/**
+ * Reads an extension fragment file for the given extension name.
+ * Returns the trimmed contents, or null if the file does not exist.
+ */
+function readExtensionFragment(extName: string): string | null {
+  const fragmentPath = path.join(BUNDLED_EXTENSIONS_DIR, `${extName}.prompt.md`);
+  if (!existsSync(fragmentPath)) return null;
+  try {
+    return readFileSync(fragmentPath, "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
 export default function recipeLoader(pi: ExtensionAPI) {
   pi.registerFlag("recipe", {
-    description: "Name of the recipe to load from bundled recipes or <cwd>/.pi/recipes/",
+    description: "Name of the recipe to load from <cwd>/.pi/recipes/, ~/.pi/agent/recipes/, or bundled recipes",
     type: "string",
   });
 
@@ -53,30 +114,36 @@ export default function recipeLoader(pi: ExtensionAPI) {
     // Loaded-but-inert: no --recipe flag → do nothing.
     if (!recipeName) return;
 
-    // ── Resolve the recipe ────────────────────────────────────────────────────
+    // ── Resolve the recipe (project → global → bundled) ───────────────────────
 
-    // Resolution order: <cwd>/.pi/recipes/ → bundled-in-package.
+    const recipeDirs = getRecipeDirs(ctx.cwd);
+    const templateDirs = getTemplateDirs(ctx.cwd);
+
     let recipe;
-    let recipesDir: string;
-
-    const localRecipesDir = path.join(ctx.cwd, ".pi", "recipes");
     try {
-      recipe = resolveRecipe(recipeName, { recipesDir: localRecipesDir });
-      recipesDir = localRecipesDir;
-    } catch {
-      try {
-        recipe = resolveRecipe(recipeName, { recipesDir: BUNDLED_RECIPES_DIR });
-        recipesDir = BUNDLED_RECIPES_DIR;
-      } catch (e) {
-        ctx.ui.notify(
-          `recipe-loader: recipe '${recipeName}' not found in ${localRecipesDir} or ${BUNDLED_RECIPES_DIR}: ${(e as Error).message}`,
-          "error",
-        );
-        return;
-      }
+      recipe = resolveRecipe(recipeName, { recipeDirs, templateDirs });
+    } catch (e) {
+      ctx.ui.notify(
+        `recipe-loader: ${(e as Error).message}`,
+        "error",
+      );
+      return;
     }
 
-    void recipesDir; // used for future extends: resolution
+    // ── Resolve skills ────────────────────────────────────────────────────────
+
+    if (recipe.skills.length > 0) {
+      const skillDirs = getSkillDirs(ctx.cwd);
+      try {
+        const resolvedSkillPaths = resolveSkills(recipe.skills, skillDirs);
+        // Skills are stored as absolute paths in the Habitat; we pass them through
+        // by updating the recipe's skills array before building the Habitat.
+        recipe = { ...recipe, skills: resolvedSkillPaths };
+      } catch (e) {
+        ctx.ui.notify(`recipe-loader: ${(e as Error).message}`, "warning");
+        // Continue without resolved skills — non-fatal.
+      }
+    }
 
     // ── Resolve the model ─────────────────────────────────────────────────────
 
@@ -142,30 +209,50 @@ export default function recipeLoader(pi: ExtensionAPI) {
     }
   });
 
-  // Inject the recipe's system prompt for every agent turn when a recipe is active.
-  pi.on("before_agent_start", async (event, ctx) => {
+  // Inject the assembled system prompt for every agent turn when a recipe is active.
+  pi.on("before_agent_start", async (_event, ctx) => {
     const recipeName = (pi.getFlag("recipe") as string | undefined)?.trim();
     if (!recipeName) return undefined;
 
     // Re-resolve the recipe each time to keep this handler pure.
     // This is fast (disk read) and avoids module-level state.
+    const recipeDirs = getRecipeDirs(ctx.cwd);
+    const templateDirs = getTemplateDirs(ctx.cwd);
+
     let recipe;
-    const localRecipesDir = path.join(ctx.cwd, ".pi", "recipes");
     try {
-      recipe = resolveRecipe(recipeName, { recipesDir: localRecipesDir });
+      recipe = resolveRecipe(recipeName, { recipeDirs, templateDirs });
     } catch {
-      try {
-        recipe = resolveRecipe(recipeName, { recipesDir: BUNDLED_RECIPES_DIR });
-      } catch {
-        return undefined;
-      }
+      return undefined;
     }
 
     if (!recipe.prompt) return undefined;
 
-    // Replace the system prompt with the recipe's prompt.
-    return {
-      systemPrompt: recipe.prompt,
-    };
+    // Determine supervisory status from the current Habitat (if set).
+    // Import lazily to avoid circular issues; getHabitat may return null when
+    // the extension is loaded but session_start hasn't run yet.
+    let hasSupervisoryHabitat = false;
+    try {
+      const { getHabitat } = await import("../lib/habitat-glue.js");
+      const habitat = getHabitat();
+      if (habitat) {
+        hasSupervisoryHabitat =
+          Boolean(habitat.supervisor) ||
+          Boolean(habitat.submitTo) ||
+          (Array.isArray(habitat.acceptedFrom) && habitat.acceptedFrom.length > 0);
+      }
+    } catch {
+      // habitat-glue not available — treat as non-supervisory
+    }
+
+    // Assemble the full system prompt with extension fragments.
+    const systemPrompt = assemblePrompt({
+      extensionNames: recipe.extensions,
+      recipePrompt: recipe.prompt,
+      hasSupervisoryHabitat,
+      readFragment: readExtensionFragment,
+    });
+
+    return { systemPrompt };
   });
 }
