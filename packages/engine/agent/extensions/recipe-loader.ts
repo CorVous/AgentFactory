@@ -143,14 +143,14 @@ export default function recipeLoader(pi: ExtensionAPI) {
   });
 
   // Inject the recipe's system prompt for every agent turn when a recipe is active.
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     const recipeName = (pi.getFlag("recipe") as string | undefined)?.trim();
     if (!recipeName) return undefined;
 
     // Re-resolve the recipe each time to keep this handler pure.
     // This is fast (disk read) and avoids module-level state.
     let recipe;
-    const localRecipesDir = path.join(process.cwd(), ".pi", "recipes");
+    const localRecipesDir = path.join(ctx.cwd, ".pi", "recipes");
     try {
       recipe = resolveRecipe(recipeName, { recipesDir: localRecipesDir });
     } catch {
