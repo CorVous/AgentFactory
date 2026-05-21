@@ -7,7 +7,17 @@
   "license": "MIT",
   "pi": {
     "name": "pi-engine",
-    "extensions": ["agent/extensions/recipe-loader.ts"]
+    "extensions": [
+      "agent/extensions/recipe-loader.ts",
+      "agent/extensions/agent-bus.ts",
+      "agent/extensions/supervisor.ts",
+      "agent/extensions/intercept.ts",
+      "agent/extensions/launcher-bridge.ts",
+      "agent/extensions/bus-tail-emitter.ts",
+      "agent/extensions/mesh-rail.ts",
+      "agent/extensions/slash-commands.ts",
+      "agent/extensions/mesh-authority.ts"
+    ]
   },
   "exports": {
     "./lib/*": "./agent/lib/*"
@@ -19,6 +29,7 @@
     "@earendil-works/pi-coding-agent": "^0.75.4"
   },
   "dependencies": {
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.3",
+    "typebox": "*"
   }
 }
