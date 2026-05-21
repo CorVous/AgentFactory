@@ -210,15 +210,16 @@ function handleIncoming(state: BusState, env: Envelope) {
   // mesh_kill sends a shutdown that must still be honoured).
   if (kind === "shutdown") {
     // Best-effort graceful shutdown: abort the current turn if possible, then exit.
+    const api = state.pi as unknown as
+      | { abort?: () => void; shutdown?: () => void }
+      | undefined;
     try {
-      if ((pi as unknown as { abort?: () => void }).abort) {
-        (pi as unknown as { abort: () => void }).abort();
-      }
+      api?.abort?.();
     } catch { /* noop */ }
     setTimeout(() => {
       try {
-        if ((pi as unknown as { shutdown?: () => void }).shutdown) {
-          (pi as unknown as { shutdown: () => void }).shutdown();
+        if (api?.shutdown) {
+          api.shutdown();
         } else {
           process.exit(0);
         }
