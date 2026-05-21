@@ -5,7 +5,7 @@
 // getHabitat(); falls back gracefully when Habitat is unavailable.
 //
 // NOTE: This file is COPIED from pi-sandbox/.pi/extensions/agent-header.ts.
-// The pi-sandbox copy remains for run-agent.mjs compatibility until Slice 7.
+// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";

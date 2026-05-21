@@ -3,7 +3,7 @@
 // whose `path` argument resolves outside the sandbox root.
 //
 // NOTE: This file is COPIED from pi-sandbox/.pi/extensions/sandbox.ts.
-// The pi-sandbox copy remains for run-agent.mjs compatibility until Slice 7.
+// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
 
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

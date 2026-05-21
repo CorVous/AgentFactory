@@ -12,7 +12,7 @@
 // while a dialog is open, the dialog is cancelled via AbortController and the
 // original envelope prompt is re-injected to the LLM as a fresh turn.
 //
-// Auto-loaded by run-agent.mjs alongside supervisor.ts when any supervisory
+// Auto-loaded by the engine alongside supervisor.ts when any supervisory
 // peer field (acceptedFrom, supervisor, submitTo) is set.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";

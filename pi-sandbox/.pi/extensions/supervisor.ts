@@ -1,7 +1,7 @@
 // supervisor extension — inbound rail for approval-request and submission
 // envelopes, plus the respond_to_request tool.
 //
-// Loaded as a baseline extension by run-agent.mjs for every agent. Both
+// Loaded as a baseline extension by the engine for every recipe. Both
 // this extension and intercept self-gate via getHabitat().acceptedFrom —
 // no-ops when the topology assigns no inbound peers. Registers a globalThis
 // hook so agent-bus.ts can forward typed inbound envelopes here instead of

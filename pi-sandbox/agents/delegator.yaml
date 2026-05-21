@@ -6,10 +6,10 @@
 # unified end-of-turn approval.
 #
 # `agents:` declares the closed allowlist of recipes this delegator
-# can spawn. The runner (scripts/run-agent.mjs) auto-loads the
+# can spawn. The engine's recipe-loader auto-loads the
 # atomic-delegate extension and wires the `delegate` tool.
 #
-# Run: npm run agent -- delegator --sandbox /tmp/p
+# Run: pi --recipe delegator --sandbox /tmp/p
 #   > "delegate to recipe peer-chatter with task 'list files in cwd'"
 #   > "delegate to recipe deferred-writer with task 'draft README.md'"
 

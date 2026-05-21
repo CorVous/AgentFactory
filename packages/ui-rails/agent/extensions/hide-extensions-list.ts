@@ -2,7 +2,7 @@
 // section from the chat history at startup.
 //
 // NOTE: This file is COPIED from pi-sandbox/.pi/extensions/hide-extensions-list.ts.
-// The pi-sandbox copy remains for run-agent.mjs compatibility until Slice 7.
+// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";

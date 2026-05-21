@@ -1,4 +1,4 @@
-// recipe-validation.mjs — helpers extracted from run-agent.mjs for testability.
+// recipe-validation.mjs — recipe validation helpers used by launch-mesh.mjs.
 //
 // rejectDeprecatedPeerFields: fails loudly if a recipe declares any of the
 //   four peer-relationship fields that were deleted in #112. These fields have

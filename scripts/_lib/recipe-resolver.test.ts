@@ -400,8 +400,9 @@ const REAL_FS_CONTEXT = {
 };
 
 // The peer template's extension chain in declaration order.
+// `habitat` was removed in Slice 7 (ADR-0010): the engine's recipe-loader
+// builds and sets the Habitat directly; no explicit habitat extension needed.
 const PEER_TEMPLATE_EXTENSIONS = [
-  "habitat",
   "sandbox",
   "no-startup-help",
   "agent-header",

@@ -5,7 +5,7 @@
 // discarded.
 //
 // NOTE: This file is COPIED from pi-sandbox/.pi/extensions/deferred-write.ts.
-// The pi-sandbox copy remains for run-agent.mjs compatibility until Slice 7.
+// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";

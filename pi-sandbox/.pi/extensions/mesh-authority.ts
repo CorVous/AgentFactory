@@ -25,9 +25,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { generateInstanceName } from "./_lib/agent-naming.js";
 import { getHabitat } from "./_lib/habitat";
+// Slice 7 / ADR-0010: mesh_spawn now spawns `pi --recipe` (same pattern as atomic-delegate).
+import { buildRecipeChildArgv, resolvePiBin, resolveRepoRoot } from "@agentfactory/pi-engine/lib/child-spawn.mjs";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
-const RUNNER_PATH = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
+const REPO_ROOT = resolveRepoRoot();
+const PI_BIN = resolvePiBin(REPO_ROOT);
 
 const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 
@@ -137,10 +139,10 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      if (!existsSync(RUNNER_PATH)) {
+      if (!existsSync(PI_BIN)) {
         return {
-          content: [{ type: "text", text: `mesh_spawn: runner missing at ${RUNNER_PATH}.` }],
-          details: { spawned: false, reason: "runner not found" },
+          content: [{ type: "text", text: `mesh_spawn: pi binary missing at ${PI_BIN}.` }],
+          details: { spawned: false, reason: "pi not found" },
         };
       }
 
@@ -151,30 +153,21 @@ export default function (pi: ExtensionAPI) {
 
       const busRoot = getHabitat().busRoot;
 
-      const args = [
-        RUNNER_PATH,
-        params.recipe,
-        "--sandbox",
+      // Slice 7 / ADR-0010: spawn `pi --recipe <recipe>` instead of the deleted run-agent.mjs.
+      const childArgs = buildRecipeChildArgv({
+        piBin: PI_BIN,
+        recipe: params.recipe,
         sandbox,
-        "--agent-bus",
         busRoot,
-        "--",
-        "--agent-name",
-        instanceName,
-        "--mode",
-        "rpc",
-      ];
+        agentName: instanceName,
+        task: params.task,
+      });
 
-      const child = spawn(process.execPath, args, {
+      const child = spawn(process.execPath, childArgs, {
         cwd: REPO_ROOT,
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env },
       });
-
-      // Send the initial task as the first RPC prompt command.
-      if (params.task) {
-        child.stdin!.write(JSON.stringify({ type: "prompt", message: params.task }) + "\n");
-      }
 
       const node: SpawnedNode = {
         name: instanceName,

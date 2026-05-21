@@ -383,8 +383,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
     });
 
     // --task text (from launch-mesh / atomic-delegate) is appended to the
-    // assembled system prompt as per-instance role context, matching the
-    // semantics of run-agent.mjs's `taskText` handling.
+    // assembled system prompt as per-instance role context.
     const taskFlag = (pi.getFlag("task") as string | undefined)?.trim();
     if (taskFlag) {
       systemPrompt = `${systemPrompt}\n\n${taskFlag}`;

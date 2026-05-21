@@ -3,7 +3,7 @@
 // ones. Drop this extension from a recipe to allow overwrite/edit.
 //
 // NOTE: This file is COPIED from pi-sandbox/.pi/extensions/no-edit.ts.
-// The pi-sandbox copy remains for run-agent.mjs compatibility until Slice 7.
+// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
 
 import fs from "node:fs";
 import path from "node:path";

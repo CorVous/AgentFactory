@@ -50,7 +50,7 @@ export interface BuildHabitatOptions {
 /**
  * Merge a JSON topology-overlay string into existing HabitatOptions fields.
  *
- * Mirrors the semantics of run-agent.mjs's overlay merge:
+ * Overlay merge semantics:
  *   - supervisor / submitTo: overrides when the overlay has a non-empty string value.
  *   - acceptedFrom / peers: overrides when the overlay array is non-empty.
  *   - agents: overrides (even with empty array) when the field is present in the overlay.

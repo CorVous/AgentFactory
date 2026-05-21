@@ -7,8 +7,8 @@
 //
 // busRoot and agentName are read from getHabitat() (materialised by the
 // habitat baseline extension before this session_start runs). The
-// resolution chain (--agent-bus → default) happens in scripts/run-agent.mjs
-// and lands as Habitat.busRoot. The bus root
+// resolution chain (--agent-bus → default) is resolved by the engine's
+// recipe-loader and lands as Habitat.busRoot. The bus root
 // deliberately lives outside scratchRoot so the sandbox extension's
 // path rejection doesn't trip on socket paths; the bus extension only
 // opens sockets, never invokes path-bearing tools, so the sandbox

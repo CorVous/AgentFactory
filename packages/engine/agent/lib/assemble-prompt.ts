@@ -4,7 +4,7 @@
 // Pure: no file I/O. Fragment reading is injected via the `readFragment` callback
 // so this module remains hermetic and fully unit-testable.
 //
-// Conditional gating rules (ported from loadPromptFragments in scripts/run-agent.mjs):
+// Conditional gating rules:
 //   - `deferred-confirm` fragment is only prepended when at least one other
 //     `deferred-*` extension (i.e. not `deferred-confirm` itself) is active.
 //     Rationale: the fragment documents apply-order and atomic batch semantics,

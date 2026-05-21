@@ -1,7 +1,6 @@
 // recipe-resolver.mjs — resolves a named agent recipe into an effective recipe
-// descriptor. The runner (scripts/run-agent.mjs) calls resolveRecipe() as the
-// sole source of the extension list (Slice 3 cutover); no duplicate JS-baseline
-// arrays remain in the runner.
+// descriptor. Used by launch-mesh.mjs; the engine's recipe-loader.ts is the
+// canonical pi --recipe resolver for single-agent launches (Slice 7 / ADR-0010).
 //
 // Exports a single named function: resolveRecipe(name, fsContext) → effectiveRecipe
 //
@@ -206,7 +205,7 @@ export function resolveRecipe(name, fsContext) {
     }
   }
 
-  // ── Step 4: Implicit-wires (mirror applyAgentsField in run-agent.mjs) ─────
+  // ── Step 4: Implicit-wires (agents field auto-wires atomic-delegate) ──────
 
   const declaredAgents = Array.isArray(recipe.agents)
     ? recipe.agents.filter((a) => typeof a === "string")
