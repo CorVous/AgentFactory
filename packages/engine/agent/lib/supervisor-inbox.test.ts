@@ -27,16 +27,16 @@ import {
 const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 
 const BASE_HABITAT: Habitat = {
-  agentName: "supervisor",
+  instanceName: "supervisor",
   scratchRoot: "/tmp/scratch",
   busRoot: "/tmp/bus",
   skills: [],
-  agents: [],
+  spawns: [],
   debug: false,
-  acceptedFrom: ["worker-a", "worker-b"],
-  peers: [],
+  acceptsWorkFrom: ["worker-a", "worker-b"],
+  messagesWith: [],
   supervisor: undefined,
-  submitTo: undefined,
+  submitsWorkTo: undefined,
 };
 
 const WRITE_ARTIFACT: Artifact = {
@@ -201,7 +201,7 @@ describe("dispatchEnvelope — acceptedFrom", () => {
   });
 
   it("passes when acceptedFrom is empty (no peers allowed)", () => {
-    setHabitat({ ...BASE_HABITAT, acceptedFrom: [] });
+    setHabitat({ ...BASE_HABITAT, acceptsWorkFrom: [] });
     const inbox = createSupervisorInbox();
     const env = makeApprovalRequestEnvelope({
       from: "worker-a",

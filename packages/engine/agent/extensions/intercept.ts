@@ -405,9 +405,9 @@ export default function (pi: ExtensionAPI) {
     let agentName = "unknown";
     try {
       const h = getHabitat();
-      acceptedFrom = h.acceptedFrom;
+      acceptedFrom = h.acceptsWorkFrom;
       busRoot = h.busRoot;
-      agentName = h.agentName;
+      agentName = h.instanceName;
     } catch {
       /* Habitat not yet available */
     }

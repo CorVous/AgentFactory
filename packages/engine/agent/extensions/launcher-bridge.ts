@@ -103,7 +103,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const habitat = getHabitat();
     const busRoot = habitat.busRoot;
-    const agentName = habitat.agentName;
+    const agentName = habitat.instanceName;
 
     if (!busRoot) {
       // No bus root configured — standalone mode, skip silently.

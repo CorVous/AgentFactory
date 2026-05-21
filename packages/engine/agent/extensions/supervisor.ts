@@ -245,7 +245,7 @@ export default function (pi: ExtensionAPI) {
 
     try {
       const h = getHabitat();
-      state.agentName = h.agentName;
+      state.agentName = h.instanceName;
       state.busRoot = h.busRoot;
       // Replace inbox with a fresh one for this session
       state.inbox = createSupervisorInbox();

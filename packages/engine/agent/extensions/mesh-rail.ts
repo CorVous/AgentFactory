@@ -24,7 +24,7 @@ export default function (pi: ExtensionAPI) {
 
     let peerName: string;
     try {
-      peerName = getHabitat().agentName;
+      peerName = getHabitat().instanceName;
     } catch {
       // Habitat not materialised — degrade silently (defensive; the runner
       // always loads habitat first, so this branch should not normally hit).

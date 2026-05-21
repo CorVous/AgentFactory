@@ -36,7 +36,7 @@ prompt: |
     files from your sandbox if it needs them.
   - Summarise what each delegation was for in your reply.
 
-agents:
+spawns:
   - change-reviewer
   - code-reviewer
   - deferred-author

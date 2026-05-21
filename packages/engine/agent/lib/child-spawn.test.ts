@@ -13,7 +13,7 @@ describe("buildRecipeChildArgv — required flags", () => {
       recipe: "deferred-writer",
       sandbox: "/tmp/sandbox",
       busRoot: "/tmp/bus",
-      agentName: "cottontail-writer",
+      instanceName: "cottontail-writer",
     });
     expect(argv[0]).toBe(FAKE_PI_BIN);
   });
@@ -24,7 +24,7 @@ describe("buildRecipeChildArgv — required flags", () => {
       recipe: "mesh-authority",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "hare-authority",
+      instanceName: "hare-authority",
     });
     const recipeIdx = argv.indexOf("--recipe");
     expect(recipeIdx).toBeGreaterThanOrEqual(0);
@@ -40,33 +40,33 @@ describe("buildRecipeChildArgv — required flags", () => {
       recipe: "r",
       sandbox: "/tmp/my-sandbox",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
     });
     const idx = argv.indexOf("--sandbox");
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(argv[idx + 1]).toBe("/tmp/my-sandbox");
   });
 
-  it("includes --agent-bus with its value", () => {
+  it("includes --peer-bus with its value", () => {
     const argv = buildRecipeChildArgv({
       piBin: FAKE_PI_BIN,
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/my-bus",
-      agentName: "a",
+      instanceName: "a",
     });
-    const idx = argv.indexOf("--agent-bus");
+    const idx = argv.indexOf("--peer-bus");
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(argv[idx + 1]).toBe("/tmp/my-bus");
   });
 
-  it("includes --peer-name with agentName", () => {
+  it("includes --peer-name with instanceName", () => {
     const argv = buildRecipeChildArgv({
       piBin: FAKE_PI_BIN,
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "my-worker",
+      instanceName: "my-worker",
     });
     const idx = argv.indexOf("--peer-name");
     expect(idx).toBeGreaterThanOrEqual(0);
@@ -81,7 +81,7 @@ describe("buildRecipeChildArgv — optional flags omitted when unset", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
     });
     expect(argv).not.toContain("--topology-overlay");
   });
@@ -92,7 +92,7 @@ describe("buildRecipeChildArgv — optional flags omitted when unset", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
     });
     expect(argv).not.toContain("--task");
   });
@@ -103,7 +103,7 @@ describe("buildRecipeChildArgv — optional flags omitted when unset", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
     });
     expect(argv).not.toContain("--inherit-pty");
   });
@@ -114,7 +114,7 @@ describe("buildRecipeChildArgv — optional flags omitted when unset", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
     });
     expect(argv).not.toContain("--debug");
   });
@@ -125,7 +125,7 @@ describe("buildRecipeChildArgv — optional flags omitted when unset", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
     });
     expect(argv).not.toContain("-p");
   });
@@ -139,7 +139,7 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
       topologyOverlay: overlay,
     });
     const idx = argv.indexOf("--topology-overlay");
@@ -156,7 +156,7 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
       task: "draft hello.txt",
     });
     const idx = argv.indexOf("--task");
@@ -170,7 +170,7 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
       inheritPty: true,
     });
     const idx = argv.indexOf("--inherit-pty");
@@ -187,7 +187,7 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
       debug: true,
     });
     const idx = argv.indexOf("--debug");
@@ -202,7 +202,7 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
       recipe: "r",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "a",
+      instanceName: "a",
       printPrompt: "draft two files",
     });
     const idx = argv.indexOf("-p");
@@ -212,13 +212,13 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
 });
 
 describe("buildRecipeChildArgv — stable ordering", () => {
-  it("maintains stable ordering: piBin, --recipe, --sandbox, --agent-bus, --peer-name, optionals", () => {
+  it("maintains stable ordering: piBin, --recipe, --sandbox, --peer-bus, --peer-name, optionals", () => {
     const argv = buildRecipeChildArgv({
       piBin: FAKE_PI_BIN,
       recipe: "deferred-writer",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
-      agentName: "cottontail-writer",
+      instanceName: "cottontail-writer",
       topologyOverlay: '{"supervisor":"boss"}',
       task: "do something",
       inheritPty: true,
@@ -229,7 +229,7 @@ describe("buildRecipeChildArgv — stable ordering", () => {
     const piBinIdx = argv.indexOf(FAKE_PI_BIN);
     const recipeIdx = argv.indexOf("--recipe");
     const sandboxIdx = argv.indexOf("--sandbox");
-    const busIdx = argv.indexOf("--agent-bus");
+    const busIdx = argv.indexOf("--peer-bus");
     const peerNameIdx = argv.indexOf("--peer-name");
     const overlayIdx = argv.indexOf("--topology-overlay");
     const taskIdx = argv.indexOf("--task");

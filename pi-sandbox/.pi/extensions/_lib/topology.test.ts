@@ -23,7 +23,7 @@ groups:
   workers: [worker-a, worker-b]
 group_bindings:
   workers:
-    supervisor: authority
+    escalatesTo: authority
 nodes:
   - name: authority
     recipe: mesh-authority
@@ -35,7 +35,7 @@ nodes:
     const topo = parseTopology(yaml);
     expect(topo.bus_root).toBe("/tmp/test-bus");
     expect(topo.groups).toEqual({ workers: ["worker-a", "worker-b"] });
-    expect(topo.group_bindings?.workers?.supervisor).toBe("authority");
+    expect(topo.group_bindings?.workers?.escalatesTo).toBe("authority");
     expect(topo.nodes).toHaveLength(3);
   });
 
@@ -44,17 +44,17 @@ nodes:
 nodes:
   - name: worker
     recipe: mesh-node
-    supervisor: authority
-    submitTo: collector
-    acceptedFrom: [planner]
-    peers: [analyst]
+    escalatesTo: authority
+    submitsWorkTo: collector
+    acceptsWorkFrom: [planner]
+    messagesWith: [analyst]
 `;
     const topo = parseTopology(yaml);
     const node = topo.nodes[0];
-    expect(node.supervisor).toBe("authority");
-    expect(node.submitTo).toBe("collector");
-    expect(node.acceptedFrom).toEqual(["planner"]);
-    expect(node.peers).toEqual(["analyst"]);
+    expect(node.escalatesTo).toBe("authority");
+    expect(node.submitsWorkTo).toBe("collector");
+    expect(node.acceptsWorkFrom).toEqual(["planner"]);
+    expect(node.messagesWith).toEqual(["analyst"]);
   });
 
   it("rejects duplicate node names", () => {
@@ -94,14 +94,14 @@ nodes:
     recipe: mesh-authority
   - recipe: mesh-node
   - recipe: mesh-node
-    supervisor: authority
+    escalatesTo: authority
 `;
     const topo = parseTopology(yaml);
     expect(topo.nodes).toHaveLength(3);
     expect(topo.nodes[0].name).toBe("authority");
     expect(topo.nodes[1].name).toBeUndefined();
     expect(topo.nodes[2].name).toBeUndefined();
-    expect(topo.nodes[2].supervisor).toBe("authority");
+    expect(topo.nodes[2].escalatesTo).toBe("authority");
   });
 
   it("still rejects duplicate names among named nodes when unnamed nodes are also present", () => {
@@ -169,10 +169,10 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "worker");
-    expect(resolved.acceptedFrom).toEqual([]);
-    expect(resolved.peers).toEqual([]);
-    expect(resolved.supervisor).toBeUndefined();
-    expect(resolved.submitTo).toBeUndefined();
+    expect(resolved.acceptsWorkFrom).toEqual([]);
+    expect(resolved.messagesWith).toEqual([]);
+    expect(resolved.escalatesTo).toBeUndefined();
+    expect(resolved.submitsWorkTo).toBeUndefined();
   });
 
   it("returns per-node overlay fields verbatim when no group refs", () => {
@@ -180,10 +180,10 @@ nodes:
 nodes:
   - name: worker
     recipe: mesh-node
-    supervisor: authority
-    submitTo: collector
-    acceptedFrom: [planner]
-    peers: [analyst]
+    escalatesTo: authority
+    submitsWorkTo: collector
+    acceptsWorkFrom: [planner]
+    messagesWith: [analyst]
   - name: authority
     recipe: mesh-authority
   - name: collector
@@ -195,20 +195,20 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "worker");
-    expect(resolved.supervisor).toBe("authority");
-    expect(resolved.submitTo).toBe("collector");
-    expect(resolved.acceptedFrom).toEqual(["planner"]);
-    expect(resolved.peers).toEqual(["analyst"]);
+    expect(resolved.escalatesTo).toBe("authority");
+    expect(resolved.submitsWorkTo).toBe("collector");
+    expect(resolved.acceptsWorkFrom).toEqual(["planner"]);
+    expect(resolved.messagesWith).toEqual(["analyst"]);
   });
 
-  it("expands @group refs in peers", () => {
+  it("expands @group refs in messagesWith", () => {
     const yaml = `
 groups:
   team: [alice, bob]
 nodes:
   - name: planner
     recipe: mesh-authority
-    peers: ["@team"]
+    messagesWith: ["@team"]
   - name: alice
     recipe: mesh-node
   - name: bob
@@ -216,17 +216,17 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "planner");
-    expect(resolved.peers).toEqual(["alice", "bob"]);
+    expect(resolved.messagesWith).toEqual(["alice", "bob"]);
   });
 
-  it("expands @group refs in acceptedFrom", () => {
+  it("expands @group refs in acceptsWorkFrom", () => {
     const yaml = `
 groups:
   workers: [w1, w2, w3]
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
   - name: w1
     recipe: mesh-node
   - name: w2
@@ -236,7 +236,7 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "authority");
-    expect(resolved.acceptedFrom).toEqual(["w1", "w2", "w3"]);
+    expect(resolved.acceptsWorkFrom).toEqual(["w1", "w2", "w3"]);
   });
 
   it("expands mixed literal + @group refs", () => {
@@ -246,7 +246,7 @@ groups:
 nodes:
   - name: authority
     recipe: mesh-authority
-    peers: [extra, "@workers"]
+    messagesWith: [extra, "@workers"]
   - name: extra
     recipe: mesh-node
   - name: w1
@@ -256,16 +256,16 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "authority");
-    expect(resolved.peers).toEqual(["extra", "w1", "w2"]);
+    expect(resolved.messagesWith).toEqual(["extra", "w1", "w2"]);
   });
 
-  it("applies group_bindings to members — supervisor field", () => {
+  it("applies group_bindings to members — escalatesTo field", () => {
     const yaml = `
 groups:
   workers: [w1, w2]
 group_bindings:
   workers:
-    supervisor: authority
+    escalatesTo: authority
 nodes:
   - name: authority
     recipe: mesh-authority
@@ -275,19 +275,19 @@ nodes:
     recipe: mesh-node
 `;
     const topo = parseTopology(yaml);
-    expect(resolveNode(topo, "w1").supervisor).toBe("authority");
-    expect(resolveNode(topo, "w2").supervisor).toBe("authority");
-    expect(resolveNode(topo, "authority").supervisor).toBeUndefined();
+    expect(resolveNode(topo, "w1").escalatesTo).toBe("authority");
+    expect(resolveNode(topo, "w2").escalatesTo).toBe("authority");
+    expect(resolveNode(topo, "authority").escalatesTo).toBeUndefined();
   });
 
-  it("applies group_bindings — submitTo and peers fields", () => {
+  it("applies group_bindings — submitsWorkTo and messagesWith fields", () => {
     const yaml = `
 groups:
   workers: [w1, w2]
 group_bindings:
   workers:
-    submitTo: collector
-    peers: [authority]
+    submitsWorkTo: collector
+    messagesWith: [authority]
 nodes:
   - name: w1
     recipe: mesh-node
@@ -300,8 +300,8 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const w1 = resolveNode(topo, "w1");
-    expect(w1.submitTo).toBe("collector");
-    expect(w1.peers).toEqual(["authority"]);
+    expect(w1.submitsWorkTo).toBe("collector");
+    expect(w1.messagesWith).toEqual(["authority"]);
   });
 
   it("per-node overrides win over group_bindings", () => {
@@ -310,13 +310,13 @@ groups:
   workers: [w1]
 group_bindings:
   workers:
-    supervisor: default-authority
-    peers: [analyst]
+    escalatesTo: default-authority
+    messagesWith: [analyst]
 nodes:
   - name: w1
     recipe: mesh-node
-    supervisor: special-authority
-    peers: [writer]
+    escalatesTo: special-authority
+    messagesWith: [writer]
   - name: default-authority
     recipe: mesh-authority
   - name: special-authority
@@ -328,8 +328,8 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "w1");
-    expect(resolved.supervisor).toBe("special-authority");
-    expect(resolved.peers).toEqual(["writer"]);
+    expect(resolved.escalatesTo).toBe("special-authority");
+    expect(resolved.messagesWith).toEqual(["writer"]);
   });
 
   it("group_bindings can contain @group refs that get expanded", () => {
@@ -339,7 +339,7 @@ groups:
   reviewers: [r1, r2]
 group_bindings:
   workers:
-    peers: ["@reviewers"]
+    messagesWith: ["@reviewers"]
 nodes:
   - name: w1
     recipe: mesh-node
@@ -351,8 +351,8 @@ nodes:
     recipe: mesh-node
 `;
     const topo = parseTopology(yaml);
-    expect(resolveNode(topo, "w1").peers).toEqual(["r1", "r2"]);
-    expect(resolveNode(topo, "w2").peers).toEqual(["r1", "r2"]);
+    expect(resolveNode(topo, "w1").messagesWith).toEqual(["r1", "r2"]);
+    expect(resolveNode(topo, "w2").messagesWith).toEqual(["r1", "r2"]);
   });
 
   it("node in multiple groups picks up all applicable bindings", () => {
@@ -362,9 +362,9 @@ groups:
   submitters: [w1]
 group_bindings:
   workers:
-    supervisor: authority
+    escalatesTo: authority
   submitters:
-    submitTo: collector
+    submitsWorkTo: collector
 nodes:
   - name: w1
     recipe: mesh-node
@@ -375,8 +375,8 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "w1");
-    expect(resolved.supervisor).toBe("authority");
-    expect(resolved.submitTo).toBe("collector");
+    expect(resolved.escalatesTo).toBe("authority");
+    expect(resolved.submitsWorkTo).toBe("collector");
   });
 
   // ── Rejection cases ──────────────────────────────────────────────────────
@@ -386,7 +386,7 @@ nodes:
 nodes:
   - name: planner
     recipe: mesh-authority
-    peers: ["@nonexistent"]
+    messagesWith: ["@nonexistent"]
 `;
     const topo = parseTopology(yaml);
     expect(() => resolveNode(topo, "planner")).toThrow(/group.*nonexistent/i);
@@ -398,7 +398,7 @@ groups:
   workers: [w1]
 group_bindings:
   workers:
-    peers: ["@missing"]
+    messagesWith: ["@missing"]
 nodes:
   - name: w1
     recipe: mesh-node
@@ -407,23 +407,23 @@ nodes:
     expect(() => resolveNode(topo, "w1")).toThrow(/group.*missing/i);
   });
 
-  it("rejects acceptedFrom that references a non-existent node (after expansion)", () => {
+  it("rejects acceptsWorkFrom that references a non-existent node (after expansion)", () => {
     const yaml = `
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: [phantom]
+    acceptsWorkFrom: [phantom]
 `;
     const topo = parseTopology(yaml);
     expect(() => resolveNode(topo, "authority")).toThrow(/node.*phantom/i);
   });
 
-  it("rejects peers that references a non-existent node (after expansion)", () => {
+  it("rejects messagesWith that references a non-existent node (after expansion)", () => {
     const yaml = `
 nodes:
   - name: planner
     recipe: mesh-authority
-    peers: [ghost]
+    messagesWith: [ghost]
 `;
     const topo = parseTopology(yaml);
     expect(() => resolveNode(topo, "planner")).toThrow(/node.*ghost/i);
@@ -446,7 +446,7 @@ nodes:
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
   - name: w1
     recipe: mesh-node
     groups: [workers]
@@ -456,7 +456,7 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "authority");
-    expect(resolved.acceptedFrom).toEqual(["w1", "w2"]);
+    expect(resolved.acceptsWorkFrom).toEqual(["w1", "w2"]);
   });
 
   it("per-node groups can reference a group not declared at top level (implicit group)", () => {
@@ -464,14 +464,14 @@ nodes:
 nodes:
   - name: authority
     recipe: mesh-authority
-    peers: ["@implicit"]
+    messagesWith: ["@implicit"]
   - name: anon-worker
     recipe: mesh-node
     groups: [implicit]
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "authority");
-    expect(resolved.peers).toEqual(["anon-worker"]);
+    expect(resolved.messagesWith).toEqual(["anon-worker"]);
   });
 
   it("mixes top-level and per-node groups for the same group name", () => {
@@ -481,7 +481,7 @@ groups:
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
   - name: w1
     recipe: mesh-node
   - name: w2
@@ -491,14 +491,14 @@ nodes:
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "authority");
     // top-level w1 first, then per-node w2
-    expect(resolved.acceptedFrom).toEqual(["w1", "w2"]);
+    expect(resolved.acceptsWorkFrom).toEqual(["w1", "w2"]);
   });
 
   it("per-node groups triggers group_binding for that node", () => {
     const yaml = `
 group_bindings:
   workers:
-    supervisor: authority
+    escalatesTo: authority
 nodes:
   - name: authority
     recipe: mesh-authority
@@ -508,7 +508,7 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "w1");
-    expect(resolved.supervisor).toBe("authority");
+    expect(resolved.escalatesTo).toBe("authority");
   });
 
   it("anonymous node with groups field does not expand into @group refs (skipped)", () => {
@@ -518,9 +518,9 @@ nodes:
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
   - recipe: mesh-node
-    supervisor: authority
+    escalatesTo: authority
 `;
     // The anonymous node has no `groups:` field; @workers ref should fail.
     const topo = parseTopology(yaml);
@@ -534,16 +534,16 @@ nodes:
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
   - recipe: mesh-node
-    supervisor: authority
+    escalatesTo: authority
     groups: [workers]
 `;
     const topo = parseTopology(yaml);
     // Simulate launcher auto-naming
     topo.nodes[1].name = "cottontail-worker";
     const resolved = resolveNode(topo, "authority");
-    expect(resolved.acceptedFrom).toEqual(["cottontail-worker"]);
+    expect(resolved.acceptsWorkFrom).toEqual(["cottontail-worker"]);
   });
 });
 
@@ -559,10 +559,10 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@reviewers"
+    escalatesTo: "@reviewers"
   - name: w2
     recipe: mesh-node
-    supervisor: "@reviewers"
+    escalatesTo: "@reviewers"
   - name: r1
     recipe: mesh-node
   - name: r2
@@ -572,8 +572,8 @@ nodes:
     const counterStates = new Map();
     const w1 = resolveNode(topo, "w1", counterStates);
     const w2 = resolveNode(topo, "w2", counterStates);
-    expect(w1.supervisor).toBe("r1");
-    expect(w2.supervisor).toBe("r2");
+    expect(w1.escalatesTo).toBe("r1");
+    expect(w2.escalatesTo).toBe("r2");
   });
 
   it("three workers and 2-member group → wrap-around: r1, r2, r1", () => {
@@ -585,13 +585,13 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@reviewers"
+    escalatesTo: "@reviewers"
   - name: w2
     recipe: mesh-node
-    supervisor: "@reviewers"
+    escalatesTo: "@reviewers"
   - name: w3
     recipe: mesh-node
-    supervisor: "@reviewers"
+    escalatesTo: "@reviewers"
   - name: r1
     recipe: mesh-node
   - name: r2
@@ -599,9 +599,9 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const counterStates = new Map();
-    expect(resolveNode(topo, "w1", counterStates).supervisor).toBe("r1");
-    expect(resolveNode(topo, "w2", counterStates).supervisor).toBe("r2");
-    expect(resolveNode(topo, "w3", counterStates).supervisor).toBe("r1");
+    expect(resolveNode(topo, "w1", counterStates).escalatesTo).toBe("r1");
+    expect(resolveNode(topo, "w2", counterStates).escalatesTo).toBe("r2");
+    expect(resolveNode(topo, "w3", counterStates).escalatesTo).toBe("r1");
   });
 
   it("single-member group resolves to that member", () => {
@@ -613,14 +613,14 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@authority"
+    escalatesTo: "@authority"
 `;
     const topo = parseTopology(yaml);
     const counterStates = new Map();
-    expect(resolveNode(topo, "w1", counterStates).supervisor).toBe("boss");
+    expect(resolveNode(topo, "w1", counterStates).escalatesTo).toBe("boss");
   });
 
-  it("submitTo resolves independently of supervisor counter (separate counter keys)", () => {
+  it("submitsWorkTo resolves independently of supervisor counter (separate counter keys)", () => {
     const yaml = `
 groups:
   collectors: [c1, c2]
@@ -630,12 +630,12 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@reviewers"
-    submitTo: "@collectors"
+    escalatesTo: "@reviewers"
+    submitsWorkTo: "@collectors"
   - name: w2
     recipe: mesh-node
-    supervisor: "@reviewers"
-    submitTo: "@collectors"
+    escalatesTo: "@reviewers"
+    submitsWorkTo: "@collectors"
   - name: r1
     recipe: mesh-node
   - name: r2
@@ -650,15 +650,15 @@ nodes:
     const w1 = resolveNode(topo, "w1", counterStates);
     const w2 = resolveNode(topo, "w2", counterStates);
     // supervisor counter: reviewers → r1, r2
-    expect(w1.supervisor).toBe("r1");
-    expect(w2.supervisor).toBe("r2");
-    // submitTo counter: collectors → c1, c2 (independent)
-    expect(w1.submitTo).toBe("c1");
-    expect(w2.submitTo).toBe("c2");
+    expect(w1.escalatesTo).toBe("r1");
+    expect(w2.escalatesTo).toBe("r2");
+    // submitsWorkTo counter: collectors → c1, c2 (independent)
+    expect(w1.submitsWorkTo).toBe("c1");
+    expect(w2.submitsWorkTo).toBe("c2");
   });
 
   it("two different fields targeting the same group share the counter — interleaved by node-declaration order", () => {
-    // w1 uses @shared for supervisor and w2 uses @shared for submitTo.
+    // w1 uses @shared for escalatesTo and w2 uses @shared for submitsWorkTo.
     // Both share the same counter so interleaved calls advance it together.
     const yaml = `
 groups:
@@ -668,10 +668,10 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@shared"
+    escalatesTo: "@shared"
   - name: w2
     recipe: mesh-node
-    submitTo: "@shared"
+    submitsWorkTo: "@shared"
   - name: s1
     recipe: mesh-node
   - name: s2
@@ -681,12 +681,12 @@ nodes:
 `;
     const topo = parseTopology(yaml);
     const counterStates = new Map();
-    // w1.supervisor → s1 (counter=0 → 1)
+    // w1.escalatesTo → s1 (counter=0 → 1)
     const w1 = resolveNode(topo, "w1", counterStates);
-    // w2.submitTo → s2 (counter=1 → 2, same group key)
+    // w2.submitsWorkTo → s2 (counter=1 → 2, same group key)
     const w2 = resolveNode(topo, "w2", counterStates);
-    expect(w1.supervisor).toBe("s1");
-    expect(w2.submitTo).toBe("s2");
+    expect(w1.escalatesTo).toBe("s1");
+    expect(w2.submitsWorkTo).toBe("s2");
   });
 
   it("_resolutions payload contains expected entries for @group resolution", () => {
@@ -698,7 +698,7 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@reviewers"
+    escalatesTo: "@reviewers"
   - name: r1
     recipe: mesh-node
   - name: r2
@@ -709,29 +709,29 @@ nodes:
     const resolved = resolveNode(topo, "w1", counterStates);
     expect(resolved._resolutions).toHaveLength(1);
     expect(resolved._resolutions[0]).toEqual({
-      field: "supervisor",
+      field: "escalatesTo",
       group: "reviewers",
       member: "r1",
       policy: "round-robin",
     });
   });
 
-  it("non-@group supervisor does NOT populate _resolutions", () => {
+  it("non-@group escalatesTo does NOT populate _resolutions", () => {
     const yaml = `
 nodes:
   - name: authority
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: authority
+    escalatesTo: authority
 `;
     const topo = parseTopology(yaml);
     const resolved = resolveNode(topo, "w1");
-    expect(resolved.supervisor).toBe("authority");
+    expect(resolved.escalatesTo).toBe("authority");
     expect(resolved._resolutions).toHaveLength(0);
   });
 
-  it("empty group rejection: supervisor @empty with zero members throws with field name", () => {
+  it("empty group rejection: escalatesTo @empty with zero members throws with field name", () => {
     const yaml = `
 groups:
   empty: []
@@ -740,26 +740,26 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@empty"
+    escalatesTo: "@empty"
 `;
     const topo = parseTopology(yaml);
-    expect(() => resolveNode(topo, "w1")).toThrow(/supervisor/i);
+    expect(() => resolveNode(topo, "w1")).toThrow(/escalatesTo/i);
   });
 
-  it("unknown group rejection: supervisor @no-such-group throws with group name in error", () => {
+  it("unknown group rejection: escalatesTo @no-such-group throws with group name in error", () => {
     const yaml = `
 nodes:
   - name: authority
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@no-such-group"
+    escalatesTo: "@no-such-group"
 `;
     const topo = parseTopology(yaml);
     expect(() => resolveNode(topo, "w1")).toThrow(/no-such-group/i);
   });
 
-  it("resolved concrete name must exist: supervisor @grp with ghost member throws with ghost in error", () => {
+  it("resolved concrete name must exist: escalatesTo @grp with ghost member throws with ghost in error", () => {
     const yaml = `
 groups:
   grp: [ghost]
@@ -768,7 +768,7 @@ nodes:
     recipe: mesh-authority
   - name: w1
     recipe: mesh-node
-    supervisor: "@grp"
+    escalatesTo: "@grp"
 `;
     const topo = parseTopology(yaml);
     expect(() => resolveNode(topo, "w1")).toThrow(/ghost/i);

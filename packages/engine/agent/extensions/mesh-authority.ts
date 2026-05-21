@@ -159,7 +159,7 @@ export default function (pi: ExtensionAPI) {
         recipe: params.recipe,
         sandbox,
         busRoot,
-        agentName: instanceName,
+        instanceName: instanceName,
         task: params.task,
       });
 

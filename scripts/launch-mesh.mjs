@@ -449,7 +449,7 @@ for (let i = 0; i < topology.nodes.length; i++) {
     recipe,
     sandbox,
     busRoot,
-    agentName: name,
+    instanceName: name,
     topologyOverlay: JSON.stringify(overlay),
     task: typeof task === "string" && task.trim() ? task : undefined,
     inheritPty: true,

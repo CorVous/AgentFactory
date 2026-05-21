@@ -25,8 +25,8 @@ export interface ResolvedRecipe {
   prompt: string;
   /** Skill names declared in the recipe. */
   skills: string[];
-  /** Allowed child agent recipe names. */
-  agents: string[];
+  /** Allowed child agent recipe names (new field name: spawns). */
+  spawns: string[];
   /** Optional description for display. */
   description?: string;
   /** The template name this recipe extends (if any). */
@@ -277,6 +277,21 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
 
   const obj = parsed as Record<string, unknown>;
 
+  // Reject retired field names with a hard parse error naming the replacement.
+  const RETIRED_RECIPE_FIELDS: Record<string, string> = {
+    agents: "spawns",
+    acceptedFrom: "acceptsWorkFrom",
+    peers: "messagesWith",
+    submitTo: "submitsWorkTo",
+  };
+  for (const [oldName, newName] of Object.entries(RETIRED_RECIPE_FIELDS)) {
+    if (oldName in obj) {
+      throw new Error(
+        `resolveRecipe: recipe '${name}' uses retired field '${oldName}' — renamed to '${newName}'`,
+      );
+    }
+  }
+
   // Validate prompt
   if (typeof obj.prompt !== "string" || !obj.prompt.trim()) {
     throw new Error(`resolveRecipe: recipe '${name}' missing or empty 'prompt'`);
@@ -302,8 +317,8 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
     ? (obj.skills as unknown[]).filter((s): s is string => typeof s === "string").slice()
     : [];
 
-  const agents = Array.isArray(obj.agents)
-    ? (obj.agents as unknown[]).filter((a): a is string => typeof a === "string").slice()
+  const spawns = Array.isArray(obj.spawns)
+    ? (obj.spawns as unknown[]).filter((a): a is string => typeof a === "string").slice()
     : [];
 
   const description =
@@ -333,7 +348,7 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
     extensions,
     prompt: obj.prompt.trim(),
     skills,
-    agents,
+    spawns,
     description,
     ...(extendsField ? { extends: extendsField } : {}),
   };

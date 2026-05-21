@@ -5,10 +5,10 @@
  * Validation rules:
  *   ERRORS (block launch):
  *   - Explicit `entry:` that doesn't resolve (unknown name, unknown @group, @group with zero members)
- *   - Zero or multiple peers with unset `supervisor:` (exactly one top supervisor required)
+ *   - Zero or multiple peers with unset `escalatesTo:` (exactly one top supervisor required)
  *   - Nodes with an unknown `type:` value (the only valid nodes are pi-agent nodes with no `type:` set)
  *   - `@group` references to undefined groups (in per-node and group_binding arrays)
- *   - `acceptedFrom` / `peers` fields referencing node names not in the topology
+ *   - `acceptsWorkFrom` / `messagesWith` fields referencing node names not in the topology
  *
  *   WARNINGS (emitted to stderr; do not block launch):
  *   - Top supervisor's recipe has `model: TASK_RABBIT_MODEL`
@@ -26,18 +26,18 @@ import { resolveRef } from "./ref-resolver.mjs";
  *   name: string;
  *   recipe?: string;
  *   type?: string;
- *   supervisor?: string;
- *   acceptedFrom?: string[];
- *   peers?: string[];
+ *   escalatesTo?: string;
+ *   acceptsWorkFrom?: string[];
+ *   messagesWith?: string[];
  * }} TopologyNode
  */
 
 /**
  * @typedef {{
- *   supervisor?: string;
- *   submitTo?: string;
- *   acceptedFrom?: string[];
- *   peers?: string[];
+ *   escalatesTo?: string;
+ *   submitsWorkTo?: string;
+ *   acceptsWorkFrom?: string[];
+ *   messagesWith?: string[];
  * }} GroupBinding
  */
 
@@ -110,7 +110,7 @@ function expandRefs(list, groups, context, errors) {
  *
  * @param {string | undefined} value
  * @param {Map<string, string[]>} groups
- * @param {string} context  — e.g. "node 'w1'.supervisor"
+ * @param {string} context  — e.g. "node 'w1'.escalatesTo"
  * @param {string[]} errors
  */
 function validateScalarRef(value, groups, context, errors) {
@@ -174,10 +174,10 @@ export function validateTopology(topo, recipeModelLoader) {
     }
   }
 
-  // ── Rule 3: exactly one peer with unset supervisor: ────────────────────────
+  // ── Rule 3: exactly one peer with unset escalatesTo: ─────────────────────
   //
-  // A node is NOT a top candidate when it has an effective supervisor, which
-  // includes `supervisor: "@group"` that resolves to ≥1 member. An @group ref
+  // A node is NOT a top candidate when it has an effective escalatesTo, which
+  // includes `escalatesTo: "@group"` that resolves to ≥1 member. An @group ref
   // to an empty group is treated as "unset" here (the empty-group rule in Rule 4
   // will emit a hard error that blocks launch regardless).
 
@@ -188,7 +188,7 @@ export function validateTopology(topo, recipeModelLoader) {
    * @param {string | undefined} value
    * @returns {boolean}
    */
-  function supervisorIsSet(value) {
+  function escalatesToIsSet(value) {
     if (value === undefined) return false;
     if (!value.startsWith("@")) return true; // concrete name → always set
     const groupName = value.slice(1);
@@ -203,7 +203,7 @@ export function validateTopology(topo, recipeModelLoader) {
   for (const node of topo.nodes) {
     if (node.type !== undefined) continue;
 
-    let effectiveSupervisor;
+    let effectiveEscalatesTo;
 
     // Group_bindings first (last group wins per topology.mjs semantics).
     // Use the aggregated groups Map so per-node group declarations are included.
@@ -211,70 +211,70 @@ export function validateTopology(topo, recipeModelLoader) {
       for (const [groupName, members] of groups) {
         if (members.includes(node.name)) {
           const binding = topo.group_bindings[groupName];
-          if (binding?.supervisor !== undefined) {
-            effectiveSupervisor = binding.supervisor;
+          if (binding?.escalatesTo !== undefined) {
+            effectiveEscalatesTo = binding.escalatesTo;
           }
         }
       }
     }
 
     // Per-node overrides group_binding
-    if (node.supervisor !== undefined) {
-      effectiveSupervisor = node.supervisor;
+    if (node.escalatesTo !== undefined) {
+      effectiveEscalatesTo = node.escalatesTo;
     }
 
-    if (!supervisorIsSet(effectiveSupervisor)) {
+    if (!escalatesToIsSet(effectiveEscalatesTo)) {
       topCandidates.push(node.name);
     }
   }
 
   if (topCandidates.length === 0) {
     errors.push(
-      "every node has a 'supervisor:' set — at least one node must be the top supervisor " +
-        "(a node with no 'supervisor:' field is the top of the escalation chain)",
+      "every node has a 'escalatesTo:' set — at least one node must be the top supervisor " +
+        "(a node with no 'escalatesTo:' field is the top of the escalation chain)",
     );
   } else if (topCandidates.length > 1) {
     errors.push(
-      `multiple nodes have no 'supervisor:' set (${topCandidates.join(", ")}) — ` +
+      `multiple nodes have no 'escalatesTo:' set (${topCandidates.join(", ")}) — ` +
         `exactly one node must be the top supervisor`,
     );
   }
 
   // ── Rule 4: @group references must resolve + peer names must exist ─────────
   for (const node of topo.nodes) {
-    // Scalar fields: supervisor and submitTo
-    if (node.supervisor) {
-      validateScalarRef(node.supervisor, groups, `node '${node.name}'.supervisor`, errors);
+    // Scalar fields: escalatesTo and submitsWorkTo
+    if (node.escalatesTo) {
+      validateScalarRef(node.escalatesTo, groups, `node '${node.name}'.escalatesTo`, errors);
     }
-    if (node.submitTo) {
-      validateScalarRef(node.submitTo, groups, `node '${node.name}'.submitTo`, errors);
+    if (node.submitsWorkTo) {
+      validateScalarRef(node.submitsWorkTo, groups, `node '${node.name}'.submitsWorkTo`, errors);
     }
-    if (node.acceptedFrom) {
+    if (node.acceptsWorkFrom) {
       const expanded = expandRefs(
-        node.acceptedFrom,
+        node.acceptsWorkFrom,
         groups,
-        `node '${node.name}'.acceptedFrom`,
+        `node '${node.name}'.acceptsWorkFrom`,
         errors,
       );
       for (const name of expanded) {
         if (!nodeNames.has(name)) {
           errors.push(
-            `node '${node.name}'.acceptedFrom references undeclared peer '${name}'`,
+            `node '${node.name}'.acceptsWorkFrom references undeclared peer '${name}'`,
           );
         }
       }
     }
-    if (node.peers) {
+    if (node.messagesWith) {
       const expanded = expandRefs(
-        node.peers,
+        node.messagesWith,
         groups,
-        `node '${node.name}'.peers`,
+        `node '${node.name}'.messagesWith`,
         errors,
       );
       for (const name of expanded) {
         if (!nodeNames.has(name)) {
           errors.push(
-            `node '${node.name}'.peers references undeclared peer '${name}'`,
+            `node '${node.name}'.messagesWith references undeclared peer '${name}'`,
           );
         }
       }
@@ -284,35 +284,35 @@ export function validateTopology(topo, recipeModelLoader) {
   // Check group_bindings for @group refs to undefined groups (arrays and scalars)
   if (topo.group_bindings) {
     for (const [bindingName, binding] of Object.entries(topo.group_bindings)) {
-      if (binding.supervisor) {
+      if (binding.escalatesTo) {
         validateScalarRef(
-          binding.supervisor,
+          binding.escalatesTo,
           groups,
-          `group_bindings.${bindingName}.supervisor`,
+          `group_bindings.${bindingName}.escalatesTo`,
           errors,
         );
       }
-      if (binding.submitTo) {
+      if (binding.submitsWorkTo) {
         validateScalarRef(
-          binding.submitTo,
+          binding.submitsWorkTo,
           groups,
-          `group_bindings.${bindingName}.submitTo`,
+          `group_bindings.${bindingName}.submitsWorkTo`,
           errors,
         );
       }
-      if (binding.acceptedFrom) {
+      if (binding.acceptsWorkFrom) {
         expandRefs(
-          binding.acceptedFrom,
+          binding.acceptsWorkFrom,
           groups,
-          `group_bindings.${bindingName}.acceptedFrom`,
+          `group_bindings.${bindingName}.acceptsWorkFrom`,
           errors,
         );
       }
-      if (binding.peers) {
+      if (binding.messagesWith) {
         expandRefs(
-          binding.peers,
+          binding.messagesWith,
           groups,
-          `group_bindings.${bindingName}.peers`,
+          `group_bindings.${bindingName}.messagesWith`,
           errors,
         );
       }

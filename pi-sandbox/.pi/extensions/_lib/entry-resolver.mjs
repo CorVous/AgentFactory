@@ -19,8 +19,8 @@ import { resolveRef } from "./ref-resolver.mjs";
  * @typedef {{
  *   entry?: string;
  *   groups?: Record<string, string[]>;
- *   group_bindings?: Record<string, {supervisor?: string; [key: string]: any}>;
- *   nodes: Array<{name: string; recipe?: string; type?: "relay"; supervisor?: string; groups?: string[]; [key: string]: any}>;
+ *   group_bindings?: Record<string, {escalatesTo?: string; [key: string]: any}>;
+ *   nodes: Array<{name: string; recipe?: string; type?: "relay"; escalatesTo?: string; groups?: string[]; [key: string]: any}>;
  * }} Topology
  */
 
@@ -33,17 +33,17 @@ import { resolveRef } from "./ref-resolver.mjs";
  */
 
 /**
- * Return true when the string value represents a set supervisor (non-undefined,
+ * Return true when the string value represents a set escalatesTo (non-undefined,
  * and if it's an @group ref, the group resolves to ≥1 member).
  *
- * This mirrors the `supervisorIsSet` helper in validateTopology so both modules
+ * This mirrors the `escalatesToIsSet` helper in validateTopology so both modules
  * compute top-supervisor candidates identically.
  *
  * @param {string | undefined} value
  * @param {Map<string, string[]>} groups
  * @returns {boolean}
  */
-function supervisorIsSet(value, groups) {
+function escalatesToIsSet(value, groups) {
   if (value === undefined) return false;
   if (!value.startsWith("@")) return true; // concrete name → always set
   const groupName = value.slice(1);
@@ -64,7 +64,7 @@ function supervisorIsSet(value, groups) {
  *     error for unknown group or zero members.
  *   - Concrete name: must be in nodeNames; pushes an error otherwise.
  *
- * `topSupervisor` is the single node with no effective supervisor (null when zero or
+ * `topSupervisor` is the single node with no effective escalatesTo (null when zero or
  * multiple candidates).
  *
  * @param {Topology} topo
@@ -84,26 +84,26 @@ export function resolveEntry(topo) {
     if (node.type === "relay") continue;
     if (node.type !== undefined) continue; // skip nodes with unknown types
 
-    let effectiveSupervisor;
+    let effectiveEscalatesTo;
 
     // Group_bindings (last group wins)
     if (topo.group_bindings) {
       for (const [groupName, members] of groups) {
         if (members.includes(node.name)) {
           const binding = topo.group_bindings[groupName];
-          if (binding?.supervisor !== undefined) {
-            effectiveSupervisor = binding.supervisor;
+          if (binding?.escalatesTo !== undefined) {
+            effectiveEscalatesTo = binding.escalatesTo;
           }
         }
       }
     }
 
-    // Per-node supervisor overrides group_bindings
-    if (node.supervisor !== undefined) {
-      effectiveSupervisor = node.supervisor;
+    // Per-node escalatesTo overrides group_bindings
+    if (node.escalatesTo !== undefined) {
+      effectiveEscalatesTo = node.escalatesTo;
     }
 
-    if (!supervisorIsSet(effectiveSupervisor, groups)) {
+    if (!escalatesToIsSet(effectiveEscalatesTo, groups)) {
       topCandidates.push(node.name);
     }
   }

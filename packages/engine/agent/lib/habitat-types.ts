@@ -9,10 +9,10 @@
 
 export interface Habitat {
   // Identity
-  agentName: string;
+  instanceName: string;
   description?: string;
   tier?: string;
-  type?: string;
+  recipe?: string;
 
   // Filesystem
   scratchRoot: string;
@@ -22,14 +22,14 @@ export interface Habitat {
 
   // Recipe metadata exposed for footer rendering
   skills: string[];
-  agents: string[];
+  spawns: string[];
 
   // Verbose diagnostic logging toggle (forwarded by --debug; default false).
   debug: boolean;
 
   // Phase 3b: peer relationships
   supervisor?: string;
-  submitTo?: string;
-  acceptedFrom: string[];
-  peers: string[];
+  submitsWorkTo?: string;
+  acceptsWorkFrom: string[];
+  messagesWith: string[];
 }

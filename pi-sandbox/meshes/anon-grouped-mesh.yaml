@@ -17,8 +17,8 @@ entry: authority
 nodes:
   - name: authority
     recipe: mesh-authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
 
   - recipe: mesh-node
-    supervisor: authority
+    escalatesTo: authority
     groups: [workers]

@@ -55,13 +55,13 @@ export interface RespondResult {
 }
 
 function isAllowed(from: string): boolean {
-  let acceptedFrom: string[];
+  let acceptsWorkFrom: string[];
   try {
-    acceptedFrom = getHabitat().acceptedFrom;
+    acceptsWorkFrom = getHabitat().acceptsWorkFrom;
   } catch {
-    acceptedFrom = [];
+    acceptsWorkFrom = [];
   }
-  return acceptedFrom.includes(from);
+  return acceptsWorkFrom.includes(from);
 }
 
 export function createSupervisorInbox(): SupervisorInbox {
@@ -80,7 +80,7 @@ export function createSupervisorInbox(): SupervisorInbox {
         try {
           if (getHabitat().debug === true) {
             process.stderr.write(
-              `[supervisor] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
+              `[supervisor] dropping ${kind} from '${env.from}': not in acceptsWorkFrom\n`,
             );
           }
         } catch { /* Habitat not available */ }

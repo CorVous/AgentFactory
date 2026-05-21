@@ -10,8 +10,8 @@
  * Argv shape produced:
  *   --recipe <recipe>
  *   --sandbox <sandbox>
- *   --agent-bus <busRoot>
- *   --peer-name <agentName>         (always)
+ *   --peer-bus <busRoot>
+ *   --peer-name <instanceName>      (always)
  *   [--topology-overlay <json>]     (when topologyOverlay is set)
  *   [--task <text>]                 (when task is set and non-empty)
  *   [--inherit-pty]                 (when inheritPty is true)
@@ -48,11 +48,11 @@ export function resolveRepoRoot() {
  * Build the argv array for spawning a `pi --recipe` child process.
  *
  * @param {object} opts
- * @param {string} opts.piBin        - Absolute path to the pi binary.
- * @param {string} opts.recipe       - Recipe name (bare name, no .yaml suffix).
- * @param {string} opts.sandbox      - Absolute path to the sandbox/cwd for the child.
- * @param {string} opts.busRoot      - Absolute path to the agent bus root directory.
- * @param {string} opts.agentName    - The child's instance name (passed as --peer-name).
+ * @param {string} opts.piBin         - Absolute path to the pi binary.
+ * @param {string} opts.recipe        - Recipe name (bare name, no .yaml suffix).
+ * @param {string} opts.sandbox       - Absolute path to the sandbox/cwd for the child.
+ * @param {string} opts.busRoot       - Absolute path to the peer bus root directory.
+ * @param {string} opts.instanceName  - The child's instance name (passed as --peer-name).
  * @param {string|undefined} [opts.topologyOverlay] - JSON string for --topology-overlay.
  * @param {string|undefined} [opts.task]            - Task text for --task (appended to system prompt).
  * @param {boolean|undefined} [opts.inheritPty]     - Pass --inherit-pty bare flag.
@@ -66,6 +66,8 @@ export function buildRecipeChildArgv(opts) {
     recipe,
     sandbox,
     busRoot,
+    instanceName,
+    // back-compat: accept agentName as alias for instanceName
     agentName,
     topologyOverlay,
     task,
@@ -74,12 +76,14 @@ export function buildRecipeChildArgv(opts) {
     printPrompt,
   } = opts;
 
+  const resolvedInstanceName = instanceName ?? agentName;
+
   const argv = [
     piBin,
     "--recipe", recipe,
     "--sandbox", sandbox,
-    "--agent-bus", busRoot,
-    "--peer-name", agentName,
+    "--peer-bus", busRoot,
+    "--peer-name", resolvedInstanceName,
   ];
 
   if (topologyOverlay) {

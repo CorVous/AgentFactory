@@ -45,7 +45,7 @@ describe("RAIL_TO_CLUSTER mapping", () => {
 
   it("maps engine-owned rails to 'engine'", () => {
     for (const rail of [
-      "agent-bus",
+      "peer-bus",
       "supervisor",
       "intercept",
       "atomic-delegate",
@@ -103,7 +103,7 @@ describe("resolveRailPackages", () => {
 
   it("engine-marker rails are never reported missing", () => {
     const { missing } = resolveRailPackages(
-      ["agent-bus", "supervisor", "intercept"],
+      ["peer-bus", "supervisor", "intercept"],
       [], // nothing installed
     );
     expect(missing).toHaveLength(0);
@@ -111,13 +111,13 @@ describe("resolveRailPackages", () => {
 
   it("engine-marker rails appear in resolved list", () => {
     const { resolved } = resolveRailPackages(
-      ["agent-bus", "supervisor"],
+      ["peer-bus", "supervisor"],
       [],
     );
     expect(resolved.map((r) => r.rail)).toEqual(
-      expect.arrayContaining(["agent-bus", "supervisor"]),
+      expect.arrayContaining(["peer-bus", "supervisor"]),
     );
-    expect(resolved.find((r) => r.rail === "agent-bus")?.cluster).toBe("engine");
+    expect(resolved.find((r) => r.rail === "peer-bus")?.cluster).toBe("engine");
   });
 
   it("install hint uses exact pi install format", () => {

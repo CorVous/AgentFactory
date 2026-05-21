@@ -3,10 +3,10 @@
  *
  * Rules exercised:
  *   - required `entry:` field
- *   - exactly one node with unset supervisor: (top supervisor)
+ *   - exactly one node with unset escalatesTo: (top supervisor)
  *   - unknown node type rejection (any type: other than undefined)
  *   - @group ref to undefined group
- *   - acceptedFrom / peers referencing undeclared node
+ *   - acceptsWorkFrom / messagesWith referencing undeclared node
  *   - top-supervisor TASK_RABBIT_MODEL warning (not error)
  *   - valid topologies pass cleanly
  */
@@ -19,9 +19,10 @@ type TopologyNode = {
   name: string;
   recipe?: string;
   type?: string;
-  supervisor?: string;
-  acceptedFrom?: string[];
-  peers?: string[];
+  escalatesTo?: string;
+  submitsWorkTo?: string;
+  acceptsWorkFrom?: string[];
+  messagesWith?: string[];
   groups?: string[];
 };
 
@@ -29,7 +30,7 @@ type Topology = {
   entry?: string;
   bus_root?: string;
   groups?: Record<string, string[]>;
-  group_bindings?: Record<string, { supervisor?: string; submitTo?: string; acceptedFrom?: string[]; peers?: string[] }>;
+  group_bindings?: Record<string, { escalatesTo?: string; submitsWorkTo?: string; acceptsWorkFrom?: string[]; messagesWith?: string[] }>;
   nodes: TopologyNode[];
 };
 
@@ -45,13 +46,13 @@ function minimalTopo(): Topology {
   };
 }
 
-/** Topology with two nodes — authority (no supervisor) + one worker. */
+/** Topology with two nodes — authority (no escalatesTo) + one worker. */
 function twoNodeTopo(): Topology {
   return {
     entry: "authority",
     nodes: [
       { name: "authority", recipe: "mesh-authority" },
-      { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
     ],
   };
 }
@@ -76,7 +77,7 @@ describe("valid topologies", () => {
       entry: "worker", // focused on worker, not authority
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
@@ -87,7 +88,7 @@ describe("valid topologies", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1", "w2"] },
-      group_bindings: { workers: { supervisor: "authority" } },
+      group_bindings: { workers: { escalatesTo: "authority" } },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "w1", recipe: "mesh-node" },
@@ -99,14 +100,14 @@ describe("valid topologies", () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it("passes with valid @group refs in per-node acceptedFrom", () => {
+  it("passes with valid @group refs in per-node acceptsWorkFrom", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1", "w2"] },
       nodes: [
-        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@workers"] },
-        { name: "w1", recipe: "mesh-node", supervisor: "authority" },
-        { name: "w2", recipe: "mesh-node", supervisor: "authority" },
+        { name: "authority", recipe: "mesh-authority", acceptsWorkFrom: ["@workers"] },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "authority" },
+        { name: "w2", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
@@ -122,7 +123,7 @@ describe("entry: field", () => {
       // no entry: — synthesis from unique top supervisor covers it
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
@@ -131,17 +132,17 @@ describe("entry: field", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("fails validation when no entry: and zero top supervisors (all nodes have a supervisor)", () => {
+  it("fails validation when no entry: and zero top supervisors (all nodes have escalatesTo)", () => {
     const topo: Topology = {
       // no entry:
       nodes: [
-        { name: "authority", recipe: "mesh-authority", supervisor: "external" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "authority", recipe: "mesh-authority", escalatesTo: "external" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
     // The top-supervisor uniqueness rule (Rule 3) fires — no separate entry error
-    expect(result.errors.some((e) => /supervisor/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /escalatesTo/i.test(e))).toBe(true);
     // No entry-specific error (entry is simply omitted)
     expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
   });
@@ -151,13 +152,13 @@ describe("entry: field", () => {
       // no entry:
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "rogue", recipe: "mesh-authority" }, // also no supervisor
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "rogue", recipe: "mesh-authority" }, // also no escalatesTo
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
     // The top-supervisor uniqueness rule fires — no separate entry error
-    expect(result.errors.some((e) => /supervisor/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /escalatesTo/i.test(e))).toBe(true);
     expect(result.errors.filter((e) => /entry/i.test(e))).toHaveLength(0);
   });
 
@@ -248,41 +249,41 @@ describe("unknown node type rejection", () => {
 // ── top supervisor uniqueness ─────────────────────────────────────────────────
 
 describe("top supervisor uniqueness", () => {
-  it("rejects when multiple nodes have no supervisor: set", () => {
+  it("rejects when multiple nodes have no escalatesTo: set", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "rogue", recipe: "mesh-authority" }, // also no supervisor
+        { name: "rogue", recipe: "mesh-authority" }, // also no escalatesTo
       ],
     };
     const result = validateTopology(topo);
-    expect(result.errors.some((e) => /supervisor/i.test(e) && /multiple|rogue|authority/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /escalatesTo/i.test(e) && /multiple|rogue|authority/i.test(e))).toBe(true);
   });
 
-  it("rejects when every node has a supervisor set (no top)", () => {
+  it("rejects when every node has escalatesTo set (no top)", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", supervisor: "external" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "authority", recipe: "mesh-authority", escalatesTo: "external" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
-    expect(result.errors.some((e) => /supervisor/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /escalatesTo/i.test(e))).toBe(true);
   });
 
-  it("passes when exactly one node has no supervisor: set", () => {
+  it("passes when exactly one node has no escalatesTo: set", () => {
     const result = validateTopology(twoNodeTopo());
-    expect(result.errors.filter((e) => /supervisor.*multiple|multiple.*supervisor/i.test(e))).toHaveLength(0);
-    expect(result.errors.filter((e) => /no.*supervisor|supervisor.*top/i.test(e))).toHaveLength(0);
+    expect(result.errors.filter((e) => /escalatesTo.*multiple|multiple.*escalatesTo/i.test(e))).toHaveLength(0);
+    expect(result.errors.filter((e) => /no.*escalatesTo|escalatesTo.*top/i.test(e))).toHaveLength(0);
   });
 
-  it("counts group_binding supervisor as effectively set (not a top candidate)", () => {
+  it("counts group_binding escalatesTo as effectively set (not a top candidate)", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1", "w2"] },
-      group_bindings: { workers: { supervisor: "authority" } },
+      group_bindings: { workers: { escalatesTo: "authority" } },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "w1", recipe: "mesh-node" },
@@ -290,44 +291,44 @@ describe("top supervisor uniqueness", () => {
       ],
     };
     const result = validateTopology(topo);
-    // Only authority has no supervisor; w1 and w2 get it from group_binding
-    expect(result.errors.filter((e) => /supervisor/i.test(e))).toHaveLength(0);
+    // Only authority has no escalatesTo; w1 and w2 get it from group_binding
+    expect(result.errors.filter((e) => /escalatesTo/i.test(e))).toHaveLength(0);
   });
 });
 
 // ── @group reference validation ───────────────────────────────────────────────
 
 describe("@group reference validation", () => {
-  it("rejects @group ref to undefined group in per-node peers", () => {
+  it("rejects @group ref to undefined group in per-node messagesWith", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", peers: ["@nonexistent"] },
+        { name: "authority", recipe: "mesh-authority", messagesWith: ["@nonexistent"] },
       ],
     };
     const result = validateTopology(topo);
     expect(result.errors.some((e) => /nonexistent/i.test(e))).toBe(true);
   });
 
-  it("rejects @group ref to undefined group in per-node acceptedFrom", () => {
+  it("rejects @group ref to undefined group in per-node acceptsWorkFrom", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@missing-group"] },
+        { name: "authority", recipe: "mesh-authority", acceptsWorkFrom: ["@missing-group"] },
       ],
     };
     const result = validateTopology(topo);
     expect(result.errors.some((e) => /missing-group/i.test(e))).toBe(true);
   });
 
-  it("rejects @group ref to undefined group in group_bindings.peers", () => {
+  it("rejects @group ref to undefined group in group_bindings.messagesWith", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1"] },
-      group_bindings: { workers: { peers: ["@undefined-group"] } },
+      group_bindings: { workers: { messagesWith: ["@undefined-group"] } },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "w1", recipe: "mesh-node", supervisor: "authority" },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
@@ -338,22 +339,22 @@ describe("@group reference validation", () => {
 // ── undeclared peer references ────────────────────────────────────────────────
 
 describe("undeclared peer references", () => {
-  it("rejects acceptedFrom referencing a name not in nodes", () => {
+  it("rejects acceptsWorkFrom referencing a name not in nodes", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["phantom"] },
+        { name: "authority", recipe: "mesh-authority", acceptsWorkFrom: ["phantom"] },
       ],
     };
     const result = validateTopology(topo);
     expect(result.errors.some((e) => /phantom/i.test(e))).toBe(true);
   });
 
-  it("rejects peers referencing a name not in nodes", () => {
+  it("rejects messagesWith referencing a name not in nodes", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", peers: ["ghost"] },
+        { name: "authority", recipe: "mesh-authority", messagesWith: ["ghost"] },
       ],
     };
     const result = validateTopology(topo);
@@ -374,8 +375,8 @@ describe("TASK_RABBIT_MODEL warning", () => {
     const topo: Topology = {
       entry: "worker-boss",
       nodes: [
-        { name: "worker-boss", recipe: "mesh-node" }, // TASK_RABBIT_MODEL, no supervisor
-        { name: "worker", recipe: "mesh-node", supervisor: "worker-boss" },
+        { name: "worker-boss", recipe: "mesh-node" }, // TASK_RABBIT_MODEL, no escalatesTo
+        { name: "worker", recipe: "mesh-node", escalatesTo: "worker-boss" },
       ],
     };
     const result = validateTopology(topo, taskRabbitLoader);
@@ -388,8 +389,8 @@ describe("TASK_RABBIT_MODEL warning", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority" }, // LEAD_HARE_MODEL, no supervisor
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "authority", recipe: "mesh-authority" }, // LEAD_HARE_MODEL, no escalatesTo
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo, taskRabbitLoader);
@@ -402,7 +403,7 @@ describe("TASK_RABBIT_MODEL warning", () => {
       entry: "worker-boss",
       nodes: [
         { name: "worker-boss", recipe: "mesh-node" }, // recipe resolves to TASK_RABBIT_MODEL
-        { name: "worker", recipe: "mesh-node", supervisor: "worker-boss" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "worker-boss" },
       ],
     };
     // No loader passed — can't inspect tier, so no warning
@@ -415,7 +416,7 @@ describe("TASK_RABBIT_MODEL warning", () => {
       entry: "worker-boss",
       nodes: [
         { name: "worker-boss", recipe: "mesh-node" },
-        { name: "worker", recipe: "mesh-node", supervisor: "worker-boss" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "worker-boss" },
       ],
     };
     const result = validateTopology(topo, taskRabbitLoader);
@@ -443,9 +444,9 @@ describe("per-node groups field", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@workers"] },
-        { name: "w1", recipe: "mesh-node", supervisor: "authority", groups: ["workers"] },
-        { name: "w2", recipe: "mesh-node", supervisor: "authority", groups: ["workers"] },
+        { name: "authority", recipe: "mesh-authority", acceptsWorkFrom: ["@workers"] },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "authority", groups: ["workers"] },
+        { name: "w2", recipe: "mesh-node", escalatesTo: "authority", groups: ["workers"] },
       ],
     };
     const result = validateTopology(topo);
@@ -456,38 +457,38 @@ describe("per-node groups field", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@totally-unknown"] },
-        { name: "w1", recipe: "mesh-node", supervisor: "authority" },
+        { name: "authority", recipe: "mesh-authority", acceptsWorkFrom: ["@totally-unknown"] },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = validateTopology(topo);
     expect(result.errors.some((e) => /totally-unknown/i.test(e))).toBe(true);
   });
 
-  it("counts per-node group_binding supervisor as effectively set (not a top candidate)", () => {
-    // Node w1 declares groups: [workers] and group_bindings has workers.supervisor.
-    // So w1 should NOT be a top candidate (it has an effective supervisor via binding).
+  it("counts per-node group_binding escalatesTo as effectively set (not a top candidate)", () => {
+    // Node w1 declares groups: [workers] and group_bindings has workers.escalatesTo.
+    // So w1 should NOT be a top candidate (it has an effective escalatesTo via binding).
     const topo: Topology = {
       entry: "authority",
       groups: undefined,
-      group_bindings: { workers: { supervisor: "authority" } },
+      group_bindings: { workers: { escalatesTo: "authority" } },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "w1", recipe: "mesh-node", groups: ["workers"] },
       ],
     };
     const result = validateTopology(topo);
-    // Only authority should be top candidate; no duplicate-supervisor error.
-    expect(result.errors.filter((e) => /supervisor/i.test(e))).toHaveLength(0);
+    // Only authority should be top candidate; no duplicate-escalatesTo error.
+    expect(result.errors.filter((e) => /escalatesTo/i.test(e))).toHaveLength(0);
   });
 
   it("passes a mixed topology with both top-level groups and per-node groups for the same group", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1"] },
-      group_bindings: { workers: { supervisor: "authority" } },
+      group_bindings: { workers: { escalatesTo: "authority" } },
       nodes: [
-        { name: "authority", recipe: "mesh-authority", acceptedFrom: ["@workers"] },
+        { name: "authority", recipe: "mesh-authority", acceptsWorkFrom: ["@workers"] },
         { name: "w1", recipe: "mesh-node" },
         { name: "w2", recipe: "mesh-node", groups: ["workers"] },
       ],
@@ -500,83 +501,83 @@ describe("per-node groups field", () => {
 // ── @group in scalar fields ───────────────────────────────────────────────────
 
 describe("@group in scalar fields", () => {
-  it("supervisor: @reviewers with non-empty group passes", () => {
+  it("escalatesTo: @reviewers with non-empty group passes", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { reviewers: ["authority"] },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "w1", recipe: "mesh-node", supervisor: "@reviewers" },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "@reviewers" },
       ],
     };
     const result = validateTopology(topo);
     // The @reviewers group has authority as the single member; no error expected.
-    expect(result.errors.filter((e) => /supervisor|reviewers/i.test(e))).toHaveLength(0);
+    expect(result.errors.filter((e) => /escalatesTo|reviewers/i.test(e))).toHaveLength(0);
   });
 
-  it("supervisor: @empty → error contains 'supervisor' and 'empty'", () => {
+  it("escalatesTo: @empty → error contains 'escalatesTo' and 'empty'", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { empty: [] },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "w1", recipe: "mesh-node", supervisor: "@empty" },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "@empty" },
       ],
     };
     const result = validateTopology(topo);
     const relevantErrors = result.errors.filter((e) => /empty/i.test(e));
     expect(relevantErrors.length).toBeGreaterThan(0);
-    expect(relevantErrors.some((e) => /supervisor/i.test(e))).toBe(true);
+    expect(relevantErrors.some((e) => /escalatesTo/i.test(e))).toBe(true);
   });
 
-  it("submitTo: @empty → error contains 'submitTo' and 'empty'", () => {
+  it("submitsWorkTo: @empty → error contains 'submitsWorkTo' and 'empty'", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { empty: [] },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        // w1 needs a supervisor to not violate the top-supervisor rule
-        { name: "w1", recipe: "mesh-node", supervisor: "authority", submitTo: "@empty" },
+        // w1 needs a escalatesTo to not violate the top-supervisor rule
+        { name: "w1", recipe: "mesh-node", escalatesTo: "authority", submitsWorkTo: "@empty" },
       ],
     };
     const result = validateTopology(topo);
     const relevantErrors = result.errors.filter((e) => /empty/i.test(e));
     expect(relevantErrors.length).toBeGreaterThan(0);
-    expect(relevantErrors.some((e) => /submitTo/i.test(e))).toBe(true);
+    expect(relevantErrors.some((e) => /submitsWorkTo/i.test(e))).toBe(true);
   });
 
-  it("supervisor: @unknown → existing unknown-group error format", () => {
+  it("escalatesTo: @unknown → existing unknown-group error format", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "w1", recipe: "mesh-node", supervisor: "@unknown-grp" },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "@unknown-grp" },
       ],
     };
     const result = validateTopology(topo);
     expect(result.errors.some((e) => /unknown-grp/i.test(e))).toBe(true);
   });
 
-  it("top-supervisor uniqueness: node with supervisor: @reviewers (non-empty) is NOT a top candidate", () => {
-    // authority has no supervisor (top candidate); workers all have supervisor: @reviewers
+  it("top-supervisor uniqueness: node with escalatesTo: @reviewers (non-empty) is NOT a top candidate", () => {
+    // authority has no escalatesTo (top candidate); workers all have escalatesTo: @reviewers
     // reviewers group → [authority] (a concrete non-empty group)
-    // So w1, w2 each have an effective supervisor (authority via @reviewers)
+    // So w1, w2 each have an effective escalatesTo (authority via @reviewers)
     // Only authority should be the top candidate.
     const topo: Topology = {
       entry: "authority",
       groups: { reviewers: ["authority"] },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "w1", recipe: "mesh-node", supervisor: "@reviewers" },
-        { name: "w2", recipe: "mesh-node", supervisor: "@reviewers" },
+        { name: "w1", recipe: "mesh-node", escalatesTo: "@reviewers" },
+        { name: "w2", recipe: "mesh-node", escalatesTo: "@reviewers" },
       ],
     };
     const result = validateTopology(topo);
-    // Should have exactly one top candidate (authority) → no supervisor error
-    expect(result.errors.filter((e) => /supervisor/i.test(e))).toHaveLength(0);
+    // Should have exactly one top candidate (authority) → no escalatesTo error
+    expect(result.errors.filter((e) => /escalatesTo/i.test(e))).toHaveLength(0);
   });
 
-  it("group_bindings.workers.supervisor: @reviewers (non-empty) → no top-candidate added for workers; passes", () => {
+  it("group_bindings.workers.escalatesTo: @reviewers (non-empty) → no top-candidate added for workers; passes", () => {
     const topo: Topology = {
       entry: "authority",
       groups: {
@@ -584,7 +585,7 @@ describe("@group in scalar fields", () => {
         reviewers: ["authority"],
       },
       group_bindings: {
-        workers: { supervisor: "@reviewers" },
+        workers: { escalatesTo: "@reviewers" },
       },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
@@ -596,7 +597,7 @@ describe("@group in scalar fields", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("group_bindings.workers.supervisor: @empty → empty-group error referencing group_bindings.workers.supervisor", () => {
+  it("group_bindings.workers.escalatesTo: @empty → empty-group error referencing group_bindings.workers.escalatesTo", () => {
     const topo: Topology = {
       entry: "authority",
       groups: {
@@ -604,7 +605,7 @@ describe("@group in scalar fields", () => {
         empty: [],
       },
       group_bindings: {
-        workers: { supervisor: "@empty" },
+        workers: { escalatesTo: "@empty" },
       },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
@@ -615,6 +616,6 @@ describe("@group in scalar fields", () => {
     const relevantErrors = result.errors.filter((e) => /empty/i.test(e));
     expect(relevantErrors.length).toBeGreaterThan(0);
     // Error should mention the binding context
-    expect(relevantErrors.some((e) => /group_bindings.*workers.*supervisor|supervisor.*group_bindings.*workers/i.test(e))).toBe(true);
+    expect(relevantErrors.some((e) => /group_bindings.*workers.*escalatesTo|escalatesTo.*group_bindings.*workers/i.test(e))).toBe(true);
   });
 });

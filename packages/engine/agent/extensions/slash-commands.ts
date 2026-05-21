@@ -61,7 +61,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const habitat = getHabitat();
-      const agentName = habitat.agentName;
+      const agentName = habitat.instanceName;
 
       // bridgeSendControl is the launcher-bridge's exported send helper. It
       // returns false in standalone mode (no launcher socket), which we map to
@@ -212,7 +212,7 @@ export default function (pi: ExtensionAPI) {
       if (!ctx.hasUI) {
         // No UI available — fall back to launcher notification via decisions-jump.
         const habitat = getHabitat();
-        const agentName = habitat.agentName;
+        const agentName = habitat.instanceName;
 
         const sendControl = bridgeSendControl;
 
@@ -272,7 +272,7 @@ export default function (pi: ExtensionAPI) {
 
         if (makeFocusRequestEnvelope) {
           const habitat = getHabitat();
-          bridgeSendControl(makeFocusRequestEnvelope({ from: habitat.agentName, target: result.peer }));
+          bridgeSendControl(makeFocusRequestEnvelope({ from: habitat.instanceName, target: result.peer }));
         }
       }
     },

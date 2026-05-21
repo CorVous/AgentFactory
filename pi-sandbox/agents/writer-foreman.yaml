@@ -46,7 +46,7 @@ prompt: |
   End your turn with a short summary: which batches you dispatched and
   what each was supposed to produce.
 
-agents:
+spawns:
   - deferred-writer
 
 tools:

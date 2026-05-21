@@ -111,22 +111,62 @@ describe("resolveRecipe", () => {
     expect(result.skills).toEqual([]);
   });
 
-  it("returns agents list from recipe", () => {
+  it("returns spawns list from recipe", () => {
     const recipesDir = writeTmpRecipe(
-      "with-agents",
-      `tools:\n  - read\nprompt: "p"\nagents:\n  - child-agent\n`,
+      "with-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - child-agent\n`,
     );
-    const result = resolveRecipe("with-agents", { recipesDir });
-    expect(result.agents).toEqual(["child-agent"]);
+    const result = resolveRecipe("with-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["child-agent"]);
   });
 
-  it("returns empty agents array when not set", () => {
+  it("returns empty spawns array when not set", () => {
     const recipesDir = writeTmpRecipe(
-      "no-agents",
+      "no-spawns",
       `tools:\n  - read\nprompt: "p"\n`,
     );
-    const result = resolveRecipe("no-agents", { recipesDir });
-    expect(result.agents).toEqual([]);
+    const result = resolveRecipe("no-spawns", { recipesDir });
+    expect(result.spawns).toEqual([]);
+  });
+
+  it("throws hard error when recipe uses retired field 'agents'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-agents",
+      `tools:\n  - read\nprompt: "p"\nagents:\n  - child-agent\n`,
+    );
+    expect(() => resolveRecipe("retired-agents", { recipesDir })).toThrow(
+      /retired field 'agents'.*renamed to 'spawns'/,
+    );
+  });
+
+  it("throws hard error when recipe uses retired field 'acceptedFrom'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-acceptedFrom",
+      `tools:\n  - read\nprompt: "p"\nacceptedFrom:\n  - boss\n`,
+    );
+    expect(() => resolveRecipe("retired-acceptedFrom", { recipesDir })).toThrow(
+      /retired field 'acceptedFrom'.*renamed to 'acceptsWorkFrom'/,
+    );
+  });
+
+  it("throws hard error when recipe uses retired field 'peers'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-peers",
+      `tools:\n  - read\nprompt: "p"\npeers:\n  - boss\n`,
+    );
+    expect(() => resolveRecipe("retired-peers", { recipesDir })).toThrow(
+      /retired field 'peers'.*renamed to 'messagesWith'/,
+    );
+  });
+
+  it("throws hard error when recipe uses retired field 'submitTo'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-submitTo",
+      `tools:\n  - read\nprompt: "p"\nsubmitTo: boss\n`,
+    );
+    expect(() => resolveRecipe("retired-submitTo", { recipesDir })).toThrow(
+      /retired field 'submitTo'.*renamed to 'submitsWorkTo'/,
+    );
   });
 
   it("throws when recipe file does not exist", () => {

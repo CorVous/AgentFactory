@@ -51,9 +51,9 @@ describe("launch-mesh.mjs — Slice 6 pi --recipe repoint", () => {
     expect(SRC).toMatch(/buildRecipeChildArgv\s*\(/);
   });
 
-  it("passes --peer-name via buildRecipeChildArgv (agentName field, not --agent-name)", () => {
-    // Slice 6: the engine flag is --peer-name; buildRecipeChildArgv maps agentName → --peer-name.
-    expect(SRC).toMatch(/agentName\s*:\s*name/);
+  it("passes --peer-name via buildRecipeChildArgv (instanceName field, not --agent-name)", () => {
+    // Slice 1 rename: agentName → instanceName; buildRecipeChildArgv maps instanceName → --peer-name.
+    expect(SRC).toMatch(/instanceName\s*:\s*name/);
     // Old --agent-name passthrough pattern should not appear in the peerArgs construction.
     expect(SRC).not.toMatch(/"--agent-name"/);
   });

@@ -8,18 +8,18 @@
 #   reviewer   — Task-tier worker in the "reviewers" group; writer submits to it
 #
 # Group bindings:
-#   workers.supervisor  = authority  (both analyst and writer report up to authority)
-#   workers.peers       = @reviewers (workers can talk to reviewers)
-#   reviewers.peers     = @workers   (reviewers can reply to workers)
+#   workers.escalatesTo  = authority  (both analyst and writer report up to authority)
+#   workers.messagesWith = @reviewers (workers can talk to reviewers)
+#   reviewers.messagesWith = @workers (reviewers can reply to workers)
 #
 # Per-node override:
-#   writer.submitTo     = reviewer   (writer submits drafts to the reviewer, not authority)
+#   writer.submitsWorkTo = reviewer  (writer submits drafts to the reviewer, not authority)
 #
 # Human interaction is provided by the launcher TUI (see ADR-0004).
 # The former `type: relay` human node has been removed.
 #
 # Note: all nodes in this mesh require explicit names because they are referenced
-# by structural fields — groups list them, submitTo/acceptedFrom name them directly.
+# by structural fields — groups list them, submitsWorkTo/acceptsWorkFrom name them directly.
 # See authority-mesh.yaml for an example that uses auto-generated names for workers.
 #
 # Launch:
@@ -40,20 +40,20 @@ groups:
 
 group_bindings:
   workers:
-    supervisor: authority
-    peers: ["@reviewers"]
+    escalatesTo: authority
+    messagesWith: ["@reviewers"]
   reviewers:
-    peers: ["@workers"]
+    messagesWith: ["@workers"]
 
 nodes:
   - name: authority
     recipe: mesh-authority
     sandbox: /tmp/pi-mesh-grouped/authority
-    acceptedFrom: ["@workers"]
+    acceptsWorkFrom: ["@workers"]
     task: |
       You are the authority in this mesh. Your peers are: analyst, writer, reviewer.
       Worker messages arrive as [from <peer>] prompts. When one does, coordinate
-      with your peers as needed and reply via agent_send.
+      with your peers as needed and reply via peer_send.
 
   - name: analyst
     recipe: mesh-node
@@ -61,13 +61,13 @@ nodes:
     task: |
       You are the analyst in this mesh. Your supervisor is authority.
       When a research request arrives as [from <peer>] <body>,
-      research it using your tools and reply with agent_send.
+      research it using your tools and reply with peer_send.
 
   - name: writer
     recipe: mesh-writer
     sandbox: /tmp/pi-mesh-grouped/writer
     # Per-node override: writer submits drafts to reviewer, not authority.
-    submitTo: reviewer
+    submitsWorkTo: reviewer
     task: |
       You are the writer in this mesh. Your supervisor is authority; you submit
       drafts to reviewer. When a drafting request arrives, draft the content,
@@ -76,9 +76,9 @@ nodes:
   - name: reviewer
     recipe: mesh-node
     sandbox: /tmp/pi-mesh-grouped/reviewer
-    supervisor: authority
-    acceptedFrom: [writer]
+    escalatesTo: authority
+    acceptsWorkFrom: [writer]
     task: |
       You are the reviewer in this mesh. Your supervisor is authority.
       When a submission arrives from writer, review it for quality and completeness,
-      then send feedback back via agent_send.
+      then send feedback back via peer_send.

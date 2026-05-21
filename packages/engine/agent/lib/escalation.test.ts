@@ -5,14 +5,14 @@ import { setHabitat, type Habitat } from "./habitat";
 // The function is imported lazily after habitat state is set up.
 
 const BASE_HABITAT: Habitat = {
-  agentName: "test-agent",
+  instanceName: "test-agent",
   scratchRoot: "/tmp/scratch",
   busRoot: "/tmp/bus",
   skills: [],
-  agents: [],
+  spawns: [],
   debug: false,
-  acceptedFrom: [],
-  peers: [],
+  acceptsWorkFrom: [],
+  messagesWith: [],
 };
 
 beforeEach(() => {

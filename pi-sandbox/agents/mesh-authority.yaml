@@ -1,6 +1,6 @@
 # mesh-authority — mesh orchestrator recipe.
-# Inherits agent-bus (peer membership on the bus) from extends: peer, and adds
-# mesh-authority (spawn/stop long-running nodes). Also declares agents: so the
+# Inherits peer-bus (peer membership on the bus) from extends: peer, and adds
+# mesh-authority (spawn/stop long-running nodes). Also declares spawns: so the
 # atomic `delegate` tool is available for finite task workers.
 #
 # The authority's instance name (--agent-name) is what peers use to address it
@@ -24,9 +24,9 @@ prompt: |
   orchestrator for the mesh.
 
   Peer communication (you are reachable by all nodes by your instance name):
-  - agent_list() — see live peers
-  - agent_call({to, body, timeout_ms?}) — blocking request-response
-  - agent_send({to, body, in_reply_to?}) — fire-and-forget or reply
+  - peer_list() — see live peers
+  - peer_call({to, body, timeout_ms?}) — blocking request-response
+  - peer_send({to, body, in_reply_to?}) — fire-and-forget or reply
 
   Node lifecycle (for long-running peer nodes):
   - mesh_spawn({recipe, name, task?}) — start a node; runs until mesh_stop
@@ -37,17 +37,17 @@ prompt: |
   - delegate({recipe, task, workspace?, timeout_ms?}) — atomic single call
 
   All nodes you spawn share your PI_AGENT_BUS_ROOT and can reach you by name.
-  Incoming messages arrive as synthetic user prompts; also readable via agent_inbox.
+  Incoming messages arrive as synthetic user prompts; also readable via peer_inbox.
 
 tools:
   - read
   - ls
   - grep
   - find
-  - agent_list
-  - agent_send
-  - agent_inbox
-  - agent_call
+  - peer_list
+  - peer_send
+  - peer_inbox
+  - peer_call
   - mesh_spawn
   - mesh_stop
   - mesh_nodes
@@ -56,7 +56,7 @@ tools:
 extensions:
   - mesh-authority
 
-agents:
+spawns:
   - mesh-node
   - deferred-writer
   - deferred-editor

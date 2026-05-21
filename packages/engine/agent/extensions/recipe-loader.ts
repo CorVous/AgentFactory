@@ -142,7 +142,11 @@ export default function recipeLoader(pi: ExtensionAPI) {
     type: "string",
   });
   pi.registerFlag("topology-overlay", {
-    description: "JSON blob carrying peer relationship fields (supervisor, submitTo, acceptedFrom, peers, agents) from a topology or atomic-delegate invocation",
+    description: "JSON blob carrying peer relationship fields (escalatesTo, submitsWorkTo, acceptsWorkFrom, messagesWith, spawns) from a topology or atomic-delegate invocation",
+    type: "string",
+  });
+  pi.registerFlag("peer-bus", {
+    description: "Absolute path to the peer bus root directory (forwarded by launch-mesh and atomic-delegate; may be unused at runtime)",
     type: "string",
   });
   pi.registerFlag("inherit-pty", {
@@ -236,9 +240,9 @@ export default function recipeLoader(pi: ExtensionAPI) {
 
     // ── Read launch flags ─────────────────────────────────────────────────────
 
-    // --peer-name overrides agent identity; falls back to sessionId then recipeName.
+    // --peer-name overrides instance identity; falls back to sessionId then recipeName.
     const peerNameFlag = (pi.getFlag("peer-name") as string | undefined)?.trim();
-    const agentName = peerNameFlag || ctx.sessionId || recipeName;
+    const instanceName = peerNameFlag || ctx.sessionId || recipeName;
 
     // --sandbox overrides the working directory / scratchRoot.
     const sandboxFlag = (pi.getFlag("sandbox") as string | undefined)?.trim();
@@ -253,14 +257,14 @@ export default function recipeLoader(pi: ExtensionAPI) {
     // ── Build and set Habitat ─────────────────────────────────────────────────
 
     const habitatOpts: {
-      agentName: string;
+      instanceName: string;
       cwd: string;
       flags: { debug?: boolean };
       recipe: typeof recipe;
       peerFields?: import("../lib/build-habitat.js").PeerFields;
-      agents?: string[];
+      spawns?: string[];
     } = {
-      agentName,
+      instanceName,
       cwd,
       flags: { debug: debugFlag },
       recipe,
@@ -270,10 +274,10 @@ export default function recipeLoader(pi: ExtensionAPI) {
     if (topologyOverlayJson) {
       try {
         mergeTopologyOverlay(habitatOpts, topologyOverlayJson);
-        // If agents was overridden by the overlay, patch the recipe object so
-        // buildHabitat picks it up from recipe.agents as well.
-        if (habitatOpts.agents !== undefined) {
-          recipe = { ...recipe, agents: habitatOpts.agents };
+        // If spawns was overridden by the overlay, patch the recipe object so
+        // buildHabitat picks it up from recipe.spawns as well.
+        if (habitatOpts.spawns !== undefined) {
+          recipe = { ...recipe, spawns: habitatOpts.spawns };
         }
         // Re-assign recipe with peerFields — buildHabitat reads them from peerFields separately.
       } catch (e) {
@@ -286,7 +290,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
     }
 
     const habitat = buildHabitat({
-      agentName: habitatOpts.agentName,
+      instanceName: habitatOpts.instanceName,
       cwd: habitatOpts.cwd,
       flags: habitatOpts.flags,
       recipe,
@@ -367,8 +371,8 @@ export default function recipeLoader(pi: ExtensionAPI) {
       if (habitat) {
         hasSupervisoryHabitat =
           Boolean(habitat.supervisor) ||
-          Boolean(habitat.submitTo) ||
-          (Array.isArray(habitat.acceptedFrom) && habitat.acceptedFrom.length > 0);
+          Boolean(habitat.submitsWorkTo) ||
+          (Array.isArray(habitat.acceptsWorkFrom) && habitat.acceptsWorkFrom.length > 0);
       }
     } catch {
       // habitat-glue not available — treat as non-supervisory

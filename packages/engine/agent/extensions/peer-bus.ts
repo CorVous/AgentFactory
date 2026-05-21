@@ -1,13 +1,13 @@
-// agent-bus extension — peer-to-peer messaging between independently
+// peer-bus extension — peer-to-peer messaging between independently
 // launched pi agents. Each agent listens on a Unix domain socket at
 // `${BUS_ROOT}/${name}.sock`. Messages are async fire-and-forget: a
 // successful send returns immediately and the recipient surfaces the
 // message on its next turn via pi.sendUserMessage. The same buffer is
-// also pull-readable via the agent_inbox tool.
+// also pull-readable via the peer_inbox tool.
 //
-// busRoot and agentName are read from getHabitat() (materialised by the
+// busRoot and instanceName are read from getHabitat() (materialised by the
 // habitat baseline extension before this session_start runs). The
-// resolution chain (--agent-bus → default) is resolved by the engine's
+// resolution chain (--peer-bus → default) is resolved by the engine's
 // recipe-loader and lands as Habitat.busRoot. The bus root
 // deliberately lives outside scratchRoot so the sandbox extension's
 // path rejection doesn't trip on socket paths; the bus extension only
@@ -19,8 +19,8 @@
 // route through that library.
 //
 // Companion to atomic-delegate. Atomic delegate uses the bus's submission
-// flow internally; for explicit peer messaging, agents call agent_send /
-// agent_call directly.
+// flow internally; for explicit peer messaging, agents call peer_send /
+// peer_call directly.
 //
 // LAZY ACQUISITION: socket binding is gated on habitatHasPeers(). A solo
 // pi --recipe run (no peers) binds no OS socket; mesh tools are still
@@ -66,8 +66,8 @@ interface BusState {
 // extensions in isolated module graphs) sees the same state — same
 // pattern as deferred-confirm.
 function getState(): BusState {
-  const g = globalThis as { __pi_agent_bus__?: BusState };
-  return (g.__pi_agent_bus__ ??= {
+  const g = globalThis as { __pi_peer_bus__?: BusState };
+  return (g.__pi_peer_bus__ ??= {
     name: "",
     busRoot: "",
     inbox: [],
@@ -77,7 +77,7 @@ function getState(): BusState {
   });
 }
 
-// busRoot and agentName are resolved from the Habitat materialised by
+// busRoot and instanceName are resolved from the Habitat materialised by
 // the habitat baseline extension before this session_start runs.
 
 function probeSocketLive(sockPath: string, timeoutMs = 200): Promise<boolean> {
@@ -140,10 +140,10 @@ async function bindServer(state: BusState, ctx: { ui: { notify: (m: string, l?: 
     const live = await probeSocketLive(sockPath);
     if (live) {
       ctx.ui.notify(
-        `agent-bus: name "${state.name}" already held by a live peer at ${sockPath} — refusing to bind`,
+        `peer-bus: name "${state.name}" already held by a live peer at ${sockPath} — refusing to bind`,
         "error",
       );
-      throw new Error(`agent-bus name collision: ${state.name}`);
+      throw new Error(`peer-bus name collision: ${state.name}`);
     }
     fs.unlinkSync(sockPath);
     await tryListen();
@@ -165,7 +165,7 @@ function handleIncoming(state: BusState, env: Envelope) {
   // Notify the bus-tail observer (if installed by bus-tail-emitter extension).
   notifyBusTailObserver(env, "in");
 
-  // If this is a reply to a pending agent_call, resolve or reject it
+  // If this is a reply to a pending peer_call, resolve or reject it
   // directly — don't route to inbox, the caller is already waiting for it.
   if (env.in_reply_to) {
     const pending = state.pendingCalls.get(env.in_reply_to);
@@ -175,11 +175,11 @@ function handleIncoming(state: BusState, env: Envelope) {
       if (env.payload.kind === "message") {
         pending.resolve(env.payload.text);
       } else {
-        // agent_call is a message-only convenience; a non-message reply is
+        // peer_call is a message-only convenience; a non-message reply is
         // a programming error — reject loudly so the caller sees it.
         pending.reject(
           new Error(
-            `agent_call expected a message-kind reply, got '${env.payload.kind}' (msg_id ${env.msg_id.slice(0, 8)})`,
+            `peer_call expected a message-kind reply, got '${env.payload.kind}' (msg_id ${env.msg_id.slice(0, 8)})`,
           ),
         );
       }
@@ -192,9 +192,9 @@ function handleIncoming(state: BusState, env: Envelope) {
   if (env.in_reply_to && dispatchSubmissionReply(env)) return;
 
   // atomic-delegate hook: spawned workers send submissions FROM names
-  // that don't appear in this agent's static acceptedFrom list. The
+  // that don't appear in this agent's static acceptsWorkFrom list. The
   // hook self-gates on its own pending-workers map and runs BEFORE the
-  // acceptedFrom check so dynamic workers aren't dropped.
+  // acceptsWorkFrom check so dynamic workers aren't dropped.
   const adHook = (
     globalThis as { __pi_atomic_delegate_dispatch__?: (env: Envelope) => boolean }
   ).__pi_atomic_delegate_dispatch__;
@@ -205,17 +205,17 @@ function handleIncoming(state: BusState, env: Envelope) {
   const kind = env.payload.kind;
 
   if (kind !== "message") {
-    // acceptedFrom enforcement for typed (non-message) inbound envelopes.
+    // acceptsWorkFrom enforcement for typed (non-message) inbound envelopes.
     // Message-kind envelopes are unrestricted for v1 peer chat.
-    let acceptedFrom: string[] = [];
+    let acceptsWorkFrom: string[] = [];
     try {
-      acceptedFrom = getHabitat().acceptedFrom;
+      acceptsWorkFrom = getHabitat().acceptsWorkFrom;
     } catch { /* Habitat not yet available — default to empty (drop) */ }
-    if (!acceptedFrom.includes(env.from)) {
+    if (!acceptsWorkFrom.includes(env.from)) {
       try {
         if (getHabitat().debug === true) {
           process.stderr.write(
-            `[agent-bus] dropping ${kind} from '${env.from}': not in acceptedFrom\n`,
+            `[peer-bus] dropping ${kind} from '${env.from}': not in acceptsWorkFrom\n`,
           );
         }
       } catch { /* Habitat not yet available */ }
@@ -229,7 +229,7 @@ function handleIncoming(state: BusState, env: Envelope) {
     if (dispatch && dispatch(env)) return;
 
     // No supervisor rail loaded — fall through to general inbox so the
-    // message is still accessible via agent_inbox.
+    // message is still accessible via peer_inbox.
   }
 
   state.inbox.push(env);
@@ -254,7 +254,7 @@ function pushToModel(state: BusState, envs: Envelope[]) {
 async function sendEnvelope(state: BusState, env: Envelope): Promise<{ delivered: boolean; reason?: string }> {
   const result = await sendOverBus(state.busRoot, env.to, encodeEnvelope(env));
   // Opportunistic cleanup: if the peer's socket was left by a crashed process,
-  // unlink it so probeSocketLive and agent_list return an accurate picture.
+  // unlink it so probeSocketLive and peer_list return an accurate picture.
   if (!result.delivered && result.reason === "peer offline") {
     const dest = path.join(state.busRoot, `${env.to}.sock`);
     try { fs.unlinkSync(dest); } catch { /* noop */ }
@@ -302,7 +302,7 @@ export default function (pi: ExtensionAPI) {
     let hasPeers = false;
     try {
       const h = getHabitat();
-      name = (h.agentName || "anonymous").trim() || "anonymous";
+      name = (h.instanceName || "anonymous").trim() || "anonymous";
       busRoot = path.resolve(h.busRoot);
       hasPeers = habitatHasPeers(h);
     } catch {
@@ -322,15 +322,15 @@ export default function (pi: ExtensionAPI) {
     try {
       await bindServer(state, ctx);
     } catch (e) {
-      ctx.ui.notify(`agent-bus: failed to bind ${state.sockPath}: ${(e as Error).message}`, "error");
+      ctx.ui.notify(`peer-bus: failed to bind ${state.sockPath}: ${(e as Error).message}`, "error");
       return;
     }
 
     try {
       if (getHabitat().debug === true) {
-        const dump = `agent-bus: name=${state.name} sock=${state.sockPath}`;
+        const dump = `peer-bus: name=${state.name} sock=${state.sockPath}`;
         ctx.ui.notify(dump, "info");
-        process.stderr.write(`[agent-bus] ${dump}\n`);
+        process.stderr.write(`[peer-bus] ${dump}\n`);
       }
     } catch { /* Habitat not available */ }
 
@@ -373,15 +373,15 @@ export default function (pi: ExtensionAPI) {
   process.once("exit", cleanup);
 
   pi.registerTool({
-    name: "agent_send",
-    label: "Agent Send",
+    name: "peer_send",
+    label: "Peer Send",
     description:
-      "Send an async message to another agent on the bus. Fire-and-forget: " +
+      "Send an async message to another peer on the bus. Fire-and-forget: " +
       "returns once the byte hits the wire (or fails). The recipient receives " +
       "the message as a synthetic user prompt on its next turn (and via " +
-      "agent_inbox). Use agent_list to discover live peers.",
+      "peer_inbox). Use peer_list to discover live peers.",
     parameters: Type.Object({
-      to: Type.String({ description: "Name of the recipient agent (matches its --agent-name)." }),
+      to: Type.String({ description: "Name of the recipient peer (matches its --peer-name)." }),
       body: Type.String({ description: "Message body. Plain text; no envelope wrapping required." }),
       in_reply_to: Type.Optional(
         Type.String({ description: "Optional msg_id of the message you are replying to." }),
@@ -390,7 +390,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params) {
       if (!state.server) {
         return {
-          content: [{ type: "text", text: "agent-bus not initialized; cannot send." }],
+          content: [{ type: "text", text: "peer-bus not initialized; cannot send." }],
           details: { delivered: false, reason: "bus not initialized" },
         };
       }
@@ -412,8 +412,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "agent_inbox",
-    label: "Agent Inbox",
+    name: "peer_inbox",
+    label: "Peer Inbox",
     description:
       "Read messages buffered by the bus. By default returned messages are " +
       "cleared from the inbox; pass peek=true to keep them. Use since_ts to " +
@@ -442,8 +442,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "agent_list",
-    label: "Agent List",
+    name: "peer_list",
+    label: "Peer List",
     description: "List currently-live peers on the bus (probes each socket; cleans stale entries).",
     parameters: Type.Object({}),
     async execute() {
@@ -457,14 +457,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "agent_call",
-    label: "Agent Call",
+    name: "peer_call",
+    label: "Peer Call",
     description:
-      "Send a message to a peer and block until it replies. Unlike agent_send " +
-      "(fire-and-forget), agent_call waits for the recipient to send back a message " +
+      "Send a message to a peer and block until it replies. Unlike peer_send " +
+      "(fire-and-forget), peer_call waits for the recipient to send back a message " +
       "with in_reply_to matching the outgoing msg_id. Returns the reply body. Use " +
       "for request-response exchanges where you need the answer before continuing. " +
-      "The recipient must call agent_send({to, body, in_reply_to: <msg_id>}) to unblock " +
+      "The recipient must call peer_send({to, body, in_reply_to: <msg_id>}) to unblock " +
       "the caller. Fails fast if the peer is offline. Default timeout is 30 s.",
     parameters: Type.Object({
       to: Type.String({ description: "Name of the recipient agent." }),
@@ -476,7 +476,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params) {
       if (!state.server) {
         return {
-          content: [{ type: "text", text: "agent-bus not initialized; cannot call." }],
+          content: [{ type: "text", text: "peer-bus not initialized; cannot call." }],
           details: { delivered: false, reason: "bus not initialized" },
         };
       }
@@ -490,7 +490,7 @@ export default function (pi: ExtensionAPI) {
       const result = await sendEnvelope(state, env);
       if (!result.delivered) {
         return {
-          content: [{ type: "text", text: `agent_call to ${params.to} failed: ${result.reason}.` }],
+          content: [{ type: "text", text: `peer_call to ${params.to} failed: ${result.reason}.` }],
           details: { msg_id: env.msg_id, delivered: false, reason: result.reason },
         };
       }
@@ -511,13 +511,13 @@ export default function (pi: ExtensionAPI) {
 
       if (timedOut) {
         return {
-          content: [{ type: "text", text: `agent_call to ${params.to} timed out after ${timeoutMs}ms.` }],
+          content: [{ type: "text", text: `peer_call to ${params.to} timed out after ${timeoutMs}ms.` }],
           details: { msg_id: env.msg_id, delivered: true, reply: null, reason: "timeout" },
         };
       }
       if (typeMismatchError) {
         return {
-          content: [{ type: "text", text: `agent_call to ${params.to} failed: ${typeMismatchError}` }],
+          content: [{ type: "text", text: `peer_call to ${params.to} failed: ${typeMismatchError}` }],
           details: { msg_id: env.msg_id, delivered: true, reply: null, reason: typeMismatchError },
         };
       }

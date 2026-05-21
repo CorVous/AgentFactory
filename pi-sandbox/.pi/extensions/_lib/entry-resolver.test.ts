@@ -10,7 +10,7 @@
  *   - explicit entry @unknown-group → error
  *   - explicit entry @empty-group → error
  *   - crash-auto-shift returns top supervisor name
- *   - group_binding supervisor resolution
+ *   - group_binding escalatesTo resolution
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,14 +21,14 @@ type TopologyNode = {
   name: string;
   recipe?: string;
   type?: "relay";
-  supervisor?: string;
+  escalatesTo?: string;
   [key: string]: unknown;
 };
 
 type Topology = {
   entry?: string;
   groups?: Record<string, string[]>;
-  group_bindings?: Record<string, { supervisor?: string; [key: string]: unknown }>;
+  group_bindings?: Record<string, { escalatesTo?: string; [key: string]: unknown }>;
   nodes: TopologyNode[];
 };
 
@@ -39,7 +39,7 @@ function authorityWorkerTopo(entryName?: string): Topology {
     entry: entryName,
     nodes: [
       { name: "authority", recipe: "mesh-authority" },
-      { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+      { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
     ],
   };
 }
@@ -73,8 +73,8 @@ describe("resolveEntry", () => {
       // no entry:
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "other-authority", recipe: "mesh-authority" }, // also no supervisor
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "other-authority", recipe: "mesh-authority" }, // also no escalatesTo
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
@@ -90,8 +90,8 @@ describe("resolveEntry", () => {
       groups: { leaders: ["authority", "backup"] },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "backup", recipe: "mesh-authority", supervisor: "authority" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "backup", recipe: "mesh-authority", escalatesTo: "authority" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     // Call twice to verify determinism (not round-robin)
@@ -107,7 +107,7 @@ describe("resolveEntry", () => {
       entry: "@no-such-group",
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
@@ -122,7 +122,7 @@ describe("resolveEntry", () => {
       groups: { empty: [] },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
@@ -138,11 +138,11 @@ describe("resolveEntry", () => {
     expect(result.entryPeer).toBeNull();
   });
 
-  it("resolves top supervisor from group_bindings (node without per-node supervisor)", () => {
+  it("resolves top supervisor from group_bindings (node without per-node escalatesTo)", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1", "w2"] },
-      group_bindings: { workers: { supervisor: "authority" } },
+      group_bindings: { workers: { escalatesTo: "authority" } },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "w1", recipe: "mesh-node" },
@@ -155,21 +155,21 @@ describe("resolveEntry", () => {
     expect(result.entryPeer).toBe("authority");
   });
 
-  it("per-node supervisor overrides group_binding when computing top candidates", () => {
+  it("per-node escalatesTo overrides group_binding when computing top candidates", () => {
     const topo: Topology = {
       entry: "authority",
       groups: { workers: ["w1"] },
       group_bindings: {
-        workers: { supervisor: "authority" },
+        workers: { escalatesTo: "authority" },
       },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        // w1 has per-node supervisor that overrides group_binding
-        { name: "w1", recipe: "mesh-node", supervisor: "authority" },
+        // w1 has per-node escalatesTo that overrides group_binding
+        { name: "w1", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
-    // authority is the only node with no effective supervisor
+    // authority is the only node with no effective escalatesTo
     expect(result.topSupervisor).toBe("authority");
     expect(result.errors).toHaveLength(0);
   });
@@ -178,8 +178,8 @@ describe("resolveEntry", () => {
     const topo: Topology = {
       entry: "authority",
       nodes: [
-        { name: "authority", recipe: "mesh-authority", supervisor: "external" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "authority", recipe: "mesh-authority", escalatesTo: "external" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
@@ -191,8 +191,8 @@ describe("resolveEntry", () => {
       entry: "authority",
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "other-authority", recipe: "mesh-authority" }, // also no supervisor
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "other-authority", recipe: "mesh-authority" }, // also no escalatesTo
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
@@ -204,8 +204,8 @@ describe("resolveEntry", () => {
       entry: "authority",
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
-        { name: "human", type: "relay" }, // no supervisor, but relay — excluded
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "human", type: "relay" }, // no escalatesTo, but relay — excluded
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const result = resolveEntry(topo);
@@ -244,7 +244,7 @@ describe("crashAutoShiftTarget", () => {
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "rogue", recipe: "mesh-authority" },
-        { name: "worker", recipe: "mesh-node", supervisor: "authority" },
+        { name: "worker", recipe: "mesh-node", escalatesTo: "authority" },
       ],
     };
     const target = crashAutoShiftTarget(topo);
@@ -255,7 +255,7 @@ describe("crashAutoShiftTarget", () => {
     const topo: Topology = {
       entry: "w1",
       groups: { workers: ["w1", "w2"] },
-      group_bindings: { workers: { supervisor: "authority" } },
+      group_bindings: { workers: { escalatesTo: "authority" } },
       nodes: [
         { name: "authority", recipe: "mesh-authority" },
         { name: "w1", recipe: "mesh-node" },

@@ -9,20 +9,20 @@ import { resolveRef } from "./ref-resolver.mjs";
  *   type?: "relay";
  *   sandbox?: string;
  *   task?: string;
- *   supervisor?: string;
- *   submitTo?: string;
- *   acceptedFrom?: string[];
- *   peers?: string[];
+ *   escalatesTo?: string;
+ *   submitsWorkTo?: string;
+ *   acceptsWorkFrom?: string[];
+ *   messagesWith?: string[];
  *   groups?: string[];
  * }} TopologyNode
  */
 
 /**
  * @typedef {{
- *   supervisor?: string;
- *   submitTo?: string;
- *   acceptedFrom?: string[];
- *   peers?: string[];
+ *   escalatesTo?: string;
+ *   submitsWorkTo?: string;
+ *   acceptsWorkFrom?: string[];
+ *   messagesWith?: string[];
  * }} GroupBinding
  */
 
@@ -38,10 +38,10 @@ import { resolveRef } from "./ref-resolver.mjs";
 
 /**
  * @typedef {{
- *   supervisor?: string;
- *   submitTo?: string;
- *   acceptedFrom: string[];
- *   peers: string[];
+ *   escalatesTo?: string;
+ *   submitsWorkTo?: string;
+ *   acceptsWorkFrom: string[];
+ *   messagesWith: string[];
  *   _resolutions: Array<{field: string; group: string; member: string; policy: "round-robin"}>;
  * }} ResolvedNode
  */
@@ -66,13 +66,13 @@ export function parseTopology(yamlText) {
       ...(n.type === "relay" ? { type: /** @type {"relay"} */ ("relay") } : {}),
       ...(typeof n.sandbox === "string" ? { sandbox: n.sandbox } : {}),
       ...(typeof n.task === "string" ? { task: n.task } : {}),
-      ...(typeof n.supervisor === "string" ? { supervisor: n.supervisor } : {}),
-      ...(typeof n.submitTo === "string" ? { submitTo: n.submitTo } : {}),
-      ...(Array.isArray(n.acceptedFrom)
-        ? { acceptedFrom: n.acceptedFrom.filter((s) => typeof s === "string") }
+      ...(typeof n.escalatesTo === "string" ? { escalatesTo: n.escalatesTo } : {}),
+      ...(typeof n.submitsWorkTo === "string" ? { submitsWorkTo: n.submitsWorkTo } : {}),
+      ...(Array.isArray(n.acceptsWorkFrom)
+        ? { acceptsWorkFrom: n.acceptsWorkFrom.filter((s) => typeof s === "string") }
         : {}),
-      ...(Array.isArray(n.peers)
-        ? { peers: n.peers.filter((s) => typeof s === "string") }
+      ...(Array.isArray(n.messagesWith)
+        ? { messagesWith: n.messagesWith.filter((s) => typeof s === "string") }
         : {}),
       ...(Array.isArray(n.groups)
         ? { groups: n.groups.filter((s) => typeof s === "string") }
@@ -118,12 +118,12 @@ export function parseTopology(yamlText) {
       }
       /** @type {GroupBinding} */
       const binding = {};
-      if (typeof v.supervisor === "string") binding.supervisor = v.supervisor;
-      if (typeof v.submitTo === "string") binding.submitTo = v.submitTo;
-      if (Array.isArray(v.acceptedFrom))
-        binding.acceptedFrom = v.acceptedFrom.filter((s) => typeof s === "string");
-      if (Array.isArray(v.peers))
-        binding.peers = v.peers.filter((s) => typeof s === "string");
+      if (typeof v.escalatesTo === "string") binding.escalatesTo = v.escalatesTo;
+      if (typeof v.submitsWorkTo === "string") binding.submitsWorkTo = v.submitsWorkTo;
+      if (Array.isArray(v.acceptsWorkFrom))
+        binding.acceptsWorkFrom = v.acceptsWorkFrom.filter((s) => typeof s === "string");
+      if (Array.isArray(v.messagesWith))
+        binding.messagesWith = v.messagesWith.filter((s) => typeof s === "string");
       bindings[k] = binding;
     }
     topo.group_bindings = bindings;
@@ -190,39 +190,39 @@ export function resolveNode(topo, nodeName, counterStates) {
 
   // Apply group_bindings in declaration order; later groups overwrite earlier
   // for scalar fields, and also replace array fields. Per-node fields win over all.
-  let supervisor;
-  let submitTo;
-  let acceptedFrom;
-  let peers;
+  let escalatesTo;
+  let submitsWorkTo;
+  let acceptsWorkFrom;
+  let messagesWith;
 
   for (const groupName of memberGroups) {
     const binding = topo.group_bindings?.[groupName];
     if (!binding) continue;
-    if (binding.supervisor !== undefined) supervisor = binding.supervisor;
-    if (binding.submitTo !== undefined) submitTo = binding.submitTo;
-    if (binding.acceptedFrom !== undefined) acceptedFrom = binding.acceptedFrom;
-    if (binding.peers !== undefined) peers = binding.peers;
+    if (binding.escalatesTo !== undefined) escalatesTo = binding.escalatesTo;
+    if (binding.submitsWorkTo !== undefined) submitsWorkTo = binding.submitsWorkTo;
+    if (binding.acceptsWorkFrom !== undefined) acceptsWorkFrom = binding.acceptsWorkFrom;
+    if (binding.messagesWith !== undefined) messagesWith = binding.messagesWith;
   }
 
   // Per-node values override bindings
-  if (node.supervisor !== undefined) supervisor = node.supervisor;
-  if (node.submitTo !== undefined) submitTo = node.submitTo;
-  if (node.acceptedFrom !== undefined) acceptedFrom = node.acceptedFrom;
-  if (node.peers !== undefined) peers = node.peers;
+  if (node.escalatesTo !== undefined) escalatesTo = node.escalatesTo;
+  if (node.submitsWorkTo !== undefined) submitsWorkTo = node.submitsWorkTo;
+  if (node.acceptsWorkFrom !== undefined) acceptsWorkFrom = node.acceptsWorkFrom;
+  if (node.messagesWith !== undefined) messagesWith = node.messagesWith;
 
   // Expand @group refs
-  const resolvedAcceptedFrom = expandRefs(acceptedFrom ?? [], groups, `node '${nodeName}'.acceptedFrom`);
-  const resolvedPeers = expandRefs(peers ?? [], groups, `node '${nodeName}'.peers`);
+  const resolvedAcceptsWorkFrom = expandRefs(acceptsWorkFrom ?? [], groups, `node '${nodeName}'.acceptsWorkFrom`);
+  const resolvedMessagesWith = expandRefs(messagesWith ?? [], groups, `node '${nodeName}'.messagesWith`);
 
   // Validate that all concrete names exist in the topology
-  for (const name of resolvedAcceptedFrom) {
+  for (const name of resolvedAcceptsWorkFrom) {
     if (!nodeNames.has(name)) {
-      throw new Error(`topology: node '${nodeName}'.acceptedFrom references unknown node '${name}'`);
+      throw new Error(`topology: node '${nodeName}'.acceptsWorkFrom references unknown node '${name}'`);
     }
   }
-  for (const name of resolvedPeers) {
+  for (const name of resolvedMessagesWith) {
     if (!nodeNames.has(name)) {
-      throw new Error(`topology: node '${nodeName}'.peers references unknown node '${name}'`);
+      throw new Error(`topology: node '${nodeName}'.messagesWith references unknown node '${name}'`);
     }
   }
 
@@ -253,24 +253,25 @@ export function resolveNode(topo, nodeName, counterStates) {
     }
   }
 
-  const resolvedSupervisor = resolveScalar(supervisor, "supervisor");
-  const resolvedSubmitTo = resolveScalar(submitTo, "submitTo");
+  // escalatesTo (topology input) → supervisor (Habitat field name in the overlay)
+  const resolvedEscalatesTo = resolveScalar(escalatesTo, "escalatesTo");
+  const resolvedSubmitsWorkTo = resolveScalar(submitsWorkTo, "submitsWorkTo");
 
   // Validate resolved concrete scalar names exist in the topology
-  if (resolvedSupervisor !== undefined && !nodeNames.has(resolvedSupervisor)) {
-    throw new Error(`topology: node '${nodeName}'.supervisor references unknown node '${resolvedSupervisor}'`);
+  if (resolvedEscalatesTo !== undefined && !nodeNames.has(resolvedEscalatesTo)) {
+    throw new Error(`topology: node '${nodeName}'.escalatesTo references unknown node '${resolvedEscalatesTo}'`);
   }
-  if (resolvedSubmitTo !== undefined && !nodeNames.has(resolvedSubmitTo)) {
-    throw new Error(`topology: node '${nodeName}'.submitTo references unknown node '${resolvedSubmitTo}'`);
+  if (resolvedSubmitsWorkTo !== undefined && !nodeNames.has(resolvedSubmitsWorkTo)) {
+    throw new Error(`topology: node '${nodeName}'.submitsWorkTo references unknown node '${resolvedSubmitsWorkTo}'`);
   }
 
   /** @type {ResolvedNode} */
   const result = {
-    acceptedFrom: resolvedAcceptedFrom,
-    peers: resolvedPeers,
+    acceptsWorkFrom: resolvedAcceptsWorkFrom,
+    messagesWith: resolvedMessagesWith,
     _resolutions: resolutions,
   };
-  if (resolvedSupervisor !== undefined) result.supervisor = resolvedSupervisor;
-  if (resolvedSubmitTo !== undefined) result.submitTo = resolvedSubmitTo;
+  if (resolvedEscalatesTo !== undefined) result.escalatesTo = resolvedEscalatesTo;
+  if (resolvedSubmitsWorkTo !== undefined) result.submitsWorkTo = resolvedSubmitsWorkTo;
   return result;
 }

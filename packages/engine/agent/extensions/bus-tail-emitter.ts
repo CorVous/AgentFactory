@@ -118,9 +118,9 @@ function syncObserver(state: BusTailEmitterState) {
     let peerName = "unknown";
     try {
       const { getHabitat } = _require(path.resolve(__dirname, "../lib/habitat")) as {
-        getHabitat?: () => { agentName: string };
+        getHabitat?: () => { instanceName: string };
       };
-      if (getHabitat) peerName = getHabitat().agentName;
+      if (getHabitat) peerName = getHabitat().instanceName;
     } catch { /* ignore */ }
 
     const tailEnv = makeTailEventEnvelope({
