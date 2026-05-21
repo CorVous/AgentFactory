@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/engine"
+  ],
   "description": "Workspace for building and testing pi agents.",
   "scripts": {
     "sandcastle": "npx tsx .sandcastle/main.ts",

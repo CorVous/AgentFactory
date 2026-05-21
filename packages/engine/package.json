@@ -1,0 +1,18 @@
+{
+  "name": "@agentfactory/pi-engine",
+  "version": "0.1.0",
+  "description": "AgentFactory engine pi package — recipe-loader, Habitat builder, and recipe resolver.",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "name": "pi-engine",
+    "extensions": ["agent/extensions/recipe-loader.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3"
+  }
+}
