@@ -473,9 +473,9 @@ Registers three tools and one CLI flag:
   `--agent-bus <dir>` (parallel to `--sandbox <dir>`) to override.
 
 Each agent listens on `${BUS_ROOT}/${name}.sock` (name comes from
-`--agent-name`, which the runner sets to a generated
+`--peer-name`, which the engine sets to a generated
 `<breed>-<shortName>` slug — unique per instance — unless the
-`-- --agent-name <override>` passthrough wins). The runner probes the
+`--peer-name <override>` wins). The engine probes the
 bus root before generating so two roots launched in different terminals
 won't collide; explicit overrides are needed when peers want to address
 each other by a stable role name (e.g. `planner`, `worker-a`). Incoming
@@ -700,7 +700,7 @@ group_bindings:
     peers: ["@workers"]
 
 nodes:
-  - name: authority             # instance name on the bus (--agent-name)
+  - name: authority             # instance name on the bus (--peer-name)
     recipe: mesh-authority      # pi-sandbox/agents/<recipe>.yaml
     sandbox: /tmp/mesh/auth     # optional; auto-created under /tmp if omitted
     task: "..."                 # optional; appended to system prompt as per-instance role context
