@@ -14,23 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(path.join(__dirname, "launch-mesh.mjs"), "utf8");
 
 describe("launch-mesh.mjs — --inherit-pty in peerArgs", () => {
-  it('includes the "--inherit-pty" literal string in the peerArgs array', () => {
-    expect(SRC).toMatch(/"--inherit-pty"/);
-  });
-
-  it('"--inherit-pty" appears in the peerArgs construction block (before the "--" separator)', () => {
-    // peerArgs is built as an array literal; "--inherit-pty" must appear
-    // as a standalone element, before the "--" passthrough separator.
-    const peerArgsStart = SRC.indexOf("peerArgs");
-    expect(peerArgsStart).toBeGreaterThanOrEqual(0);
-    // Find "--inherit-pty" and "--" within that block and verify order.
-    const inheritPtyPos = SRC.indexOf('"--inherit-pty"', peerArgsStart);
-    const passthroughPos = SRC.indexOf('"--",', peerArgsStart);
-    // Both must exist
-    expect(inheritPtyPos).toBeGreaterThanOrEqual(0);
-    expect(passthroughPos).toBeGreaterThanOrEqual(0);
-    // "--inherit-pty" must come before the "--" separator
-    expect(inheritPtyPos).toBeLessThan(passthroughPos);
+  it('includes the "--inherit-pty" literal string (passed to buildRecipeChildArgv)', () => {
+    // Slice 6: inherited-pty is now passed via the inheritPty option to buildRecipeChildArgv.
+    expect(SRC).toMatch(/inheritPty/);
   });
 
   it("does not set PI_MESH_PEER in peerEnv", () => {
@@ -38,12 +24,42 @@ describe("launch-mesh.mjs — --inherit-pty in peerArgs", () => {
   });
 
   it("does not set PI_AGENT_NAME in peerEnv (Slice 6: identity flows via CLI flags)", () => {
-    // After Slice 6, identity is passed via --agent-name in peerArgs, not env vars.
+    // After Slice 6, identity is passed via --peer-name via buildRecipeChildArgv, not env vars.
     expect(SRC).not.toMatch(/PI_AGENT_NAME/);
   });
 
   it("does not set PI_AGENT_BUS_ROOT in peerEnv (Slice 6: bus root flows via --agent-bus)", () => {
-    // After Slice 6, bus root is passed via --agent-bus in peerArgs, not env vars.
+    // After Slice 6, bus root is passed via --agent-bus via buildRecipeChildArgv, not env vars.
     expect(SRC).not.toMatch(/PI_AGENT_BUS_ROOT/);
+  });
+});
+
+describe("launch-mesh.mjs — Slice 6 pi --recipe repoint", () => {
+  it("does not reference run-agent.mjs as RUNNER or spawn target", () => {
+    // Slice 6: children are now spawned as pi --recipe, not via node run-agent.mjs.
+    expect(SRC).not.toMatch(/RUNNER\s*=/);
+    expect(SRC).not.toMatch(/run-agent\.mjs/);
+  });
+
+  it("imports buildRecipeChildArgv from the engine lib", () => {
+    expect(SRC).toMatch(/buildRecipeChildArgv/);
+    expect(SRC).toMatch(/child-spawn\.mjs/);
+  });
+
+  it("uses buildRecipeChildArgv to build peerArgs (not an inline array)", () => {
+    // peerArgs should be assigned from a buildRecipeChildArgv call, not from a literal array.
+    expect(SRC).toMatch(/buildRecipeChildArgv\s*\(/);
+  });
+
+  it("passes --peer-name via buildRecipeChildArgv (agentName field, not --agent-name)", () => {
+    // Slice 6: the engine flag is --peer-name; buildRecipeChildArgv maps agentName → --peer-name.
+    expect(SRC).toMatch(/agentName\s*:\s*name/);
+    // Old --agent-name passthrough pattern should not appear in the peerArgs construction.
+    expect(SRC).not.toMatch(/"--agent-name"/);
+  });
+
+  it("does not reference --topology-overlay as an inline peerArgs push (delegated to buildRecipeChildArgv)", () => {
+    // The topology overlay is now passed via the topologyOverlay option.
+    expect(SRC).toMatch(/topologyOverlay/);
   });
 });

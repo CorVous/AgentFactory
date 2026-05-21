@@ -19,7 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildHabitat } from "../lib/build-habitat.js";
+import { buildHabitat, mergeTopologyOverlay } from "../lib/build-habitat.js";
 import { resolveRecipe } from "../lib/resolve-recipe.js";
 import { resolveModel } from "../lib/resolve-model.js";
 import { loadBundledDefaults, loadOverrideConfig } from "../lib/load-tier-config.js";
@@ -130,6 +130,34 @@ export default function recipeLoader(pi: ExtensionAPI) {
     type: "string",
   });
 
+  // Six launch flags — set by launch-mesh.mjs and atomic-delegate when spawning
+  // pi --recipe children. The engine registers them so pi does not reject them
+  // as unknown flags; recipe-loader consumes them at session_start / before_agent_start.
+  pi.registerFlag("sandbox", {
+    description: "Absolute path to the sandbox / working directory for this agent session",
+    type: "string",
+  });
+  pi.registerFlag("task", {
+    description: "Task text appended (trimmed) to the assembled system prompt at before_agent_start",
+    type: "string",
+  });
+  pi.registerFlag("topology-overlay", {
+    description: "JSON blob carrying peer relationship fields (supervisor, submitTo, acceptedFrom, peers, agents) from a topology or atomic-delegate invocation",
+    type: "string",
+  });
+  pi.registerFlag("inherit-pty", {
+    description: "When set, this session's stdio is already inside a managed PTY; skip nested PTY allocation",
+    type: "boolean",
+  });
+  pi.registerFlag("debug", {
+    description: "Set Habitat.debug = true; rails dump diagnostics on session_start",
+    type: "boolean",
+  });
+  pi.registerFlag("peer-name", {
+    description: "Override the agent's instance name (used as the bus socket identity and display name)",
+    type: "string",
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     const recipeName = (pi.getFlag("recipe") as string | undefined)?.trim();
 
@@ -206,13 +234,63 @@ export default function recipeLoader(pi: ExtensionAPI) {
       return;
     }
 
+    // ── Read launch flags ─────────────────────────────────────────────────────
+
+    // --peer-name overrides agent identity; falls back to sessionId then recipeName.
+    const peerNameFlag = (pi.getFlag("peer-name") as string | undefined)?.trim();
+    const agentName = peerNameFlag || ctx.sessionId || recipeName;
+
+    // --sandbox overrides the working directory / scratchRoot.
+    const sandboxFlag = (pi.getFlag("sandbox") as string | undefined)?.trim();
+    const cwd = sandboxFlag ? path.resolve(sandboxFlag) : ctx.cwd;
+
+    // --debug sets Habitat.debug.
+    const debugFlag = Boolean(pi.getFlag("debug"));
+
+    // --topology-overlay carries peer relationship fields from the launcher.
+    const topologyOverlayJson = (pi.getFlag("topology-overlay") as string | undefined)?.trim() ?? "";
+
     // ── Build and set Habitat ─────────────────────────────────────────────────
 
-    const habitat = buildHabitat({
-      agentName: ctx.sessionId ?? recipeName,
-      cwd: ctx.cwd,
-      flags: {},
+    const habitatOpts: {
+      agentName: string;
+      cwd: string;
+      flags: { debug?: boolean };
+      recipe: typeof recipe;
+      peerFields?: import("../lib/build-habitat.js").PeerFields;
+      agents?: string[];
+    } = {
+      agentName,
+      cwd,
+      flags: { debug: debugFlag },
       recipe,
+    };
+
+    // Merge topology overlay — on invalid JSON, notify the user and bail out.
+    if (topologyOverlayJson) {
+      try {
+        mergeTopologyOverlay(habitatOpts, topologyOverlayJson);
+        // If agents was overridden by the overlay, patch the recipe object so
+        // buildHabitat picks it up from recipe.agents as well.
+        if (habitatOpts.agents !== undefined) {
+          recipe = { ...recipe, agents: habitatOpts.agents };
+        }
+        // Re-assign recipe with peerFields — buildHabitat reads them from peerFields separately.
+      } catch (e) {
+        ctx.ui.notify(
+          `recipe-loader: --topology-overlay invalid JSON: ${(e as Error).message}`,
+          "error",
+        );
+        return;
+      }
+    }
+
+    const habitat = buildHabitat({
+      agentName: habitatOpts.agentName,
+      cwd: habitatOpts.cwd,
+      flags: habitatOpts.flags,
+      recipe,
+      peerFields: habitatOpts.peerFields,
     });
 
     try {
@@ -297,12 +375,20 @@ export default function recipeLoader(pi: ExtensionAPI) {
     }
 
     // Assemble the full system prompt with extension fragments.
-    const systemPrompt = assemblePrompt({
+    let systemPrompt = assemblePrompt({
       extensionNames: recipe.extensions,
       recipePrompt: recipe.prompt,
       hasSupervisoryHabitat,
       readFragment: readExtensionFragment,
     });
+
+    // --task text (from launch-mesh / atomic-delegate) is appended to the
+    // assembled system prompt as per-instance role context, matching the
+    // semantics of run-agent.mjs's `taskText` handling.
+    const taskFlag = (pi.getFlag("task") as string | undefined)?.trim();
+    if (taskFlag) {
+      systemPrompt = `${systemPrompt}\n\n${taskFlag}`;
+    }
 
     return { systemPrompt };
   });

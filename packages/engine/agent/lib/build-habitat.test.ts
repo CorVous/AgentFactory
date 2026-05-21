@@ -4,7 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
-import { buildHabitat } from "./build-habitat.js";
+import { buildHabitat, mergeTopologyOverlay } from "./build-habitat.js";
 
 describe("buildHabitat", () => {
   it("sets agentName from input", () => {
@@ -149,5 +149,66 @@ describe("buildHabitat", () => {
     expect(h.submitTo).toBeUndefined();
     expect(h.acceptedFrom).toEqual([]);
     expect(h.peers).toEqual([]);
+  });
+});
+
+describe("mergeTopologyOverlay", () => {
+  it("sets supervisor and submitTo from valid overlay", () => {
+    const opts: { peerFields?: { supervisor?: string; submitTo?: string } } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ supervisor: "boss", submitTo: "collector" }));
+    expect(opts.peerFields?.supervisor).toBe("boss");
+    expect(opts.peerFields?.submitTo).toBe("collector");
+  });
+
+  it("sets acceptedFrom when overlay array is non-empty", () => {
+    const opts: { peerFields?: { acceptedFrom?: string[] } } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ acceptedFrom: ["boss"] }));
+    expect(opts.peerFields?.acceptedFrom).toEqual(["boss"]);
+  });
+
+  it("sets peers when overlay array is non-empty", () => {
+    const opts: { peerFields?: { peers?: string[] } } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ peers: ["boss", "sibling"] }));
+    expect(opts.peerFields?.peers).toEqual(["boss", "sibling"]);
+  });
+
+  it("ignores empty acceptedFrom array (does not override)", () => {
+    const opts: { peerFields?: { acceptedFrom?: string[] } } = { peerFields: { acceptedFrom: ["existing"] } };
+    mergeTopologyOverlay(opts, JSON.stringify({ acceptedFrom: [] }));
+    expect(opts.peerFields?.acceptedFrom).toEqual(["existing"]);
+  });
+
+  it("overrides agents even with empty array when field is present", () => {
+    const opts: { agents?: string[] } = { agents: ["child"] };
+    mergeTopologyOverlay(opts, JSON.stringify({ agents: [] }));
+    expect(opts.agents).toEqual([]);
+  });
+
+  it("overrides agents with non-empty array from overlay", () => {
+    const opts: { agents?: string[] } = { agents: ["old"] };
+    mergeTopologyOverlay(opts, JSON.stringify({ agents: ["new-agent"] }));
+    expect(opts.agents).toEqual(["new-agent"]);
+  });
+
+  it("creates peerFields object when opts.peerFields is undefined", () => {
+    const opts: { peerFields?: { supervisor?: string } } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ supervisor: "boss" }));
+    expect(opts.peerFields).toBeDefined();
+    expect(opts.peerFields?.supervisor).toBe("boss");
+  });
+
+  it("throws on malformed JSON", () => {
+    const opts = {};
+    expect(() => mergeTopologyOverlay(opts, "not-json")).toThrow();
+  });
+
+  it("ignores overlay fields absent in the JSON (partial overlay)", () => {
+    const opts: { peerFields?: { supervisor?: string; submitTo?: string } } = {
+      peerFields: { supervisor: "existing-boss" },
+    };
+    mergeTopologyOverlay(opts, JSON.stringify({ submitTo: "collector" }));
+    // supervisor should stay unchanged
+    expect(opts.peerFields?.supervisor).toBe("existing-boss");
+    expect(opts.peerFields?.submitTo).toBe("collector");
   });
 });

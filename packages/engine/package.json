@@ -20,7 +20,8 @@
     ]
   },
   "exports": {
-    "./lib/*": "./agent/lib/*"
+    "./lib/*": "./agent/lib/*",
+    "./lib/*.mjs": "./agent/lib/*.mjs"
   },
   "files": [
     "agent/"

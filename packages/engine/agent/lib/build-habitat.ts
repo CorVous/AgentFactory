@@ -48,6 +48,58 @@ export interface BuildHabitatOptions {
 }
 
 /**
+ * Merge a JSON topology-overlay string into existing HabitatOptions fields.
+ *
+ * Mirrors the semantics of run-agent.mjs's overlay merge:
+ *   - supervisor / submitTo: overrides when the overlay has a non-empty string value.
+ *   - acceptedFrom / peers: overrides when the overlay array is non-empty.
+ *   - agents: overrides (even with empty array) when the field is present in the overlay.
+ *
+ * Throws if the JSON is malformed (caller is responsible for error handling).
+ *
+ * @param opts - Mutable habitat options object to merge into.
+ * @param json - Raw JSON string from --topology-overlay.
+ * @returns The same opts object (mutated in place) for chaining.
+ */
+export function mergeTopologyOverlay(
+  opts: {
+    peerFields?: PeerFields;
+    agents?: string[];
+  },
+  json: string,
+): typeof opts {
+  const overlay = JSON.parse(json) as Record<string, unknown>;
+
+  if (!opts.peerFields) {
+    opts.peerFields = {};
+  }
+
+  if (typeof overlay.supervisor === "string" && overlay.supervisor) {
+    opts.peerFields.supervisor = overlay.supervisor;
+  }
+  if (typeof overlay.submitTo === "string" && overlay.submitTo) {
+    opts.peerFields.submitTo = overlay.submitTo;
+  }
+  if (Array.isArray(overlay.acceptedFrom) && (overlay.acceptedFrom as unknown[]).length > 0) {
+    opts.peerFields.acceptedFrom = (overlay.acceptedFrom as unknown[]).filter(
+      (s): s is string => typeof s === "string",
+    );
+  }
+  if (Array.isArray(overlay.peers) && (overlay.peers as unknown[]).length > 0) {
+    opts.peerFields.peers = (overlay.peers as unknown[]).filter(
+      (s): s is string => typeof s === "string",
+    );
+  }
+  if (Array.isArray(overlay.agents)) {
+    opts.agents = (overlay.agents as unknown[]).filter(
+      (s): s is string => typeof s === "string",
+    );
+  }
+
+  return opts;
+}
+
+/**
  * Build a Habitat from resolved recipe + cwd + flags.
  *
  * @param opts - See BuildHabitatOptions.
