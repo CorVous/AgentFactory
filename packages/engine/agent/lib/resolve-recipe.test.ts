@@ -594,3 +594,157 @@ describe("dedupeFirstOccurrence", () => {
     expect(dedupeFirstOccurrence(["x", "y", "z"])).toEqual(["x", "y", "z"]);
   });
 });
+
+// ── Slice 3: initial_mesh:, spawns: wiring fields, groups: validation ────────
+
+describe("resolveRecipe — Slice 3: spawns wiring fields", () => {
+  it("parses spawns object-form with escalatesTo and submitsWorkTo", () => {
+    const recipesDir = writeTmpRecipe(
+      "wired-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo: "@$myGroups"\n    submitsWorkTo: "@$myGroups:reviewer"\n`,
+    );
+    const result = resolveRecipe("wired-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["mesh-node"]);
+    expect(result.spawnWiring).toBeDefined();
+    expect(result.spawnWiring![0].recipe).toBe("mesh-node");
+    expect(result.spawnWiring![0].escalatesTo).toBe("@$myGroups");
+    expect(result.spawnWiring![0].submitsWorkTo).toBe("@$myGroups:reviewer");
+  });
+
+  it("parses spawns object-form with messagesWith and acceptsWorkFrom list refs", () => {
+    const recipesDir = writeTmpRecipe(
+      "list-wiring",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    messagesWith:\n      - "@haiku"\n      - "@story"\n`,
+    );
+    const result = resolveRecipe("list-wiring", { recipesDir });
+    expect(result.spawnWiring![0].messagesWith).toEqual(["@haiku", "@story"]);
+  });
+
+  it("rejects list value for singular field submitsWorkTo", () => {
+    const recipesDir = writeTmpRecipe(
+      "list-singular",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    submitsWorkTo:\n      - "@haiku"\n`,
+    );
+    expect(() => resolveRecipe("list-singular", { recipesDir })).toThrow(/singular|list/i);
+  });
+
+  it("rejects list value for singular field escalatesTo", () => {
+    const recipesDir = writeTmpRecipe(
+      "list-escalates",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo:\n      - "@haiku"\n`,
+    );
+    expect(() => resolveRecipe("list-escalates", { recipesDir })).toThrow(/singular|list/i);
+  });
+
+  it("rejects malformed ref in wiring field", () => {
+    const recipesDir = writeTmpRecipe(
+      "bad-ref",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo: "@bad:bad:extra"\n`,
+    );
+    expect(() => resolveRecipe("bad-ref", { recipesDir })).toThrow(/malformed|colon|ref/i);
+  });
+
+  it("rejects recipe-typed ref for a recipe not in spawns list", () => {
+    const recipesDir = writeTmpRecipe(
+      "unreachable-recipe",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo: "@haiku:unknown-recipe"\n`,
+    );
+    expect(() => resolveRecipe("unreachable-recipe", { recipesDir })).toThrow(/not reachable|reachable/i);
+  });
+
+  it("recipes with NO wiring fields in spawns produce no spawnWiring", () => {
+    const recipesDir = writeTmpRecipe(
+      "plain-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("plain-spawns", { recipesDir });
+    expect(result.spawnWiring).toBeUndefined();
+  });
+
+  it("recipe with no spawns: produces no spawnWiring", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-spawns",
+      `tools:\n  - read\nprompt: "p"\n`,
+    );
+    const result = resolveRecipe("no-spawns", { recipesDir });
+    expect(result.spawnWiring).toBeUndefined();
+    expect(result.spawns).toEqual([]);
+  });
+});
+
+describe("resolveRecipe — Slice 3: initial_mesh: block", () => {
+  it("parses valid initial_mesh: entries", () => {
+    const recipesDir = writeTmpRecipe(
+      "with-mesh",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n    name: w1\n    groups: [haiku, story]\n    task: "Write poems"\n`,
+    );
+    const result = resolveRecipe("with-mesh", { recipesDir });
+    expect(result.initialMesh).toBeDefined();
+    expect(result.initialMesh![0]).toMatchObject({
+      recipe: "mesh-node",
+      name: "w1",
+      groups: ["haiku", "story"],
+      task: "Write poems",
+    });
+  });
+
+  it("parses initial_mesh: entry with no groups field", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-no-groups",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n`,
+    );
+    const result = resolveRecipe("mesh-no-groups", { recipesDir });
+    expect(result.initialMesh![0].groups).toBeUndefined();
+  });
+
+  it("rejects initial_mesh: entry with reserved _-prefixed group name", () => {
+    const recipesDir = writeTmpRecipe(
+      "reserved-group",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n    groups: [_internal]\n`,
+    );
+    expect(() => resolveRecipe("reserved-group", { recipesDir })).toThrow(/reserved|_/);
+  });
+
+  it("rejects initial_mesh: entry with _default as explicit group name", () => {
+    const recipesDir = writeTmpRecipe(
+      "default-group",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n    groups: [_default]\n`,
+    );
+    expect(() => resolveRecipe("default-group", { recipesDir })).toThrow(/reserved|_/);
+  });
+
+  it("rejects initial_mesh: entry missing recipe field", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-recipe-mesh",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - name: w1\n`,
+    );
+    expect(() => resolveRecipe("no-recipe-mesh", { recipesDir })).toThrow(/recipe/i);
+  });
+
+  it("recipes without initial_mesh: have undefined initialMesh", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-initial-mesh",
+      `tools:\n  - read\nprompt: "p"\n`,
+    );
+    const result = resolveRecipe("no-initial-mesh", { recipesDir });
+    expect(result.initialMesh).toBeUndefined();
+  });
+
+  it("all pi-sandbox/agents/*.yaml recipes resolve without error (no groups/initial_mesh regression)", () => {
+    const agentsDir = "/home/user/AgentFactory/pi-sandbox/agents";
+    const { readdirSync } = require("node:fs");
+    let files: string[];
+    try {
+      files = readdirSync(agentsDir).filter((f: string) => f.endsWith(".yaml"));
+    } catch {
+      // Skip if agents dir doesn't exist
+      return;
+    }
+    for (const file of files) {
+      const recipeName = file.slice(0, -5);
+      expect(() =>
+        resolveRecipe(recipeName, { recipeDirs: [agentsDir] }),
+      ).not.toThrow();
+    }
+  });
+});

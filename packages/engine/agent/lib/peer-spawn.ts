@@ -12,6 +12,8 @@
 //   runMeshSpawn       — long-lived background worker (mesh_spawn tool)
 //   computeWorkerHabitatOverlay — shared overlay builder
 //   copyWorkspace      — workspace bundling helper
+//   parseRef           — ADR-0008 5-form reference grammar parser
+//   classifyBareRef    — @<token> disambiguation helper (ADR §C)
 //
 // OQ-2 fix: when serializing the habitat overlay to --topology-overlay JSON,
 // the key MUST be `escalatesTo` (not `supervisor`) because mergeTopologyOverlay
@@ -23,6 +25,171 @@ import path from "node:path";
 import type { Artifact } from "./bus-envelope.js";
 
 // ---------------------------------------------------------------------------
+// ADR-0008 reference grammar — ParsedRef discriminated union + parseRef
+// ---------------------------------------------------------------------------
+
+/** @group:<recipe> — instances of <recipe> in <group> */
+export interface RefGroupRecipe {
+  kind: "group-recipe";
+  group: string;
+  recipe: string;
+}
+
+/** @<group> — all peers in <group> regardless of recipe */
+export interface RefGroup {
+  kind: "group";
+  group: string;
+}
+
+/** @<recipe> — short for @$myGroups:<recipe> (ADR §C) */
+export interface RefRecipe {
+  kind: "recipe";
+  recipe: string;
+}
+
+/** @$myGroups — all peers in any group the resolving peer is a member of */
+export interface RefMyGroups {
+  kind: "my-groups";
+}
+
+/** @$myGroups:<recipe> — recipe-typed variant of @$myGroups */
+export interface RefMyGroupsRecipe {
+  kind: "my-groups-recipe";
+  recipe: string;
+}
+
+/** A literal (non-@) peer name — pass-through */
+export interface RefLiteral {
+  kind: "literal";
+  value: string;
+}
+
+export type ParsedRef =
+  | RefGroupRecipe
+  | RefGroup
+  | RefRecipe
+  | RefMyGroups
+  | RefMyGroupsRecipe
+  | RefLiteral;
+
+/**
+ * Parse an ADR-0008 reference string into a typed discriminated union.
+ *
+ * Recognised forms:
+ *   @<group>:<recipe>   — RefGroupRecipe
+ *   @<group>            — RefGroup
+ *   @<recipe>           — RefRecipe (bare @<token> resolved as recipe-in-myGroups;
+ *                         caller should use classifyBareRef for disambiguation)
+ *   @$myGroups          — RefMyGroups
+ *   @$myGroups:<recipe> — RefMyGroupsRecipe
+ *   <literal>           — RefLiteral
+ *
+ * Throws on any malformed ref.
+ */
+export function parseRef(raw: string): ParsedRef {
+  if (typeof raw !== "string") {
+    throw new Error(`parseRef: ref must be a string, got ${typeof raw}`);
+  }
+  if (raw.includes(" ") || raw.includes("\t") || raw.includes("\n")) {
+    throw new Error(`parseRef: ref must not contain whitespace: ${JSON.stringify(raw)}`);
+  }
+  if (raw === "") {
+    throw new Error("parseRef: ref must not be empty");
+  }
+
+  // Literal (non-@)
+  if (!raw.startsWith("@")) {
+    return { kind: "literal", value: raw };
+  }
+
+  const body = raw.slice(1); // strip @
+
+  if (body === "") {
+    throw new Error(`parseRef: '@' alone is not a valid ref`);
+  }
+
+  // Count colons — more than one is malformed
+  const colonCount = (body.match(/:/g) || []).length;
+  if (colonCount > 1) {
+    throw new Error(`parseRef: too many ':' separators in ref '${raw}'`);
+  }
+
+  const colonIdx = body.indexOf(":");
+
+  if (colonIdx !== -1) {
+    const left = body.slice(0, colonIdx);
+    const right = body.slice(colonIdx + 1);
+
+    if (left === "") throw new Error(`parseRef: empty group segment in ref '${raw}'`);
+    if (right === "") throw new Error(`parseRef: empty recipe segment in ref '${raw}'`);
+
+    // @$myGroups:<recipe>
+    if (left === "$myGroups") {
+      if (right.startsWith("$")) {
+        throw new Error(`parseRef: unknown symbolic '${right}' in ref '${raw}'`);
+      }
+      return { kind: "my-groups-recipe", recipe: right };
+    }
+
+    // @<group>:<recipe>
+    if (left.startsWith("$")) {
+      throw new Error(`parseRef: unknown symbolic '${left}' in ref '${raw}'`);
+    }
+    return { kind: "group-recipe", group: left, recipe: right };
+  }
+
+  // No colon
+
+  // @$myGroups
+  if (body === "$myGroups") {
+    return { kind: "my-groups" };
+  }
+
+  // Unknown @$<symbolic>
+  if (body.startsWith("$")) {
+    throw new Error(`parseRef: unknown symbolic '@${body}' — only @$myGroups is supported`);
+  }
+
+  // Bare @<token> — ambiguous between @<group> and @<recipe>.
+  // Default to RefGroup. Callers that need disambiguation should use
+  // classifyBareRef after parsing. At recipe-parse time, classifyBareRef
+  // resolves the ambiguity against the recipe's known spawns/groups.
+  return { kind: "group", group: body };
+}
+
+/**
+ * Disambiguate a bare `@<token>` reference (ADR §C):
+ *   - If `token` matches a reachable recipe name → RefRecipe
+ *   - If `token` matches a declared group name  → RefGroup
+ *   - If `token` matches BOTH                   → hard error
+ *   - If `token` matches neither                → RefGroup (unknown group, caught at runtime)
+ *
+ * `reachableRecipes` — recipe names from the recipe's `spawns:` list.
+ * `declaredGroups`   — group names declared anywhere in the recipe's context.
+ */
+export function classifyBareRef(
+  token: string,
+  reachableRecipes: string[],
+  declaredGroups: string[],
+): ParsedRef {
+  const isRecipe = reachableRecipes.includes(token);
+  const isGroup = declaredGroups.includes(token);
+
+  if (isRecipe && isGroup) {
+    throw new Error(
+      `parseRef: '@${token}' is ambiguous — '${token}' is both a reachable recipe name ` +
+      `and a declared group name. Disambiguate with '@${token}:${token}' (group:recipe form) ` +
+      `or use a distinct group name.`,
+    );
+  }
+  if (isRecipe) {
+    return { kind: "recipe", recipe: token };
+  }
+  // Either known group or unknown (resolved at runtime)
+  return { kind: "group", group: token };
+}
+
+// ---------------------------------------------------------------------------
 // Shared types
 // ---------------------------------------------------------------------------
 
@@ -32,6 +199,8 @@ export interface SpawnArgs {
   scratchRoot: string;
   busRoot: string;
   task: string;
+  /** Group memberships for the spawned worker (seeded into its Habitat). */
+  groups?: string[];
   habitatOverlay: {
     /** Caller's name — serializes to `escalatesTo` in the topology overlay JSON. */
     supervisor: string;
@@ -39,6 +208,8 @@ export interface SpawnArgs {
     acceptsWorkFrom: string[];
     messagesWith: string[];
     spawns: string[];
+    /** Group memberships for the spawned worker. */
+    groups?: string[];
   };
 }
 
@@ -101,6 +272,8 @@ export interface MeshSpawnContext {
   busRoot: string;
   task?: string;
   workspace?: { include: string[] };
+  /** Group memberships to assign to the spawned worker. */
+  groups?: string[];
   callerSandbox: string;
   callerName: string;
   spawnWorker: (args: SpawnArgs) => WorkerHandle;
@@ -136,13 +309,17 @@ export function computeWorkerHabitatOverlay(callerName: string): SpawnArgs["habi
  *  Maps `supervisor` → `escalatesTo` per mergeTopologyOverlay's expected keys.
  */
 export function serializeHabitatOverlay(overlay: SpawnArgs["habitatOverlay"]): string {
-  return JSON.stringify({
+  const obj: Record<string, unknown> = {
     escalatesTo: overlay.supervisor,
     submitsWorkTo: overlay.submitsWorkTo,
     acceptsWorkFrom: overlay.acceptsWorkFrom,
     messagesWith: overlay.messagesWith,
     spawns: overlay.spawns,
-  });
+  };
+  if (overlay.groups !== undefined) {
+    obj.groups = overlay.groups;
+  }
+  return JSON.stringify(obj);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +450,9 @@ export async function runMeshSpawn(ctx: MeshSpawnContext): Promise<MeshSpawnResu
   }
 
   const habitatOverlay = computeWorkerHabitatOverlay(ctx.callerName);
+  if (ctx.groups !== undefined) {
+    habitatOverlay.groups = ctx.groups;
+  }
 
   const spawnArgs: SpawnArgs = {
     workerName: ctx.workerName,
@@ -280,6 +460,7 @@ export async function runMeshSpawn(ctx: MeshSpawnContext): Promise<MeshSpawnResu
     scratchRoot,
     busRoot: ctx.busRoot,
     task: ctx.task ?? "",
+    groups: ctx.groups,
     habitatOverlay,
   };
 

@@ -1,3 +1,5 @@
+// CANONICAL COPY: packages/engine/agent/lib/ref-resolver.ts (TypeScript)
+// This .mjs file is kept for topology-validator.mjs / launch-mesh.mjs consumers.
 /**
  * ref-resolver.mjs — pure-function @group reference resolver.
  *

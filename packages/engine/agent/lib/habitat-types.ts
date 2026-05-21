@@ -32,4 +32,11 @@ export interface Habitat {
   submitsWorkTo?: string;
   acceptsWorkFrom: string[];
   messagesWith: string[];
+
+  // Slice 3 (ADR-0008): spawner-scoped group memberships for this peer.
+  // Set from --topology-overlay at spawn time; defaults to [] (peer joins
+  // @_default implicitly, but rails read this field as declared groups).
+  groups: string[];
+  /** The spawner's instance name — used for cohort-registry scoping. */
+  spawnerName?: string;
 }

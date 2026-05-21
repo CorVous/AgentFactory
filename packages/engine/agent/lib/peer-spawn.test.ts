@@ -11,6 +11,8 @@ import {
   copyWorkspace,
   runAtomicDelegate,
   runMeshSpawn,
+  parseRef,
+  classifyBareRef,
   type WorkerHandle,
   type SpawnArgs,
   type DispatchHookRegistry,
@@ -437,5 +439,133 @@ describe("runMeshSpawn", () => {
     await runMeshSpawn(ctx);
     expect(fs.existsSync(path.join(capturedScratch, "ref.md"))).toBe(true);
     fs.rmSync(capturedScratch, { recursive: true, force: true });
+  });
+});
+
+// ── parseRef — ADR-0008 5-form reference grammar ─────────────────────────────
+
+describe("parseRef", () => {
+  // ── Literal pass-through ──────────────────────────────────────────────────
+
+  it("literal string (no @) → kind:literal with value", () => {
+    const r = parseRef("peer-a");
+    expect(r.kind).toBe("literal");
+    if (r.kind === "literal") expect(r.value).toBe("peer-a");
+  });
+
+  it("literal empty string throws", () => {
+    expect(() => parseRef("")).toThrow(/empty/i);
+  });
+
+  // ── Form 1: @<group>:<recipe> ─────────────────────────────────────────────
+
+  it("@<group>:<recipe> → kind:group-recipe", () => {
+    const r = parseRef("@haiku:writer");
+    expect(r.kind).toBe("group-recipe");
+    if (r.kind === "group-recipe") {
+      expect(r.group).toBe("haiku");
+      expect(r.recipe).toBe("writer");
+    }
+  });
+
+  it("@<group>:<recipe> with multi-word group → kind:group-recipe", () => {
+    const r = parseRef("@my-team:reviewer");
+    expect(r.kind).toBe("group-recipe");
+    if (r.kind === "group-recipe") {
+      expect(r.group).toBe("my-team");
+      expect(r.recipe).toBe("reviewer");
+    }
+  });
+
+  // ── Form 2: @<group> ──────────────────────────────────────────────────────
+
+  it("bare @<group> → kind:group (default disambiguation)", () => {
+    const r = parseRef("@reviewers");
+    expect(r.kind).toBe("group");
+    if (r.kind === "group") expect(r.group).toBe("reviewers");
+  });
+
+  // ── Form 3: @<recipe> (via classifyBareRef disambiguation) ───────────────
+
+  it("classifyBareRef: token matching recipe but not group → kind:recipe", () => {
+    const r = classifyBareRef("writer", ["writer", "reviewer"], []);
+    expect(r.kind).toBe("recipe");
+    if (r.kind === "recipe") expect(r.recipe).toBe("writer");
+  });
+
+  it("classifyBareRef: token matching group but not recipe → kind:group", () => {
+    const r = classifyBareRef("haiku", [], ["haiku"]);
+    expect(r.kind).toBe("group");
+    if (r.kind === "group") expect(r.group).toBe("haiku");
+  });
+
+  it("classifyBareRef: token matching BOTH → throws ambiguity error", () => {
+    expect(() => classifyBareRef("haiku", ["haiku"], ["haiku"])).toThrow(/ambiguous/i);
+  });
+
+  it("classifyBareRef: token matching neither → kind:group (unknown, caught at runtime)", () => {
+    const r = classifyBareRef("unknown", [], []);
+    expect(r.kind).toBe("group");
+  });
+
+  // ── Form 4: @$myGroups ────────────────────────────────────────────────────
+
+  it("@$myGroups → kind:my-groups", () => {
+    const r = parseRef("@$myGroups");
+    expect(r.kind).toBe("my-groups");
+  });
+
+  // ── Form 5: @$myGroups:<recipe> ──────────────────────────────────────────
+
+  it("@$myGroups:<recipe> → kind:my-groups-recipe", () => {
+    const r = parseRef("@$myGroups:writer");
+    expect(r.kind).toBe("my-groups-recipe");
+    if (r.kind === "my-groups-recipe") expect(r.recipe).toBe("writer");
+  });
+
+  // ── Malformed cases (must throw) ─────────────────────────────────────────
+
+  it("@ alone throws", () => {
+    expect(() => parseRef("@")).toThrow();
+  });
+
+  it("whitespace in ref throws", () => {
+    expect(() => parseRef("@group name")).toThrow(/whitespace/i);
+  });
+
+  it("@<group>:<recipe>:<extra> (multiple colons) throws", () => {
+    expect(() => parseRef("@group:recipe:extra")).toThrow(/colon|separator/i);
+  });
+
+  it("@<group>: (empty recipe segment) throws", () => {
+    expect(() => parseRef("@group:")).toThrow(/empty.*recipe|recipe.*empty/i);
+  });
+
+  it("@:<recipe> (empty group segment) throws", () => {
+    expect(() => parseRef("@:recipe")).toThrow(/empty.*group|group.*empty/i);
+  });
+
+  it("@$unknown throws (unknown symbolic)", () => {
+    expect(() => parseRef("@$unknown")).toThrow(/symbolic|unknown/i);
+  });
+
+  it("@$spawner throws (unsupported symbolic)", () => {
+    expect(() => parseRef("@$spawner")).toThrow(/symbolic|unknown/i);
+  });
+});
+
+// ── serializeHabitatOverlay includes groups ───────────────────────────────
+
+describe("serializeHabitatOverlay — groups field", () => {
+  it("includes groups field when overlay has groups set", () => {
+    const overlay = { ...computeWorkerHabitatOverlay("boss"), groups: ["haiku"] };
+    const json = JSON.parse(serializeHabitatOverlay(overlay));
+    expect(json.groups).toEqual(["haiku"]);
+  });
+
+  it("omits groups key when overlay has no groups", () => {
+    const overlay = computeWorkerHabitatOverlay("boss");
+    const json = JSON.parse(serializeHabitatOverlay(overlay));
+    expect("groups" in json).toBe(false);
   });
 });

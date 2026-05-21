@@ -24,6 +24,7 @@ const SOLO: Habitat = {
   submitsWorkTo: undefined,
   acceptsWorkFrom: [],
   messagesWith: [],
+  groups: [],
 };
 
 describe("habitatHasPeers — solo (no peers)", () => {

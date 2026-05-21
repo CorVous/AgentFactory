@@ -1,3 +1,5 @@
+// CANONICAL COPY: packages/engine/agent/lib/group-membership.ts (TypeScript)
+// This .mjs file is kept for topology-validator.mjs / launch-mesh.mjs consumers.
 /**
  * group-membership.mjs — unified group-membership aggregator.
  *

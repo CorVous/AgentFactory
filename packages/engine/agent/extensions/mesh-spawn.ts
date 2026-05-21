@@ -162,21 +162,25 @@ export default function (pi: ExtensionAPI) {
           }),
         }),
       ),
-      // Accepted-but-ignored until Slice 3 (group wiring semantics).
       groups: Type.Optional(
-        Type.Array(Type.String(), { description: "Group memberships (Slice 3+, ignored for now)." }),
+        Type.Array(Type.String(), {
+          description:
+            "Group memberships for this worker. Determines which peers it can " +
+            "communicate with (ADR-0008 visibility scoping). Names starting with '_' " +
+            "are reserved. Ungrouped workers join @_default implicitly.",
+        }),
       ),
       escalatesTo: Type.Optional(
-        Type.String({ description: "Override escalation target (Slice 3+, ignored for now)." }),
+        Type.String({ description: "Override escalation target (Slice 3+, accepted but not yet plumbed to wiring resolver)." }),
       ),
       submitsWorkTo: Type.Optional(
-        Type.String({ description: "Override submission target (Slice 3+, ignored for now)." }),
+        Type.String({ description: "Override submission target (Slice 3+, accepted but not yet plumbed to wiring resolver)." }),
       ),
       messagesWith: Type.Optional(
-        Type.Array(Type.String(), { description: "Override peer list (Slice 3+, ignored for now)." }),
+        Type.Array(Type.String(), { description: "Override peer list (Slice 3+, accepted but not yet plumbed to wiring resolver)." }),
       ),
       acceptsWorkFrom: Type.Optional(
-        Type.Array(Type.String(), { description: "Override inbound peers (Slice 3+, ignored for now)." }),
+        Type.Array(Type.String(), { description: "Override inbound peers (Slice 3+, accepted but not yet plumbed to wiring resolver)." }),
       ),
     }),
     async execute(_id, params): Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }> {
@@ -211,6 +215,27 @@ export default function (pi: ExtensionAPI) {
           ],
           details: { error: "recipe_not_allowed", recipe: params.recipe, allowed: spawns },
         };
+      }
+
+      // ── 2b. Validate groups param ───────────────────────────────────────
+      if (params.groups !== undefined) {
+        for (const g of params.groups) {
+          if (typeof g !== "string" || !g) {
+            return {
+              content: [{ type: "text", text: `mesh_spawn: 'groups' must be an array of non-empty strings.` }],
+              details: { error: "invalid_groups", groups: params.groups },
+            };
+          }
+          if (g.startsWith("_")) {
+            return {
+              content: [{
+                type: "text",
+                text: `mesh_spawn: group name '${g}' is reserved — group names starting with '_' are not allowed.`,
+              }],
+              details: { error: "reserved_group_name", group: g },
+            };
+          }
+        }
       }
 
       // ── 3. Recipe-exists check ───────────────────────────────────────────
@@ -251,6 +276,7 @@ export default function (pi: ExtensionAPI) {
         busRoot,
         task: params.task,
         workspace: params.workspace,
+        groups: params.groups,
         callerSandbox,
         callerName,
         spawnWorker: productionSpawnWorker,

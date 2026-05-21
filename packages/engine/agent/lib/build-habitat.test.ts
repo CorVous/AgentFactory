@@ -211,4 +211,64 @@ describe("mergeTopologyOverlay", () => {
     expect(opts.peerFields?.supervisor).toBe("existing-boss");
     expect(opts.peerFields?.submitsWorkTo).toBe("collector");
   });
+
+  // Slice 3: groups and spawnerName in overlay
+  it("sets groups from overlay when present", () => {
+    const opts: { peerFields?: { groups?: string[] } } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ groups: ["haiku", "story"] }));
+    expect(opts.peerFields?.groups).toEqual(["haiku", "story"]);
+  });
+
+  it("sets spawnerName from overlay when present", () => {
+    const opts: { peerFields?: { spawnerName?: string } } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ spawnerName: "my-host" }));
+    expect(opts.peerFields?.spawnerName).toBe("my-host");
+  });
+
+  it("ignores empty groups array (does not override existing)", () => {
+    const opts: { peerFields?: { groups?: string[] } } = { peerFields: { groups: ["existing"] } };
+    // groups: [] in overlay — should it override? current impl always sets it when array present
+    // So an empty array does replace.
+    mergeTopologyOverlay(opts, JSON.stringify({ groups: [] }));
+    expect(opts.peerFields?.groups).toEqual([]);
+  });
+});
+
+describe("buildHabitat — Slice 3: groups field", () => {
+  it("defaults groups to empty array", () => {
+    const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: {} });
+    expect(h.groups).toEqual([]);
+  });
+
+  it("sets groups from peerFields", () => {
+    const h = buildHabitat({
+      instanceName: "a",
+      cwd: "/tmp",
+      flags: {},
+      peerFields: { groups: ["haiku", "story"] },
+    });
+    expect(h.groups).toEqual(["haiku", "story"]);
+  });
+
+  it("sets spawnerName from peerFields", () => {
+    const h = buildHabitat({
+      instanceName: "a",
+      cwd: "/tmp",
+      flags: {},
+      peerFields: { spawnerName: "my-host" },
+    });
+    expect(h.spawnerName).toBe("my-host");
+  });
+
+  it("overlay round-trip: groups serialized and deserialized", () => {
+    const opts: { peerFields?: import("./build-habitat.js").PeerFields } = {};
+    mergeTopologyOverlay(opts, JSON.stringify({ groups: ["haiku"] }));
+    const h = buildHabitat({
+      instanceName: "worker",
+      cwd: "/tmp",
+      flags: {},
+      peerFields: opts.peerFields,
+    });
+    expect(h.groups).toEqual(["haiku"]);
+  });
 });

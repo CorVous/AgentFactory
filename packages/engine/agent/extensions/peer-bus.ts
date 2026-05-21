@@ -43,6 +43,14 @@ import {
 import { dispatchSubmissionReply } from "../lib/submission-emit.js";
 import { sendOverBus } from "../lib/bus-transport.js";
 import { habitatHasPeers } from "../lib/mesh-peering.js";
+import {
+  ingestMeshUpdate,
+  expandGroupRef,
+  getCohortLookupHook,
+  needsLookup,
+} from "../lib/cohort-tracker.js";
+import { parseRef } from "../lib/peer-spawn.js";
+import type { GroupMap } from "../lib/cohort-registry.js";
 
 interface PendingCall {
   resolve: (body: string) => void;
@@ -60,6 +68,12 @@ interface BusState {
   inTurn: boolean;
   pi?: ExtensionAPI;
   pendingCalls: Map<string, PendingCall>;
+  // Slice 3 (ADR-0008): cohort cache for group-ref expansion + visibility
+  cohortCache: GroupMap;
+  /** Declared group memberships for this peer (seeded from Habitat.groups). */
+  selfGroups: string[];
+  /** The spawner's instance name (seeded from Habitat.spawnerName). */
+  spawnerName: string;
 }
 
 // Stash on globalThis so any second import of this module (jiti loads
@@ -74,6 +88,9 @@ function getState(): BusState {
     pendingDuringTurn: [],
     inTurn: false,
     pendingCalls: new Map(),
+    cohortCache: new Map(),
+    selfGroups: [],
+    spawnerName: "",
   });
 }
 
@@ -204,6 +221,17 @@ function handleIncoming(state: BusState, env: Envelope) {
   // is loaded; message-kind envelopes always flow through the general inbox.
   const kind = env.payload.kind;
 
+  // mesh-update envelopes BYPASS the acceptsWorkFrom gate and are NEVER
+  // surfaced to the model — they update the local cohort cache and return.
+  // This branch runs BEFORE the acceptsWorkFrom check (same ordering as shutdown).
+  if (kind === "mesh-update") {
+    const p = env.payload;
+    if (p.kind === "mesh-update") {
+      ingestMeshUpdate(state.cohortCache, { spawner: p.spawner, changes: p.changes });
+    }
+    return;
+  }
+
   // shutdown envelopes BYPASS the acceptsWorkFrom gate — a spawner killing its
   // worker may not be in the worker's acceptsWorkFrom list (the worker's overlay
   // only sets acceptsWorkFrom to the spawner for submissions/approvals, but
@@ -264,6 +292,21 @@ function handleIncoming(state: BusState, env: Envelope) {
     return;
   }
   pushToModel(state, [env]);
+
+  // Unknown-sender seam (ADR-0008): if the sender is not yet in our cohort
+  // cache, fire the host lookup hook asynchronously so Slice 4's mesh-mux
+  // can backfill the cache. The no-op default resolver returns null.
+  if (needsLookup(state.cohortCache, env.from)) {
+    const hook = getCohortLookupHook();
+    hook(env.from).then((result) => {
+      if (result) {
+        ingestMeshUpdate(state.cohortCache, {
+          spawner: state.spawnerName || env.from,
+          changes: [{ peer: env.from, recipe: result.recipe, groups: result.groups, op: "add" }],
+        });
+      }
+    }).catch(() => { /* best-effort */ });
+  }
 }
 
 function pushToModel(state: BusState, envs: Envelope[]) {
@@ -331,6 +374,9 @@ export default function (pi: ExtensionAPI) {
       name = (h.instanceName || "anonymous").trim() || "anonymous";
       busRoot = path.resolve(h.busRoot);
       hasPeers = habitatHasPeers(h);
+      // Slice 3: seed cohort context from Habitat
+      state.selfGroups = Array.isArray(h.groups) ? h.groups.slice() : [];
+      state.spawnerName = h.spawnerName ?? "";
     } catch {
       // Habitat not available (direct pi invocation); fall back to ctx.cwd-derived defaults.
       name = "anonymous";
@@ -402,12 +448,20 @@ export default function (pi: ExtensionAPI) {
     name: "peer_send",
     label: "Peer Send",
     description:
-      "Send an async message to another peer on the bus. Fire-and-forget: " +
-      "returns once the byte hits the wire (or fails). The recipient receives " +
-      "the message as a synthetic user prompt on its next turn (and via " +
-      "peer_inbox). Use peer_list to discover live peers.",
+      "Send an async message to another peer (or a group ref) on the bus. " +
+      "Fire-and-forget: returns once the byte hits the wire (or fails). The " +
+      "recipient receives the message as a synthetic user prompt on its next " +
+      "turn (and via peer_inbox). `to` may be a literal peer name or a group " +
+      "reference (@<group>, @$myGroups, @<group>:<recipe>, etc.); group refs " +
+      "expand locally to N point-to-point envelopes. Use peer_list to discover " +
+      "live peers.",
     parameters: Type.Object({
-      to: Type.String({ description: "Name of the recipient peer (matches its --peer-name)." }),
+      to: Type.String({
+        description:
+          "Name of the recipient peer (matches its --peer-name) OR a group " +
+          "reference (e.g. @haiku, @$myGroups). Group refs fan out to all " +
+          "members known in the local cohort cache.",
+      }),
       body: Type.String({ description: "Message body. Plain text; no envelope wrapping required." }),
       in_reply_to: Type.Optional(
         Type.String({ description: "Optional msg_id of the message you are replying to." }),
@@ -420,19 +474,62 @@ export default function (pi: ExtensionAPI) {
           details: { delivered: false, reason: "bus not initialized" },
         };
       }
-      const env = makeMessageEnvelope({
-        from: state.name,
-        to: params.to,
-        text: params.body,
-        in_reply_to: params.in_reply_to,
-      });
-      const result = await sendEnvelope(state, env);
-      const text = result.delivered
-        ? `Sent to ${params.to} (msg_id ${env.msg_id.slice(0, 8)}).`
-        : `Send to ${params.to} failed: ${result.reason}.`;
+
+      // Parse the `to` field to check if it is a group ref
+      let parsed;
+      try {
+        parsed = parseRef(params.to);
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `peer_send: invalid ref '${params.to}': ${(e as Error).message}` }],
+          details: { delivered: false, reason: "invalid_ref" },
+        };
+      }
+
+      if (parsed.kind === "literal") {
+        // Single-target path (original behavior)
+        const env = makeMessageEnvelope({
+          from: state.name,
+          to: params.to,
+          text: params.body,
+          in_reply_to: params.in_reply_to,
+        });
+        const result = await sendEnvelope(state, env);
+        const text = result.delivered
+          ? `Sent to ${params.to} (msg_id ${env.msg_id.slice(0, 8)}).`
+          : `Send to ${params.to} failed: ${result.reason}.`;
+        return {
+          content: [{ type: "text", text }],
+          details: { msg_id: env.msg_id, delivered: result.delivered, reason: result.reason },
+        };
+      }
+
+      // Group ref path: expand to peer names via the cohort cache
+      const targets = expandGroupRef(state.cohortCache, state.selfGroups, params.to);
+      if (targets.length === 0) {
+        return {
+          content: [{ type: "text", text: `peer_send: group ref '${params.to}' expanded to zero targets (no members in cohort cache).` }],
+          details: { delivered: false, reason: "empty_group", fanout: [] },
+        };
+      }
+
+      const fanout: Array<{ to: string; delivered: boolean; msg_id: string; reason?: string }> = [];
+      for (const target of targets) {
+        const env = makeMessageEnvelope({
+          from: state.name,
+          to: target,
+          text: params.body,
+          in_reply_to: params.in_reply_to,
+        });
+        const result = await sendEnvelope(state, env);
+        fanout.push({ to: target, delivered: result.delivered, msg_id: env.msg_id, reason: result.reason });
+      }
+
+      const delivered = fanout.filter((r) => r.delivered).length;
+      const text = `Sent to ${delivered}/${fanout.length} targets via '${params.to}': ${fanout.map((r) => `${r.to}=${r.delivered ? "ok" : r.reason}`).join(", ")}.`;
       return {
         content: [{ type: "text", text }],
-        details: { msg_id: env.msg_id, delivered: result.delivered, reason: result.reason },
+        details: { delivered: delivered > 0, fanout },
       };
     },
   });
@@ -506,6 +603,24 @@ export default function (pi: ExtensionAPI) {
           details: { delivered: false, reason: "bus not initialized" },
         };
       }
+
+      // peer_call is literal-only — reject group refs with a clear error.
+      let parsedTo;
+      try {
+        parsedTo = parseRef(params.to);
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `peer_call: invalid ref '${params.to}': ${(e as Error).message}` }],
+          details: { delivered: false, reason: "invalid_ref" },
+        };
+      }
+      if (parsedTo.kind !== "literal") {
+        return {
+          content: [{ type: "text", text: `peer_call: group references are not supported; use a literal peer name. Got '${params.to}'.` }],
+          details: { delivered: false, reason: "group_ref_not_allowed" },
+        };
+      }
+
       const timeoutMs = typeof params.timeout_ms === "number" ? params.timeout_ms : 30_000;
       const env = makeMessageEnvelope({
         from: state.name,

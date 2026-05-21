@@ -77,3 +77,88 @@ describe("peer-bus.ts — lazy acquisition gate", () => {
     expect(SRC).not.toMatch(/registerTool\s*\(\s*\{[^}]*name:\s*["']agent_call["']/s);
   });
 });
+
+// ── Slice 3: cohort cache + mesh-update + fan-out + group-ref rejection ─────
+
+describe("peer-bus.ts — Slice 3 source-level assertions", () => {
+  it("imports ingestMeshUpdate from cohort-tracker", () => {
+    expect(SRC).toMatch(/import.*ingestMeshUpdate.*from.*cohort-tracker/s);
+  });
+
+  it("imports expandGroupRef from cohort-tracker", () => {
+    expect(SRC).toMatch(/import.*expandGroupRef.*from.*cohort-tracker/s);
+  });
+
+  it("imports parseRef from peer-spawn", () => {
+    expect(SRC).toMatch(/import.*parseRef.*from.*peer-spawn/s);
+  });
+
+  it("BusState has cohortCache field", () => {
+    expect(SRC).toMatch(/cohortCache\s*:/);
+  });
+
+  it("BusState has selfGroups field", () => {
+    expect(SRC).toMatch(/selfGroups\s*:/);
+  });
+
+  it("BusState has spawnerName field", () => {
+    expect(SRC).toMatch(/spawnerName\s*:/);
+  });
+
+  it("mesh-update branch is handled before the acceptsWorkFrom gate", () => {
+    const meshUpdateIdx = SRC.indexOf('kind === "mesh-update"');
+    const enforcementIdx = SRC.indexOf("getHabitat().acceptsWorkFrom");
+    expect(meshUpdateIdx).toBeGreaterThan(-1);
+    expect(enforcementIdx).toBeGreaterThan(-1);
+    expect(meshUpdateIdx).toBeLessThan(enforcementIdx);
+  });
+
+  it("mesh-update branch is handled before the shutdown branch", () => {
+    const meshUpdateIdx = SRC.indexOf('kind === "mesh-update"');
+    const shutdownIdx = SRC.indexOf('kind === "shutdown"');
+    expect(meshUpdateIdx).toBeGreaterThan(-1);
+    expect(shutdownIdx).toBeGreaterThan(-1);
+    expect(meshUpdateIdx).toBeLessThan(shutdownIdx);
+  });
+
+  it("mesh-update branch calls ingestMeshUpdate", () => {
+    const meshUpdateIdx = SRC.indexOf('kind === "mesh-update"');
+    const afterMeshUpdate = SRC.slice(meshUpdateIdx, meshUpdateIdx + 300);
+    expect(afterMeshUpdate).toMatch(/ingestMeshUpdate/);
+  });
+
+  it("mesh-update branch returns early (not surfaced to inbox/model)", () => {
+    const meshUpdateIdx = SRC.indexOf('kind === "mesh-update"');
+    const afterMeshUpdate = SRC.slice(meshUpdateIdx, meshUpdateIdx + 400);
+    expect(afterMeshUpdate).toMatch(/return\s*;/);
+  });
+
+  it("peer_send uses parseRef to check the `to` field", () => {
+    // Find peer_send execute block and check parseRef is called
+    const peerSendIdx = SRC.indexOf("name: \"peer_send\"");
+    const afterPeerSend = SRC.slice(peerSendIdx, peerSendIdx + 3000);
+    expect(afterPeerSend).toMatch(/parseRef/);
+  });
+
+  it("peer_send calls expandGroupRef for group refs", () => {
+    const peerSendIdx = SRC.indexOf("name: \"peer_send\"");
+    const afterPeerSend = SRC.slice(peerSendIdx, peerSendIdx + 3000);
+    expect(afterPeerSend).toMatch(/expandGroupRef/);
+  });
+
+  it("peer_call rejects group refs with a clear error message", () => {
+    const peerCallIdx = SRC.indexOf("name: \"peer_call\"");
+    const afterPeerCall = SRC.slice(peerCallIdx, peerCallIdx + 2000);
+    expect(afterPeerCall).toMatch(/group.*ref.*not.*supported|group_ref_not_allowed/i);
+  });
+
+  it("peer_call uses parseRef to guard against group refs", () => {
+    const peerCallIdx = SRC.indexOf("name: \"peer_call\"");
+    const afterPeerCall = SRC.slice(peerCallIdx, peerCallIdx + 2000);
+    expect(afterPeerCall).toMatch(/parseRef/);
+  });
+
+  it("references getCohortLookupHook or __pi_cohort_lookup__ for unknown-sender seam", () => {
+    expect(SRC).toMatch(/getCohortLookupHook|__pi_cohort_lookup__/);
+  });
+});

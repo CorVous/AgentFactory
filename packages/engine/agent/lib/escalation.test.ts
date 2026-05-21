@@ -13,6 +13,7 @@ const BASE_HABITAT: Habitat = {
   debug: false,
   acceptsWorkFrom: [],
   messagesWith: [],
+  groups: [],
 };
 
 beforeEach(() => {

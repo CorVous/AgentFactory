@@ -84,4 +84,29 @@ describe("mesh-spawn.ts — source-level", () => {
     // Must NOT pass task as printPrompt for long-lived workers
     expect(SRC).not.toMatch(/printPrompt\s*:\s*args\.task/);
   });
+
+  it("validates groups param: rejects names starting with '_'", () => {
+    // Must check for reserved group names
+    expect(SRC).toMatch(/reserved_group_name|starts.*with.*_|startsWith.*_/);
+  });
+
+  it("groups param is validated before spawning", () => {
+    // Group validation must come before runMeshSpawn
+    const validationIdx = SRC.indexOf("reserved_group_name");
+    const runMeshIdx = SRC.indexOf("runMeshSpawn({");
+    expect(validationIdx).toBeGreaterThan(-1);
+    expect(runMeshIdx).toBeGreaterThan(-1);
+    expect(validationIdx).toBeLessThan(runMeshIdx);
+  });
+
+  it("passes groups to runMeshSpawn", () => {
+    // The call to runMeshSpawn must include groups:
+    const runMeshIdx = SRC.indexOf("runMeshSpawn({");
+    const afterRunMesh = SRC.slice(runMeshIdx, runMeshIdx + 400);
+    expect(afterRunMesh).toMatch(/groups:/);
+  });
+
+  it("groups param description does NOT say 'ignored for now'", () => {
+    expect(SRC).not.toMatch(/ignored for now/);
+  });
 });

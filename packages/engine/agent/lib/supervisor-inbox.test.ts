@@ -37,6 +37,7 @@ const BASE_HABITAT: Habitat = {
   messagesWith: [],
   supervisor: undefined,
   submitsWorkTo: undefined,
+  groups: [],
 };
 
 const WRITE_ARTIFACT: Artifact = {

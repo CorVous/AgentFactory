@@ -27,6 +27,10 @@ export interface PeerFields {
   submitsWorkTo?: string;
   acceptsWorkFrom?: string[];
   messagesWith?: string[];
+  /** Slice 3: spawner-scoped group memberships. */
+  groups?: string[];
+  /** Slice 3: the spawner's instance name. */
+  spawnerName?: string;
 }
 
 /** Flags that influence Habitat construction. */
@@ -104,6 +108,16 @@ export function mergeTopologyOverlay(
     );
   }
 
+  // Slice 3: groups and spawnerName
+  if (Array.isArray(overlay.groups)) {
+    opts.peerFields.groups = (overlay.groups as unknown[]).filter(
+      (s): s is string => typeof s === "string",
+    );
+  }
+  if (typeof overlay.spawnerName === "string" && overlay.spawnerName) {
+    opts.peerFields.spawnerName = overlay.spawnerName;
+  }
+
   return opts;
 }
 
@@ -136,6 +150,9 @@ export function buildHabitat(opts: BuildHabitatOptions): Habitat {
   const submitsWorkTo = peerFields?.submitsWorkTo;
   const acceptsWorkFrom = peerFields?.acceptsWorkFrom?.slice() ?? [];
   const messagesWith = peerFields?.messagesWith?.slice() ?? [];
+  // Slice 3: groups default to [] — ungrouped peers join @_default implicitly
+  const groups = peerFields?.groups?.slice() ?? [];
+  const spawnerName = peerFields?.spawnerName;
 
   return {
     instanceName,
@@ -150,5 +167,7 @@ export function buildHabitat(opts: BuildHabitatOptions): Habitat {
     submitsWorkTo,
     acceptsWorkFrom,
     messagesWith,
+    groups,
+    spawnerName,
   };
 }
