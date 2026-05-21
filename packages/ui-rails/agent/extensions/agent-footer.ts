@@ -1,8 +1,7 @@
 // agent-footer — replaces pi's default footer with one that fits the
 // `npm run agent` rails.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/agent-footer.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import os from "node:os";
 import path from "node:path";

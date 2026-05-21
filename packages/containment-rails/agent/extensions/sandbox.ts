@@ -2,8 +2,7 @@
 // `npm run agent`. Disables `bash` outright and rejects any tool call
 // whose `path` argument resolves outside the sandbox root.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/sandbox.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

@@ -387,16 +387,23 @@ const REPO_ROOT = path.resolve(
 );
 const REAL_AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 const REAL_TEMPLATES_DIR = path.join(REPO_ROOT, "pi-sandbox", "templates");
-const REAL_EXTENSIONS_DIR = path.join(
-  REPO_ROOT,
-  "pi-sandbox",
-  ".pi",
-  "extensions",
-);
+// After Slice 9, extensions live across multiple directories:
+//   - pi-sandbox/.pi/extensions/ for project-local extensions (atomic-delegate, deferred-confirm)
+//   - packages/engine/agent/extensions/ for mesh/supervisor rails
+//   - packages/deferred-rails/agent/extensions/ for deferred-* and no-edit/sandbox
+//   - packages/containment-rails/agent/extensions/ for sandbox, no-edit
+//   - packages/ui-rails/agent/extensions/ for UI rails
+const REAL_EXTENSION_DIRS = [
+  path.join(REPO_ROOT, "pi-sandbox", ".pi", "extensions"),
+  path.join(REPO_ROOT, "packages", "engine", "agent", "extensions"),
+  path.join(REPO_ROOT, "packages", "deferred-rails", "agent", "extensions"),
+  path.join(REPO_ROOT, "packages", "containment-rails", "agent", "extensions"),
+  path.join(REPO_ROOT, "packages", "ui-rails", "agent", "extensions"),
+];
 const REAL_FS_CONTEXT = {
   agentsDir: REAL_AGENTS_DIR,
   templatesDir: REAL_TEMPLATES_DIR,
-  extensionsDir: REAL_EXTENSIONS_DIR,
+  extensionsDirs: REAL_EXTENSION_DIRS,
 };
 
 // The peer template's extension chain in declaration order.

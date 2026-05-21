@@ -18,6 +18,13 @@ also passes `--no-context-files` so the outer `AGENTS.md`/`CLAUDE.md`
   for skills, `-p` for non-interactive, `--mode json` for streaming
   events, `-nc` / `--no-context-files` to suppress AGENTS.md/CLAUDE.md).
 
+Note: `npm run pi` auto-discovers `pi-sandbox/.pi/extensions/` and loads
+`atomic-delegate` and `deferred-confirm` (plus their `_lib` dependencies).
+The mesh/supervisor/bus extensions and the rail extensions (sandbox, no-edit,
+deferred-write/edit/move/delete, UI rails) are no longer in that directory —
+they now live in the `packages/` cluster packages and are only active when
+a recipe loads them via `pi --recipe`.
+
 Dependencies live in `node_modules/` at the repo root; run `npm install`
 after cloning. Invoking pi directly (`npx pi`) from the repo root is not
 recommended — it runs outside the sandbox and will pick up the outer

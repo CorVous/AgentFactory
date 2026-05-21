@@ -4,8 +4,7 @@
 // drafts are written to disk under the sandbox root; rejected drafts are
 // discarded.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/deferred-write.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";

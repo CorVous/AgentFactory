@@ -17,8 +17,7 @@
 // isolation (loader.js uses `moduleCache: false` and a fresh createJiti
 // per extension).
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/deferred-confirm.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestHumanApproval } from "@agentfactory/pi-engine/lib/escalation.js";

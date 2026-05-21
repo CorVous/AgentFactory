@@ -86,9 +86,10 @@ function loadTemplateChain(templateName, fsContext, visited) {
  *
  * @param {string} name - Recipe name (without .yaml extension).
  * @param {{
- *   agentsDir:     string,  // absolute path to pi-sandbox/agents
- *   templatesDir:  string,  // absolute path to pi-sandbox/templates
- *   extensionsDir: string,  // absolute path to pi-sandbox/.pi/extensions
+ *   agentsDir:      string,    // absolute path to pi-sandbox/agents
+ *   templatesDir:   string,    // absolute path to pi-sandbox/templates
+ *   extensionsDir?: string,    // legacy: single extensions search directory
+ *   extensionsDirs?: string[], // preferred: multiple extension search directories
  * }} fsContext
  *
  * @returns {{
@@ -115,7 +116,7 @@ export function resolveRecipe(name, fsContext) {
     throw new Error("recipe-resolver: name must be a non-empty string");
   }
 
-  const { agentsDir, templatesDir, extensionsDir } = fsContext ?? {};
+  const { agentsDir, templatesDir, extensionsDir, extensionsDirs } = fsContext ?? {};
 
   if (typeof agentsDir !== "string") {
     throw new Error("recipe-resolver: fsContext.agentsDir must be a string");
@@ -123,7 +124,14 @@ export function resolveRecipe(name, fsContext) {
   if (typeof templatesDir !== "string") {
     throw new Error("recipe-resolver: fsContext.templatesDir must be a string");
   }
-  if (typeof extensionsDir !== "string") {
+
+  // Resolve effective search dirs: extensionsDirs wins; fall back to extensionsDir.
+  let searchDirs;
+  if (Array.isArray(extensionsDirs)) {
+    searchDirs = extensionsDirs;
+  } else if (typeof extensionsDir === "string") {
+    searchDirs = [extensionsDir];
+  } else {
     throw new Error("recipe-resolver: fsContext.extensionsDir must be a string");
   }
 
@@ -182,7 +190,7 @@ export function resolveRecipe(name, fsContext) {
   if (typeof recipe.extends === "string" && recipe.extends.trim()) {
     templateExtensions = loadTemplateChain(
       recipe.extends.trim(),
-      { templatesDir, extensionsDir },
+      { templatesDir, extensionsDirs: searchDirs },
       new Set(),
     );
   }
@@ -197,8 +205,9 @@ export function resolveRecipe(name, fsContext) {
         `recipe-resolver: recipe '${name}' extensions[${i}] must be a non-empty string`,
       );
     }
-    const extPath = path.join(extensionsDir, `${entry}.ts`);
-    if (!existsSync(extPath)) {
+    const found = searchDirs.some((d) => existsSync(path.join(d, `${entry}.ts`)));
+    if (!found) {
+      const extPath = path.join(searchDirs[0], `${entry}.ts`);
       throw new Error(
         `recipe-resolver: extension '${entry}' listed in recipe '${name}' not found at ${extPath}`,
       );

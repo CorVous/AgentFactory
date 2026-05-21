@@ -2,8 +2,7 @@
 // enforce that the agent only creates new files, never modifies existing
 // ones. Drop this extension from a recipe to allow overwrite/edit.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/no-edit.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import fs from "node:fs";
 import path from "node:path";

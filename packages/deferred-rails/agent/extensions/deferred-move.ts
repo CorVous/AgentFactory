@@ -4,8 +4,7 @@
 // completes. Approved batches rename each src to its dst; rejected
 // batches leave them untouched.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/deferred-move.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import fs from "node:fs";
 import path from "node:path";

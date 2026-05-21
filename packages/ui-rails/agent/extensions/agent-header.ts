@@ -4,8 +4,7 @@
 // description on the next line (dim). Reads identity fields from
 // getHabitat(); falls back gracefully when Habitat is unavailable.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/agent-header.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";

@@ -1,8 +1,7 @@
 // no-startup-help — suppresses pi's default startup header (logo,
 // keybinding cheatsheet, "Press ^O for help", onboarding tips).
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/no-startup-help.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 

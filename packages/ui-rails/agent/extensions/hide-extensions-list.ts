@@ -1,8 +1,7 @@
 // hide-extensions-list — baseline rail that strips pi's `[Extensions]`
 // section from the chat history at startup.
 //
-// NOTE: This file is COPIED from pi-sandbox/.pi/extensions/hide-extensions-list.ts.
-// The pi-sandbox copy is the legacy extension path; the canonical copy is this package.
+// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
