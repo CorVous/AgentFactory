@@ -29,10 +29,10 @@ export default function (pi: ExtensionAPI) {
     let type: string | undefined;
     try {
       const h = getHabitat();
-      name = h.agentName?.trim() || undefined;
+      name = h.instanceName?.trim() || undefined;
       description = h.description?.trim() || undefined;
       tier = h.tier?.trim() || undefined;
-      type = h.type?.trim() || undefined;
+      type = h.recipe?.trim() || undefined;
     } catch {
       // Habitat not available; render nothing.
     }

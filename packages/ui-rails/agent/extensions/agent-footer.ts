@@ -62,7 +62,7 @@ export default function (pi: ExtensionAPI) {
       const h = getHabitat();
       scratchRoot = path.resolve(h.scratchRoot);
       skills = h.skills;
-      agents = h.agents;
+      agents = h.spawns;
     } catch {
       // Habitat not available; fall back to ctx.cwd with empty lists.
     }
