@@ -1,0 +1,25 @@
+{
+  "name": "@agentfactory/deferred-rails",
+  "version": "0.1.0",
+  "description": "AgentFactory deferred-rails cluster — deferred-confirm, deferred-write, deferred-edit, deferred-move, deferred-delete.",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "name": "deferred-rails",
+    "extensions": [
+      "agent/extensions/deferred-confirm.ts",
+      "agent/extensions/deferred-write.ts",
+      "agent/extensions/deferred-edit.ts",
+      "agent/extensions/deferred-move.ts",
+      "agent/extensions/deferred-delete.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@agentfactory/pi-engine": "*",
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  },
+  "dependencies": {
+    "typebox": "*"
+  }
+}

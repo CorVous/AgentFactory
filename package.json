@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/engine"
+    "packages/engine",
+    "packages/deferred-rails",
+    "packages/containment-rails",
+    "packages/ui-rails"
   ],
   "description": "Workspace for building and testing pi agents.",
   "scripts": {

@@ -1,0 +1,19 @@
+{
+  "name": "@agentfactory/containment-rails",
+  "version": "0.1.0",
+  "description": "AgentFactory containment-rails cluster — sandbox, no-edit.",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "name": "containment-rails",
+    "extensions": [
+      "agent/extensions/sandbox.ts",
+      "agent/extensions/no-edit.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@agentfactory/pi-engine": "*",
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  }
+}

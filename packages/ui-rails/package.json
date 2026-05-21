@@ -1,0 +1,22 @@
+{
+  "name": "@agentfactory/ui-rails",
+  "version": "0.1.0",
+  "description": "AgentFactory ui-rails cluster — agent-header, agent-footer, no-startup-help, hide-extensions-list.",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "name": "ui-rails",
+    "extensions": [
+      "agent/extensions/agent-header.ts",
+      "agent/extensions/agent-footer.ts",
+      "agent/extensions/no-startup-help.ts",
+      "agent/extensions/hide-extensions-list.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@agentfactory/pi-engine": "*",
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@earendil-works/pi-tui": "^0.75.4"
+  }
+}

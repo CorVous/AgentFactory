@@ -26,6 +26,8 @@ import { loadBundledDefaults, loadOverrideConfig } from "../lib/load-tier-config
 import { resolveSkills } from "../lib/resolve-skills.js";
 import { assemblePrompt } from "../lib/assemble-prompt.js";
 import { setHabitat } from "../lib/habitat-glue.js";
+import { resolveRailPackages, RAIL_TO_CLUSTER } from "../lib/rail-packages.js";
+import { discoverInstalledPackages } from "../lib/installed-packages.js";
 
 // Bundled recipes/templates/skills directories — ship with the package.
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -90,11 +92,30 @@ function findModelByString(
 }
 
 /**
+ * Returns the absolute path to the extensions directory for the named cluster package,
+ * looked up in node_modules relative to the engine package.
+ */
+function clusterExtensionsDir(clusterName: string): string {
+  return path.resolve(PACKAGE_DIR, "..", "..", "node_modules", "@agentfactory", clusterName, "agent", "extensions");
+}
+
+/**
  * Reads an extension fragment file for the given extension name.
+ * Engine-owned fragments resolve from the bundled extensions dir.
+ * Cluster-owned fragments resolve from the installed cluster package dir.
  * Returns the trimmed contents, or null if the file does not exist.
  */
 function readExtensionFragment(extName: string): string | null {
-  const fragmentPath = path.join(BUNDLED_EXTENSIONS_DIR, `${extName}.prompt.md`);
+  // Determine which directory to search.
+  const cluster = RAIL_TO_CLUSTER[extName];
+  let searchDir: string;
+  if (!cluster || cluster === "engine") {
+    searchDir = BUNDLED_EXTENSIONS_DIR;
+  } else {
+    searchDir = clusterExtensionsDir(cluster);
+  }
+
+  const fragmentPath = path.join(searchDir, `${extName}.prompt.md`);
   if (!existsSync(fragmentPath)) return null;
   try {
     return readFileSync(fragmentPath, "utf8").trim();
@@ -129,6 +150,28 @@ export default function recipeLoader(pi: ExtensionAPI) {
         "error",
       );
       return;
+    }
+
+    // ── Check that all referenced rail clusters are installed ──────────────────
+
+    if (recipe.extensions.length > 0) {
+      let railCheckResult;
+      try {
+        railCheckResult = resolveRailPackages(recipe.extensions, discoverInstalledPackages());
+      } catch (e) {
+        ctx.ui.notify(`recipe-loader: ${(e as Error).message}`, "error");
+        return;
+      }
+      if (railCheckResult.missing.length > 0) {
+        const lines = railCheckResult.missing.map(
+          (m) => `  rail '${m.rail}' requires cluster '${m.cluster}' — install with: ${m.hint}`,
+        );
+        ctx.ui.notify(
+          `recipe-loader: missing rail cluster(s):\n${lines.join("\n")}`,
+          "error",
+        );
+        return;
+      }
     }
 
     // ── Resolve skills ────────────────────────────────────────────────────────
