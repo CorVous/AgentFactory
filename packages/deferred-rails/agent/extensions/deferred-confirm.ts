@@ -17,7 +17,8 @@
 // isolation (loader.js uses `moduleCache: false` and a fresh createJiti
 // per extension).
 //
-// Canonical source: this package (pi-sandbox/.pi/extensions/ copy removed in Slice 9).
+// Canonical source: this package. A local copy remains in pi-sandbox/.pi/extensions/
+// because atomic-delegate.ts (ADR-0010, kept out of the engine) still imports it directly.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestHumanApproval } from "@agentfactory/pi-engine/lib/escalation.js";
