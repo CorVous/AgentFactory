@@ -67,11 +67,15 @@ rule). Existing `delegate`-based recipes are unchanged.
 ## Slice 3 — Spawner-scoped groups + visibility scoping
 
 Implements ADR-0008. Recipes can declare `groups:` on `initial_mesh:`
-entries and as a `mesh_spawn()` parameter. The cohort registry on the host's
-`mesh-mux` extension grows from flat to `Map<spawnerName, Map<groupName,
-peer[]>>`. The `cohort-tracker` logic (folded into `peer-bus.ts`) maintains
-per-peer caches via `mesh-update` envelopes. Visibility scoping pre-filters
-`peer_list` and `mesh-update` broadcasts.
+entries and as a `mesh_spawn()` parameter. This slice lands the *pure,
+unit-testable* group logic: the reference grammar, the cohort-registry data
+structure (`Map<spawnerName, Map<groupName, peer[]>>`), the visibility
+predicate, and `peer-bus.ts`'s sender-side fan-out plus `cohort-tracker`
+cache. The *host wiring* that owns the cohort registry and broadcasts
+`mesh-update` envelopes belongs to the `mesh-mux` extension and lands in
+Slice 4 — so Slice 4 depends on this slice as well as Slice 2. Until then
+the registry and resolver are exercised only through their unit tests.
+Visibility scoping pre-filters `peer_list` and `mesh-update` broadcasts.
 
 - New reference grammar: `@<group>:<recipe>`, `@<group>`, `@<recipe>`, `@$myGroups`, `@$myGroups:<recipe>`. The reference parser lives in `packages/engine/agent/lib/peer-spawn.ts`.
 - `group-membership.mjs` and `ref-resolver.mjs` move from `pi-sandbox/.pi/extensions/_lib/` into `packages/engine/agent/lib/`; same logic, new consumer (the spawn-time resolver), tests move with them.
