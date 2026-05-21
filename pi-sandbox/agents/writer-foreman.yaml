@@ -5,11 +5,11 @@
 # and the artifacts queue alongside any of the foreman's own
 # deferred-* operations for unified end-of-turn approval.
 #
-# Wiring: `agents: [deferred-writer]` is enough. The runner
-# (scripts/run-agent.mjs) auto-loads the atomic-delegate extension
+# Wiring: `agents: [deferred-writer]` is enough. The engine's
+# recipe-loader auto-loads the atomic-delegate extension
 # and adds `delegate` to the tool allowlist.
 #
-# Run: `npm run agent -- writer-foreman --sandbox /tmp/foreman-test`
+# Run: `pi --recipe writer-foreman --sandbox /tmp/foreman-test`
 
 extends: peer
 model: LEAD_HARE_MODEL

@@ -2,10 +2,12 @@
 #
 # This template is the canonical and authoritative source for the rails every
 # peer agent inherits. All recipes declare `extends: peer` to pick up these
-# rails; the runner resolves the extension list via resolveRecipe() (Slice 3).
+# rails; the engine resolves the extension list via the recipe-loader (ADR-0010).
 # Editing this file changes runtime behaviour for every recipe that extends it.
+#
+# Note: `habitat` is no longer listed — the engine's recipe-loader builds and
+# sets the Habitat directly at session_start. No explicit extension needed.
 extensions:
-  - habitat
   - sandbox
   - no-startup-help
   - agent-header

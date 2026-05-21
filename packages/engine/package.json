@@ -1,0 +1,36 @@
+{
+  "name": "@agentfactory/pi-engine",
+  "version": "0.1.0",
+  "description": "AgentFactory engine pi package — recipe-loader, Habitat builder, and recipe resolver.",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "name": "pi-engine",
+    "extensions": [
+      "agent/extensions/recipe-loader.ts",
+      "agent/extensions/agent-bus.ts",
+      "agent/extensions/supervisor.ts",
+      "agent/extensions/intercept.ts",
+      "agent/extensions/launcher-bridge.ts",
+      "agent/extensions/bus-tail-emitter.ts",
+      "agent/extensions/mesh-rail.ts",
+      "agent/extensions/slash-commands.ts",
+      "agent/extensions/mesh-authority.ts"
+    ]
+  },
+  "exports": {
+    "./lib/*": "./agent/lib/*",
+    "./lib/*.mjs": "./agent/lib/*.mjs"
+  },
+  "files": [
+    "agent/"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3",
+    "typebox": "*"
+  }
+}

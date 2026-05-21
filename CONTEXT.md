@@ -30,7 +30,7 @@ _Avoid_: agent name (ambiguous between role and instance), id
 A model class — `RABBIT_SAGE_MODEL` (planner), `LEAD_HARE_MODEL` (overseer), `TASK_RABBIT_MODEL` (worker).
 
 **Host**:
-The single **Peer** at the top of a **Mesh**'s **Spawn Tree** — the root invocation, started directly by the human via `npm run agent -- <recipe>`. Structurally privileged: owns the only PTY pool, the only `__launcher__.sock` binding, and the cohort registry for the entire mesh. The host is also the **Top Supervisor** by definition (escalations bubble up to whoever has no spawner; that's the host). Host-vs-worker is determined at runtime by the `--is-host` flag, not by recipe content. Tier ≥ `LEAD_HARE_MODEL` is required (the host is the final review surface for `escalate`-from-top, and an LLM is in the loop).
+The single **Peer** at the top of a **Mesh**'s **Spawn Tree** — the root invocation, started directly by the human via `pi --recipe <recipe>`. Structurally privileged: owns the only PTY pool, the only `__launcher__.sock` binding, and the cohort registry for the entire mesh. The host is also the **Top Supervisor** by definition (escalations bubble up to whoever has no spawner; that's the host). Host-vs-worker is determined at runtime by the `--is-host` flag, not by recipe content. Tier ≥ `LEAD_HARE_MODEL` is required (the host is the final review surface for `escalate`-from-top, and an LLM is in the loop).
 _Avoid_: launcher (the launcher's role moved into the host's `mesh-mux` extension), root agent
 
 **Spawner**:

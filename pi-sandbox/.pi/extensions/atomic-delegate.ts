@@ -3,9 +3,9 @@
 // Registers `delegate({recipe, task, workspace?, timeout_ms?})`. Each
 // call:
 //   1. Validates the recipe is in this agent's allowed list.
-//   2. Spawns a worker via scripts/run-agent.mjs in a fresh tmpdir, with
-//      a habitat overlay locking the worker to this agent: supervisor =
-//      submitTo = peers = acceptedFrom = [callerName]; agents = [].
+//   2. Spawns a worker as `pi --recipe <recipe>` (Slice 6 / ADR-0010) in a
+//      fresh tmpdir, with a habitat overlay locking the worker to this agent:
+//      supervisor = submitTo = peers = acceptedFrom = [callerName]; agents = [].
 //   3. Waits (up to timeout) for the worker's deferred-confirm to ship
 //      a `submission` envelope back via the bus.
 //   4. Replies to the worker with approval-result(approved=true) so the
@@ -44,10 +44,13 @@ import {
   type WorkerHandle,
 } from "./_lib/atomic-delegate";
 import { registerDeferredHandler } from "./deferred-confirm";
+// Slice 6 / ADR-0010: worker children are now spawned as `pi --recipe`.
+// The argv builder lives in the engine lib (child-spawn.mjs).
+import { buildRecipeChildArgv, resolvePiBin, resolveRepoRoot } from "@agentfactory/pi-engine/lib/child-spawn.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
-const RUNNER_PATH = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
+const REPO_ROOT = resolveRepoRoot();
+const PI_BIN = resolvePiBin(REPO_ROOT);
 const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
@@ -151,22 +154,17 @@ function describeArtifact(a: Artifact): string {
 
 function productionSpawnWorker(signal: AbortSignal | undefined): (args: SpawnArgs) => WorkerHandle {
   return (args: SpawnArgs): WorkerHandle => {
-    const overlayJson = JSON.stringify(args.habitatOverlay);
-    const childArgs = [
-      RUNNER_PATH,
-      args.recipe,
-      "--sandbox",
-      args.scratchRoot,
-      "--agent-bus",
-      args.busRoot,
-      "-p",
-      args.task,
-      "--",
-      "--agent-name",
-      args.workerName,
-      "--topology-overlay",
-      overlayJson,
-    ];
+    // Slice 6 / ADR-0010: spawn `pi --recipe <recipe>` (ADR-0010).
+    // buildRecipeChildArgv returns [PI_BIN, --recipe, recipe, --sandbox, …, -p, task].
+    const childArgs = buildRecipeChildArgv({
+      piBin: PI_BIN,
+      recipe: args.recipe,
+      sandbox: args.scratchRoot,
+      busRoot: args.busRoot,
+      agentName: args.workerName,
+      topologyOverlay: JSON.stringify(args.habitatOverlay),
+      printPrompt: args.task,
+    });
     const child = spawn(process.execPath, childArgs, {
       cwd: REPO_ROOT,
       env: { ...process.env },

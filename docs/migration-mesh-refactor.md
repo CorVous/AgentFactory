@@ -1,5 +1,17 @@
 # Migration plan: mesh-extensions refactor (ADRs 0007–0009)
 
+> **SUPERSEDED (launcher slices):** The launcher portions of this migration
+> plan — specifically the description of `npm run agent`, `scripts/run-agent.mjs`,
+> and the `--is-host` flag in Slices 4–5 — are superseded by
+> [ADR-0010](./adr/0010-pi-recipe-replaces-wrapper-launcher.md). The single-agent
+> launcher is now `pi --recipe <name>` (registered by `@agentfactory/pi-engine`);
+> `run-agent.mjs` is deleted; `npm run mesh` spawns nodes as `pi --recipe`
+> children via `buildRecipeChildArgv` in
+> `packages/engine/agent/lib/child-spawn.mjs`. The mesh-extensions refactor
+> (ADRs 0007–0009) itself — vocabulary renames, `mesh-spawn`, group scoping,
+> host recipe pattern — remains a future epic; only its launcher slices rebase
+> onto `pi --recipe` rather than the now-deleted wrapper.
+
 This document sketches the vertical-slice sequence for migrating from the current two-artifact (recipe + topology) world to the unified host-grown-mesh world described in ADR-0007, ADR-0008, and ADR-0009. Each slice is independently mergeable and leaves the system functional; the legacy `delegate` / topology paths survive until the slice that explicitly removes them.
 
 ## Slice 1 — Vocabulary rename (no behavior change)

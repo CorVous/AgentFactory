@@ -1,6 +1,6 @@
 # Using pi directly
 
-`npm run agent` is the default entry point for focused agents. Use the
+`pi --recipe <name>` is the default entry point for focused agents. Use the
 direct paths below when you need raw pi (interactive exploration, building
 new extensions, or scripting).
 
@@ -18,6 +18,13 @@ also passes `--no-context-files` so the outer `AGENTS.md`/`CLAUDE.md`
   for skills, `-p` for non-interactive, `--mode json` for streaming
   events, `-nc` / `--no-context-files` to suppress AGENTS.md/CLAUDE.md).
 
+Note: `npm run pi` auto-discovers `pi-sandbox/.pi/extensions/` and loads
+`atomic-delegate` and `deferred-confirm` (plus their `_lib` dependencies).
+The mesh/supervisor/bus extensions and the rail extensions (sandbox, no-edit,
+deferred-write/edit/move/delete, UI rails) are no longer in that directory —
+they now live in the `packages/` cluster packages and are only active when
+a recipe loads them via `pi --recipe`.
+
 Dependencies live in `node_modules/` at the repo root; run `npm install`
 after cloning. Invoking pi directly (`npx pi`) from the repo root is not
 recommended — it runs outside the sandbox and will pick up the outer
@@ -25,8 +32,8 @@ docs as context.
 
 ## Creating pi agents the long way
 
-When the recipe-based runner isn't enough — e.g. you're building a brand
-new extension or a multi-process pipeline — fall back to invoking pi
+When `pi --recipe` isn't enough — e.g. you're building a brand new
+extension or a multi-process pipeline — fall back to invoking pi
 directly with the bundled `pi-agent-builder` skill. Pi reads the skill
 on demand and generates extensions that follow its recipes.
 

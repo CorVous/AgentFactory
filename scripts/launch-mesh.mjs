@@ -37,9 +37,10 @@ import { makeFocusChangedEnvelope, makeTailToggleEnvelope, makePinnedResolvedEnv
 import { createDecisionsQueue } from "./_lib/decisions-queue.mjs";
 import { createFocusController } from "./_lib/focus-controller.mjs";
 import { createBusTailBuffer, renderBusTailOverlay } from "./_lib/bus-tail.mjs";
+import { buildRecipeChildArgv, resolvePiBin } from "../packages/engine/agent/lib/child-spawn.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const RUNNER = path.join(REPO_ROOT, "scripts", "run-agent.mjs");
+const PI_BIN = resolvePiBin(REPO_ROOT);
 
 function die(msg) {
   process.stderr.write(`launch-mesh: ${msg}\n`);
@@ -200,9 +201,9 @@ function repaintBusTail() {
 // The focused peer's buffer is rendered live to the launcher's terminal.
 // Focus can be switched by a peer sending a focus-request to the launcher socket.
 //
-// PTY-in-PTY fix: run-agent.mjs is invoked with `--inherit-pty` and uses
-// inherited stdio when its own stdout is already inside the launcher's managed
-// PTY, preventing PTY-in-PTY nesting. Every peer now runs the full pi TUI
+// PTY-in-PTY fix: children are spawned as `pi --recipe` with `--inherit-pty` (Slice 6 / ADR-0010).
+// When `--inherit-pty` is set the engine's recipe-loader skips nested PTY allocation and uses
+// inherited stdio, preventing PTY-in-PTY nesting. Every peer runs the full pi TUI
 // (no `--mode rpc`); the multiplexer accumulates each peer's ANSI into a
 // VirtualBuffer and paints the focused peer's snapshot on /focus switch.
 //
@@ -438,25 +439,21 @@ for (let i = 0; i < topology.nodes.length; i++) {
   // non-focused peers keep emitting ANSI into their virtual buffers, so a
   // /focus switch repaints a real TUI snapshot rather than RPC JSON.
   //
-  // The optional `task:` field is forwarded as --task so run-agent.mjs can
-  // append it to the system prompt as per-instance role context. Delivering
-  // it as system-prompt context (not a positional first-user-message) keeps
-  // peers idle until a real inbound event arrives rather than firing an LLM
-  // turn immediately at mesh start.
-  const peerArgs = [
-    RUNNER,
+  // Children are spawned as `pi --recipe <recipe>` (ADR-0010). The engine's
+  // recipe-loader handles flag registration and Habitat construction. The
+  // `--task` field is forwarded so the engine appends it to the system
+  // prompt as per-instance role context, keeping peers idle until a real
+  // inbound event arrives rather than firing an LLM turn immediately at mesh start.
+  const peerArgs = buildRecipeChildArgv({
+    piBin: PI_BIN,
     recipe,
-    "--sandbox", sandbox,
-    "--agent-bus", busRoot,
-    "--inherit-pty",
-    "--",
-    "--agent-name", name,
-    "--topology-overlay", JSON.stringify(overlay),
-  ];
-
-  if (typeof task === "string" && task.trim()) {
-    peerArgs.push("--task", task);
-  }
+    sandbox,
+    busRoot,
+    agentName: name,
+    topologyOverlay: JSON.stringify(overlay),
+    task: typeof task === "string" && task.trim() ? task : undefined,
+    inheritPty: true,
+  });
 
   const peerEnv = {
     ...process.env,

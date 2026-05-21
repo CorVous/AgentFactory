@@ -20,12 +20,12 @@
  *   See docs/agents.md § "Verifying the multi-agent rails under tmux" for the
  *   tmux commands that verify rendering fidelity and clean teardown.
  *
- * TODO(manual-tmux-check): after wiring into launch-mesh.mjs / run-agent.mjs,
+ * TODO(manual-tmux-check): after wiring into launch-mesh.mjs,
  *   run the following to verify agent-header and agent-footer render correctly:
  *
  *   set -a; source models.env; set +a
  *   tmux new-session -d -s mux-test -x 220 -y 50 \
- *     'npm run agent -- deferred-writer'
+ *     'pi --recipe deferred-writer'
  *   sleep 5
  *   tmux capture-pane -t mux-test -p
  *   # expect agent-header, agent-footer in the pane output

@@ -1,10 +1,13 @@
-# Composing agents — `npm run agent`
+# Composing agents — `pi --recipe`
 
-Day-to-day, the way to launch a focused agent is `npm run agent -- <name>`.
-The runner (`scripts/run-agent.mjs`) reads a YAML recipe from
-`pi-sandbox/agents/<name>.yaml`, resolves the model tier, and execs `pi`
-from the directory you invoked it from (or `--sandbox <dir>`). Every
-agent gets six baseline extensions:
+Day-to-day, the way to launch a focused agent is `pi --recipe <name>`.
+The `--recipe` flag is registered by the `@agentfactory/pi-engine`
+extension package, which resolves the named recipe from
+`<cwd>/.pi/recipes/` → `~/.pi/agent/recipes/` → bundled (project >
+global > bundled), then configures the pi session with the recipe's
+model, tools, extensions, and system prompt. Extensions come from the
+installed engine and cluster packages. Every agent launched via a
+recipe gets the following engine-baseline extensions automatically:
 
 ## Per-instance names
 
@@ -12,8 +15,8 @@ Every agent instance — user-launched root or delegated child — is named
 `<breed>-<shortName>`. The breed is a randomly-picked rabbit (or a hare
 if `model:` is `LEAD_HARE_MODEL`); the short name comes from the
 recipe's optional `shortName:` field, falling back to the recipe
-filename stem. The slug is filesystem-safe and doubles as the
-`agent-bus` socket identity; the header prettifies it for display (so
+filename stem. The slug is filesystem-safe and doubles as the bus
+socket identity; the header prettifies it for display (so
 `cottontail-writer` renders as "Cottontail Writer"). Breed pools live
 in [`scripts/breed-names.json`](../scripts/breed-names.json) and the
 generator + collision detection in
@@ -21,11 +24,11 @@ generator + collision detection in
 
 Collision detection runs in two places: `atomic-delegate` tracks
 in-flight sibling slugs in its pending-workers map so two parallel
-`deferred-writer` children always get different breeds; the runner
+`deferred-writer` children always get different breeds; `scripts/launch-mesh.mjs`
 probes `${BUS_ROOT}/*.sock` so a second `peer-chatter` launched in
-another terminal won't pick a breed that's already bound. `--agent-name
-<override>` in passthrough still wins for both — useful when you want a
-stable peer name on the bus.
+another terminal won't pick a breed that's already bound. `--peer-name
+<override>` wins for both — useful when you want a stable peer name on
+the bus.
 
 - `sandbox` — blocks `bash` outright and rejects any path-bearing tool
   call whose `path` resolves outside the sandbox root. The set of
@@ -35,24 +38,18 @@ stable peer name on the bus.
   the installed pi 0.75 built-ins. Owns the `--sandbox-root <path>`
   flag (read by `agent-footer`, `deferred-write`, and `no-edit` via
   `pi.getFlag`); falls back to `ctx.cwd` when the flag is unset.
+  Ships in `@agentfactory/containment-rails`.
 - `no-startup-help` — suppresses pi's default startup header (logo,
   keybinding cheatsheet, onboarding tips) since most of those keybindings
-  reference features focused agents don't use.
+  reference features focused agents don't use. Ships in
+  `@agentfactory/ui-rails`.
 - `agent-header` — replaces the (now-empty) header with a banner that
   shows the agent's full display name (bold accent) — the breed from
   the `<breed>-<shortName>` slug joined with the prettified recipe
   filename, e.g. `Cottontail Deferred Writer` — optionally suffixed
   dim with the model tier (e.g. `· Task Rabbit`), and the recipe's
-  `description:` field on the next line (dim). Reads `--agent-name`,
-  `--agent-description`, `--agent-tier`, and `--agent-type`; the
-  runner sets them from the generated `<breed>-<shortName>` slug,
-  `description:`, `model:` (tier suffix skipped for literal model
-  IDs), and the recipe filename respectively. Slug segments are
-  rendered via the shared `prettify` helper in
-  `pi-sandbox/.pi/extensions/_lib/agent-naming.ts` (title-case each
-  hyphen-segment, join with spaces). Each flag can be passed on the
-  `npm run agent --` line to override the recipe (passthrough flags
-  come after recipe-derived ones, so the CLI value wins).
+  `description:` field on the next line (dim). Ships in
+  `@agentfactory/ui-rails`.
 - `agent-footer` — replaces pi's default footer. Line 1 shows the
   sandbox root on the left and the comma-separated active tools (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
@@ -68,12 +65,13 @@ stable peer name on the bus.
   `$cost` and the context-usage percent on the left, model id on the
   right — pi's default token-flow stats (↑input, ↓output, cache R/W,
   context window size) are intentionally dropped. Line 4 is the
-  extension-status line.
+  extension-status line. Ships in `@agentfactory/ui-rails`.
 - `hide-extensions-list` — strips pi's `[Extensions]` section (added by
   `showLoadedResources` to the chat history at startup) since the
   agent-footer already shows the active tools and the path listing is
   noise. Reaches into private TUI state via `setWidget`+`setTimeout(0)`
-  because pi has no public API to suppress per-section.
+  because pi has no public API to suppress per-section. Ships in
+  `@agentfactory/ui-rails`.
 - `deferred-confirm` — end-of-turn coordinator for any `deferred-*`
   extension. Exposes `registerDeferredHandler({ label, extension,
   priority, prepare })` (named export) plus a single `agent_end` listener
@@ -109,90 +107,113 @@ stable peer name on the bus.
 
 ```sh
 set -a; source models.env; set +a
-npm run agent -- deferred-writer            # interactive, sandboxed to $PWD
-npm run agent -- deferred-writer --sandbox /tmp/scratch
-npm run agent -- deferred-writer -p "draft a README" --thinking off   # passthrough
+pi --recipe deferred-writer                          # interactive, sandboxed to $PWD
+pi --recipe deferred-writer --sandbox /tmp/scratch
+pi --recipe deferred-writer -p "draft a README" --thinking off
 ```
 
 ## Recipe shape
 
 ```yaml
-# pi-sandbox/agents/<name>.yaml
-model: TASK_RABBIT_MODEL          # tier name from models.env, or a literal model ID
-shortName: writer                 # optional; used in the generated <breed>-<shortName> instance slug. Falls back to the filename stem.
+# pi-sandbox/agents/<name>.yaml  (also loadable from <cwd>/.pi/recipes/ or ~/.pi/agent/recipes/)
+model: TASK_RABBIT_MODEL          # tier name resolved via env → ~/.pi/agent/models.json → bundled tier-defaults.json, or a literal model ID
 description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # the agent's role, prepended with extension fragments
   You are a careful drafter...
 tools: [read, ls, grep, deferred_write]
-extensions: [deferred-write]      # merged with the [sandbox, no-startup-help, agent-header, agent-footer, hide-extensions-list, deferred-confirm] baseline
-skills: [pi-agent-builder]        # optional; resolved against pi-sandbox/skills/
-provider: openrouter              # optional; defaults to openrouter
+extensions: [deferred-write]      # rails required by this recipe; owning cluster must be installed
+skills: [pi-agent-builder]        # optional; resolved against <cwd>/.pi/skills/ → ~/.pi/agent/skills/ → bundled
 agents: [deferred-writer]         # optional; recipes this agent may delegate to
 ```
 
-> **Peer wiring is topology-only.** Recipes no longer accept `supervisor`, `submitTo`, `acceptedFrom`, or `peers` — the runner rejects them at parse time. All peer relationships are declared in the topology YAML and reach the agent's Habitat via `--topology-overlay` at launch. See "Topology YAML" below.
+> **Peer wiring is topology-only.** Recipes no longer accept `supervisor`, `submitTo`, `acceptedFrom`, or `peers` — the engine rejects them at parse time. All peer relationships are declared in the topology YAML and reach the agent's Habitat via `--topology-overlay` at launch. See "Topology YAML" below.
 
 When the resolved Habitat (from the topology overlay) sets `submitTo`, the `deferred-*` end-of-turn flow ships the aggregated artifacts to that peer as a `submission` bus envelope instead of rendering a local approval dialog. The worker waits for an `approval-result` reply: on approval it logs `"submission applied by supervisor"` (the supervisor handles the actual writes); on rejection it discards the queue and logs the reason. Agents whose Habitat does not set `submitTo` keep the local UI-or-fail approval flow unchanged.
 
 ### `prompt:` and extension fragments
 
 Tool-usage rules live next to the extensions that register the tools, not
-in each recipe's `prompt:`. For each loaded extension `<name>`, the runner
-looks for a sibling `pi-sandbox/.pi/extensions/<name>.prompt.md` and, if
-present, prepends it to the system prompt that pi receives. Recipes only
-need to describe the agent's role; the standard rules for `deferred_write`,
-`deferred_edit`, `delegate`, etc. come from the fragments.
+in each recipe's `prompt:`. For each loaded extension `<name>`, the engine
+looks for a sibling `<name>.prompt.md` in the extension's owning package
+and, if present, prepends it to the system prompt that pi receives.
+Recipes only need to describe the agent's role; the standard rules for
+`deferred_write`, `deferred_edit`, `delegate`, etc. come from the
+fragments.
 
-One conditional fragment is gated by the runner so it doesn't appear
+One conditional fragment is gated by the engine so it doesn't appear
 when irrelevant:
 
 - `deferred-confirm.prompt.md` (apply order, atomic batch semantics) is
   loaded only when at least one `deferred-*` tool extension is active —
   baseline `deferred-confirm` itself is a no-op without one.
 
-Final order seen by the model: baseline-extension fragments → recipe-
+Final order seen by the model: engine-extension fragments → recipe-
 extension fragments (including `atomic-delegate.prompt.md` when implicit
 from `agents:`) → recipe `prompt:`. Edit a fragment to change behaviour
 for every recipe that loads its extension; edit a recipe's `prompt:`
 for that one agent only.
 
-The runner always passes `--no-extensions --no-skills --no-context-files`
-to pi, so only what the recipe declares is loaded. Tool names go through
-pi's `--tools` allowlist (built-in + extension-registered tools both
-qualify). Recipe-derived values reach the extensions as registered CLI
-flags: `--sandbox-root <path>` (always set), `--agent-name <name>`
-(always set), `--agent-description <text>` (when `description:` is set),
-`--agent-tier <TIER_VAR>` (when `model:` is a tier var name),
-and `--allowed-agents <a,b,c>` (when `agents:` is set).
-All five appear under "Extension CLI Flags" in `pi --help`.
+The engine registers six launch flags that `scripts/launch-mesh.mjs` and
+`atomic-delegate` pass when spawning `pi --recipe` children: `--sandbox`,
+`--task`, `--peer-name`, `--topology-overlay`, `--inherit-pty`, and
+`--debug`. All six appear under "Extension CLI Flags" in `pi --help`.
 
-When `agents:` is non-empty the runner also implicitly:
+When `agents:` is non-empty the engine also implicitly:
 
 - adds `atomic-delegate` to `extensions:`, and
 - adds `delegate` to `tools:`.
 
-Explicit duplicates in the recipe are fine. The inverse is rejected
-loudly: declaring `extensions: [atomic-delegate]` or `tools: [delegate]`
-without `agents:` causes the runner to `die()` so the allowlist is
-never accidentally empty. To disable delegation, drop the `agents:`
-field entirely.
+Explicit duplicates in the recipe are fine. To disable delegation, drop
+the `agents:` field entirely.
 
-> **Live status widget:** the per-delegation status boxes that
-> previously rendered above the input editor (the
-> `delegation-boxes` widget fed by `agent-status-reporter` over
-> `--rpc-sock`) are deferred to a later phase. After Phase 5 the
-> model gets a textual summary as the `delegate` tool's return
-> value; there is no live progress indicator while the worker is
-> running.
+### Missing rail cluster — hard error
+
+If a recipe lists an extension whose owning cluster package is not
+installed, the engine refuses to start the session with a clear message:
+
+```
+recipe-loader: missing rail cluster(s):
+  rail 'deferred-write' requires cluster 'deferred-rails' — install with: pi install npm:@agentfactory/deferred-rails
+```
+
+Install the named cluster and retry. Never silently skip a missing rail
+(skipping `sandbox` would disable FS containment without warning).
 
 ## Where agent code lives
 
 | Location | Behavior |
 | --- | --- |
-| `pi-sandbox/agents/<name>.yaml` | Agent recipe consumed by `npm run agent` |
-| `pi-sandbox/.pi/extensions/<name>.ts` | Project-local extension, auto-discovered by `npm run pi`; loaded explicitly by `npm run agent` when listed in a recipe |
+| `pi-sandbox/agents/<name>.yaml` | Recipe file for this repo; also loadable from `<cwd>/.pi/recipes/` (project-local) or `~/.pi/agent/recipes/` (global) |
+| `packages/engine/agent/extensions/` | Engine-owned rails (`recipe-loader`, `agent-bus`, `supervisor`, `intercept`, etc.) — always present |
+| `packages/deferred-rails/agent/extensions/` | Deferred-rails cluster (`deferred-confirm`, `deferred-write/edit/move/delete`) |
+| `packages/containment-rails/agent/extensions/` | Containment-rails cluster (`sandbox`, `no-edit`) |
+| `packages/ui-rails/agent/extensions/` | UI-rails cluster (`agent-header`, `agent-footer`, `no-startup-help`, `hide-extensions-list`) |
+| `pi-sandbox/.pi/extensions/<name>.ts` | Project-local extension, auto-discovered by `npm run pi`; used during development of new extensions |
 | `~/.pi/agent/extensions/<name>.ts` | Global extension, hot-reloadable via `/reload` |
 | `pi -e ./path.ts` | One-off test load (not hot-reloadable) |
+
+## Packaging — engine and cluster packages
+
+`@agentfactory/pi-engine` is the always-on package: it ships the
+`recipe-loader` extension (which registers `--recipe` and the six launch
+flags) plus the full mesh subsystem (`agent-bus`, `supervisor`,
+`intercept`, `launcher-bridge`, `slash-commands`, `bus-tail-emitter`,
+`mesh-rail`, `mesh-authority`). It loads on every `pi` invocation but is
+**loaded-but-inert** — with no `--recipe` flag, raw `pi` behaves like
+vanilla pi.
+
+Three independently-installable **cluster packages** ship the generic rails:
+
+| Package | Rails included |
+| --- | --- |
+| `@agentfactory/deferred-rails` | `deferred-confirm`, `deferred-write`, `deferred-edit`, `deferred-move`, `deferred-delete` |
+| `@agentfactory/containment-rails` | `sandbox`, `no-edit` |
+| `@agentfactory/ui-rails` | `agent-header`, `agent-footer`, `no-startup-help`, `hide-extensions-list` |
+
+Each cluster depends only on `@agentfactory/pi-engine` — a star topology
+with no inter-cluster edges. A recipe that references a rail from an
+uninstalled cluster hard-errors with a `pi install npm:@agentfactory/<cluster>`
+hint.
 
 ## Worked example: deferred-writer
 
@@ -279,8 +300,9 @@ Flow per batch:
 2. The atomic-delegate extension allocates a fresh tmpdir scratch root,
    constructs a habitat overlay (`supervisor = submitTo = peers =
    acceptedFrom = [foreman]`, `agents = []`), spawns the worker via
-   `node scripts/run-agent.mjs`, and registers a per-worker dispatch
-   hook on the bus.
+   `pi --recipe deferred-writer` (using `buildRecipeChildArgv` from
+   `packages/engine/agent/lib/child-spawn.mjs`), and registers a
+   per-worker dispatch hook on the bus.
 3. The worker runs `pi -p`, drafts files into its in-memory
    `deferred-write` queue, hits `agent_end`. Because `submitTo` is set,
    `deferred-confirm` ships a `submission` envelope to the foreman over
@@ -307,10 +329,10 @@ flow up through whatever escalation chain is configured.
 
 ### Debugging the rails
 
-Pass `-- --debug` when launching an agent and the
-`sandbox` and `no-edit` extensions will dump their resolved tool sets
-via `ctx.ui.notify` on `session_start`. Useful when you've added a new
-write tool and want to confirm it was picked up by introspection.
+Pass `--debug` when launching an agent and the `sandbox` and `no-edit`
+extensions will dump their resolved tool sets via `ctx.ui.notify` on
+`session_start`. Useful when you've added a new write tool and want to
+confirm it was picked up by introspection.
 
 The rails — `agent-header`, `agent-footer`, and `deferred-confirm`'s
 end-of-turn `ctx.ui.confirm` dialog — only render under a real PTY,
@@ -320,7 +342,7 @@ drive a full TUI session under tmux:
 ```sh
 set -a; source models.env; set +a
 tmux new-session -d -s pi-test -x 200 -y 50 \
-  'npm run agent -- deferred-writer -- --debug'
+  'pi --recipe deferred-writer --debug'
 sleep 5                                              # let pi boot + print debug
 tmux send-keys -t pi-test 'draft hello.txt saying hi' Enter
 sleep 30                                             # wait for the model
@@ -372,8 +394,9 @@ Wired implicitly when the recipe declares `agents: [a, b, …]`. Registers
 one tool:
 
 - `delegate({recipe, task, workspace?, timeout_ms?})` — spawns
-  `node scripts/run-agent.mjs <recipe>` in a fresh tmpdir scratch
-  root, hands it the task, waits for the worker to ship its drafted
+  `pi --recipe <recipe>` in a fresh tmpdir scratch root via
+  `buildRecipeChildArgv` (in `packages/engine/agent/lib/child-spawn.mjs`),
+  hands it the task, waits for the worker to ship its drafted
   artifacts back as a `submission` envelope, and registers those
   artifacts as a `deferred-confirm` handler so they queue for unified
   end-of-turn approval alongside any of the caller's own deferred-*
@@ -450,9 +473,9 @@ Registers three tools and one CLI flag:
   `--agent-bus <dir>` (parallel to `--sandbox <dir>`) to override.
 
 Each agent listens on `${BUS_ROOT}/${name}.sock` (name comes from
-`--agent-name`, which the runner sets to a generated
+`--peer-name`, which the engine sets to a generated
 `<breed>-<shortName>` slug — unique per instance — unless the
-`-- --agent-name <override>` passthrough wins). The runner probes the
+`--peer-name <override>` wins). The engine probes the
 bus root before generating so two roots launched in different terminals
 won't collide; explicit overrides are needed when peers want to address
 each other by a stable role name (e.g. `planner`, `worker-a`). Incoming
@@ -536,7 +559,7 @@ To exercise the **atomic delegate** end-to-end, drive
 set -a; source models.env; set +a
 mkdir -p /tmp/foreman-test
 tmux new-session -d -s foreman -x 200 -y 50 \
-  'npm run agent -- writer-foreman --sandbox /tmp/foreman-test -- --debug'
+  'pi --recipe writer-foreman --sandbox /tmp/foreman-test --debug'
 sleep 5
 tmux send-keys -t foreman \
   'draft hello.txt with text "Hi"' Enter
@@ -566,20 +589,20 @@ ls /tmp/foreman-test/   # hello.txt and world.txt both present
 
 Negative cases worth probing manually:
 
-- **Loud fail under print mode**: run `npm run agent -- deferred-writer
+- **Loud fail under print mode**: run `pi --recipe deferred-writer
   -p "draft x.txt"` directly. With no UI, the worker exits but stderr
   contains `[deferred] dropped: no UI available`. (Cross-agent
   approval forwarding now flows over the bus, not through `--rpc-sock`.)
 - **Recipe not allowed**: prompt foreman with `recipe:
   "deferred-editor"` → `delegate: recipe 'deferred-editor' not in
   this agent's allowed list [deferred-writer]`.
-- **Schema rejection**: scratch recipe with
-  `extensions: [atomic-delegate]` and no `agents:` → runner exits with
-  `loads extension 'atomic-delegate' but has no 'agents:' list`.
+- **Missing cluster**: a recipe listing `extensions: [deferred-write]`
+  when `@agentfactory/deferred-rails` is not installed → engine errors
+  with a `pi install npm:@agentfactory/deferred-rails` hint.
 
 ## Supervisor inbound rail
 
-The **supervisor** extension (`pi-sandbox/.pi/extensions/supervisor.ts`) implements
+The **supervisor** extension (`packages/engine/agent/extensions/supervisor.ts`) implements
 the inbound review loop described in [ADR-0003](../docs/adr/0003-supervisor-llm-in-review-loop.md).
 The extension registers the `respond_to_request` tool and a globalThis dispatch hook
 that `agent-bus` calls when a typed non-message envelope arrives.
@@ -637,14 +660,14 @@ examples.
 ### Testable core
 
 The action routing, acceptedFrom enforcement, and revision cap all live in
-`pi-sandbox/.pi/extensions/_lib/supervisor-inbox.ts` with a matching
-`_lib/supervisor-inbox.test.ts`. The `supervisor.ts` extension is a thin pi
+`packages/engine/agent/lib/supervisor-inbox.ts` with a matching
+`supervisor-inbox.test.ts`. The `supervisor.ts` extension is a thin pi
 wrapper; tests can exercise the full action graph without a live model.
 
-### Escalation and the `_lib/escalation.ts` primitive
+### Escalation and the escalation primitive
 
-`requestHumanApproval` lives in `_lib/escalation.ts` and is imported by
-`deferred-confirm.ts`. After Phase 5 it routes only `ctx.hasUI` →
+`requestHumanApproval` lives in the engine's `_lib/escalation.ts` and is
+imported by `deferred-confirm.ts`. It routes only `ctx.hasUI` →
 `ctx.ui.confirm` or loud-fails to stderr; cross-agent escalation flows
 over the bus as an `approval-request` envelope handled by the supervisor
 rail (the `escalate` action sends to `getHabitat().supervisor` directly,
@@ -677,7 +700,7 @@ group_bindings:
     peers: ["@workers"]
 
 nodes:
-  - name: authority             # instance name on the bus (--agent-name)
+  - name: authority             # instance name on the bus (--peer-name)
     recipe: mesh-authority      # pi-sandbox/agents/<recipe>.yaml
     sandbox: /tmp/mesh/auth     # optional; auto-created under /tmp if omitted
     task: "..."                 # optional; appended to system prompt as per-instance role context
@@ -696,7 +719,7 @@ optional. Nodes without them launch with only their recipe's own peer fields.
 
 `name:` is also optional. When omitted, the launcher generates a
 `<breed>-<shortName>` slug from the recipe (using the same breed-pool /
-collision-detection machinery as `npm run agent`). Auto-named nodes can't be
+collision-detection machinery as `pi --recipe`). Auto-named nodes can't be
 referenced by name elsewhere in the topology — `entry:`, `supervisor:`,
 `submitTo:`, `acceptedFrom:`, `peers:`, and group memberships all need an
 explicit name. Use it for "anonymous worker" nodes whose roles only flow
@@ -786,11 +809,12 @@ For a given node, the effective Habitat overlay is computed as:
 
 ### Launcher integration
 
-For each pi-agent node the launcher passes `--topology-overlay <json>` in the
-passthrough args. `scripts/run-agent.mjs` parses this flag and merges the
-resolved fields into `habitatSpec` (topology fields take precedence over recipe
-values). The `habitat` baseline extension materialises `habitatSpec` at
-`session_start`; all rails read peer relationships from `getHabitat()`.
+For each pi-agent node the launcher builds the spawn argv via
+`buildRecipeChildArgv` (from `packages/engine/agent/lib/child-spawn.mjs`)
+and passes `--topology-overlay <json>` in the flags. The engine's
+`recipe-loader` parses this flag at `session_start` and merges the
+resolved peer fields into the Habitat; all rails read peer relationships
+from `getHabitat()`.
 
 ### Example — grouped mesh
 
