@@ -204,6 +204,31 @@ function handleIncoming(state: BusState, env: Envelope) {
   // is loaded; message-kind envelopes always flow through the general inbox.
   const kind = env.payload.kind;
 
+  // shutdown envelopes BYPASS the acceptsWorkFrom gate — a spawner killing its
+  // worker may not be in the worker's acceptsWorkFrom list (the worker's overlay
+  // only sets acceptsWorkFrom to the spawner for submissions/approvals, but
+  // mesh_kill sends a shutdown that must still be honoured).
+  if (kind === "shutdown") {
+    // Best-effort graceful shutdown: abort the current turn if possible, then exit.
+    try {
+      if ((pi as unknown as { abort?: () => void }).abort) {
+        (pi as unknown as { abort: () => void }).abort();
+      }
+    } catch { /* noop */ }
+    setTimeout(() => {
+      try {
+        if ((pi as unknown as { shutdown?: () => void }).shutdown) {
+          (pi as unknown as { shutdown: () => void }).shutdown();
+        } else {
+          process.exit(0);
+        }
+      } catch {
+        process.exit(0);
+      }
+    }, 0);
+    return;
+  }
+
   if (kind !== "message") {
     // acceptsWorkFrom enforcement for typed (non-message) inbound envelopes.
     // Message-kind envelopes are unrestricted for v1 peer chat.

@@ -317,9 +317,30 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
     ? (obj.skills as unknown[]).filter((s): s is string => typeof s === "string").slice()
     : [];
 
-  const spawns = Array.isArray(obj.spawns)
-    ? (obj.spawns as unknown[]).filter((a): a is string => typeof a === "string").slice()
-    : [];
+  // ── spawns: tolerate both string entries and object-form entries {recipe: string}
+  //    Full object-form wiring semantics are deferred to Slice 3.
+  const rawSpawns: unknown[] = Array.isArray(obj.spawns) ? (obj.spawns as unknown[]) : [];
+  const spawns: string[] = [];
+  for (const entry of rawSpawns) {
+    if (typeof entry === "string") {
+      spawns.push(entry);
+    } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const rec = (entry as Record<string, unknown>).recipe;
+      if (typeof rec === "string" && rec.trim()) {
+        spawns.push(rec.trim());
+      } else {
+        throw new Error(
+          `resolveRecipe: recipe '${name}' has a spawns entry that is an object ` +
+          `but is missing a 'recipe' string key: ${JSON.stringify(entry)}`,
+        );
+      }
+    } else {
+      throw new Error(
+        `resolveRecipe: recipe '${name}' has a spawns entry that is neither a ` +
+        `string nor an object with a 'recipe' key: ${JSON.stringify(entry)}`,
+      );
+    }
+  }
 
   const description =
     typeof obj.description === "string" && obj.description.trim()
@@ -342,10 +363,45 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
 
   void TIER_VARS; // referenced for future tier-resolution helpers
 
+  // ── Step 4: Implicit-wire mesh-spawn ────────────────────────────────────
+  // If spawns is non-empty, ensure the recipe has mesh_spawn + mesh_kill in
+  // tools and mesh-spawn in extensions (add if missing).
+  const finalTools = [...tools];
+  const finalExtensions = [...extensions];
+
+  if (spawns.length > 0) {
+    if (!finalTools.includes("mesh_spawn")) finalTools.push("mesh_spawn");
+    if (!finalTools.includes("mesh_kill")) finalTools.push("mesh_kill");
+    if (!finalExtensions.includes("mesh-spawn")) finalExtensions.push("mesh-spawn");
+  }
+
+  // ── Step 5: Inverse rejection ───────────────────────────────────────────
+  // mesh_spawn/mesh_kill tools or mesh-spawn extension without spawns: → error.
+  const hasMeshSpawnTools =
+    finalTools.includes("mesh_spawn") || finalTools.includes("mesh_kill");
+  const hasMeshSpawnExt = finalExtensions.includes("mesh-spawn");
+  if ((hasMeshSpawnTools || hasMeshSpawnExt) && spawns.length === 0) {
+    throw new Error(
+      `resolveRecipe: recipe '${name}' declares mesh_spawn/mesh_kill tools or ` +
+      `mesh-spawn extension but has no 'spawns:' list. Add a 'spawns:' field with ` +
+      `the allowed child recipe names.`,
+    );
+  }
+
+  // Legacy inverse rejection: delegate tool or atomic-delegate extension without spawns.
+  const hasDelegateTools = finalTools.includes("delegate");
+  const hasAtomicDelegateExt = finalExtensions.includes("atomic-delegate");
+  if ((hasDelegateTools || hasAtomicDelegateExt) && spawns.length === 0) {
+    throw new Error(
+      `resolveRecipe: recipe '${name}' declares 'delegate' tool or ` +
+      `'atomic-delegate' extension but has no 'spawns:' list. Add a 'spawns:' field.`,
+    );
+  }
+
   return {
     model,
-    tools,
-    extensions,
+    tools: finalTools,
+    extensions: finalExtensions,
     prompt: obj.prompt.trim(),
     skills,
     spawns,

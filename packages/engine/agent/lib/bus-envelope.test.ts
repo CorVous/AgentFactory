@@ -5,6 +5,7 @@ import {
   makeApprovalResultEnvelope,
   makeMessageEnvelope,
   makeRevisionRequestedEnvelope,
+  makeShutdownEnvelope,
   makeSubmissionEnvelope,
   renderInboundForUser,
   tryDecodeEnvelope,
@@ -390,6 +391,78 @@ describe("makeSubmissionEnvelope", () => {
   });
 });
 
+describe("makeShutdownEnvelope", () => {
+  it("produces a v:2 shutdown envelope without reason", () => {
+    const before = Date.now();
+    const env = makeShutdownEnvelope({ from: "authority", to: "worker" });
+    const after = Date.now();
+
+    expect(env.v).toBe(2);
+    expect(env.msg_id).toMatch(UUID_RE);
+    expect(env.from).toBe("authority");
+    expect(env.to).toBe("worker");
+    expect(env.ts).toBeGreaterThanOrEqual(before);
+    expect(env.ts).toBeLessThanOrEqual(after);
+    expect(env.payload).toEqual({ kind: "shutdown" });
+    expect(env.in_reply_to).toBeUndefined();
+  });
+
+  it("carries optional reason", () => {
+    const env = makeShutdownEnvelope({
+      from: "authority",
+      to: "worker",
+      reason: "terminated by mesh_kill",
+    });
+    expect(env.payload).toEqual({ kind: "shutdown", reason: "terminated by mesh_kill" });
+  });
+
+  it("carries optional in_reply_to", () => {
+    const env = makeShutdownEnvelope({
+      from: "authority",
+      to: "worker",
+      in_reply_to: "abc12345-0000-0000-0000-000000000000",
+    });
+    expect(env.in_reply_to).toBe("abc12345-0000-0000-0000-000000000000");
+  });
+
+  it("round-trips through tryDecodeEnvelope", () => {
+    const env = makeShutdownEnvelope({ from: "authority", to: "worker", reason: "bye" });
+    const decoded = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(decoded).toEqual(env);
+  });
+
+  it("round-trips without reason through tryDecodeEnvelope", () => {
+    const env = makeShutdownEnvelope({ from: "authority", to: "worker" });
+    const decoded = tryDecodeEnvelope(encodeEnvelope(env));
+    expect(decoded).toEqual(env);
+  });
+});
+
+describe("tryDecodeEnvelope — shutdown payloads", () => {
+  const base: Envelope = {
+    v: 2,
+    msg_id: "abc12345-0000-0000-0000-000000000000",
+    from: "authority",
+    to: "worker",
+    ts: 1700000000000,
+    payload: { kind: "shutdown" },
+  };
+
+  it("accepts a shutdown payload without reason", () => {
+    expect(tryDecodeEnvelope(JSON.stringify(base))).not.toBeNull();
+  });
+
+  it("accepts a shutdown payload with reason string", () => {
+    const env = { ...base, payload: { kind: "shutdown", reason: "exiting" } };
+    expect(tryDecodeEnvelope(JSON.stringify(env))).not.toBeNull();
+  });
+
+  it("returns null when shutdown reason is not a string", () => {
+    const env = { ...base, payload: { kind: "shutdown", reason: 42 } };
+    expect(tryDecodeEnvelope(JSON.stringify(env))).toBeNull();
+  });
+});
+
 describe("renderInboundForUser", () => {
   it("formats without in_reply_to", () => {
     const env: Envelope = {
@@ -496,5 +569,29 @@ describe("renderInboundForUser", () => {
       in_reply_to: "abc12345-0000-0000-0000-000000000000",
     };
     expect(renderInboundForUser(env)).toBe("[from worker-a re:abc12345] pong");
+  });
+
+  it("renders shutdown without reason as [shutdown from <peer>]", () => {
+    const env: Envelope = {
+      v: 2,
+      msg_id: "abc12345-0000-0000-0000-000000000000",
+      from: "authority",
+      to: "worker",
+      ts: 0,
+      payload: { kind: "shutdown" },
+    };
+    expect(renderInboundForUser(env)).toBe("[shutdown from authority]");
+  });
+
+  it("renders shutdown with reason as [shutdown from <peer>] <reason>", () => {
+    const env: Envelope = {
+      v: 2,
+      msg_id: "abc12345-0000-0000-0000-000000000000",
+      from: "authority",
+      to: "worker",
+      ts: 0,
+      payload: { kind: "shutdown", reason: "terminated by mesh_kill" },
+    };
+    expect(renderInboundForUser(env)).toBe("[shutdown from authority] terminated by mesh_kill");
   });
 });

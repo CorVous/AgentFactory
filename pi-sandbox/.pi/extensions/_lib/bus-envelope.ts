@@ -19,7 +19,8 @@ export type Payload =
   | { kind: "approval-request"; title: string; summary: string; preview: string }
   | { kind: "approval-result"; approved: boolean; note?: string }
   | { kind: "revision-requested"; note: string }
-  | { kind: "submission"; artifacts: Artifact[]; summary?: string };
+  | { kind: "submission"; artifacts: Artifact[]; summary?: string }
+  | { kind: "shutdown"; reason?: string };
 
 export interface Envelope {
   v: 2;
@@ -108,6 +109,27 @@ export function makeRevisionRequestedEnvelope(args: {
   };
 }
 
+export function makeShutdownEnvelope(args: {
+  from: string;
+  to: string;
+  reason?: string;
+  in_reply_to?: string;
+}): Envelope {
+  const payload: Payload = args.reason !== undefined
+    ? { kind: "shutdown", reason: args.reason }
+    : { kind: "shutdown" };
+  const env: Envelope = {
+    v: 2,
+    msg_id: randomUUID(),
+    from: args.from,
+    to: args.to,
+    ts: Date.now(),
+    payload,
+  };
+  if (args.in_reply_to !== undefined) env.in_reply_to = args.in_reply_to;
+  return env;
+}
+
 export function makeSubmissionEnvelope(args: {
   from: string;
   to: string;
@@ -176,6 +198,8 @@ function isValidPayload(payload: Record<string, unknown>): boolean {
       if (payload.summary !== undefined && typeof payload.summary !== "string") return false;
       return true;
     }
+    case "shutdown":
+      return payload.reason === undefined || typeof payload.reason === "string";
     default:
       return false;
   }
@@ -222,5 +246,9 @@ export function renderInboundForUser(env: Envelope): string {
         ? `[submission from ${env.from}] ${label}: ${p.summary}`
         : `[submission from ${env.from}] ${label}`;
     }
+    case "shutdown":
+      return p.reason !== undefined
+        ? `[shutdown from ${env.from}] ${p.reason}`
+        : `[shutdown from ${env.from}]`;
   }
 }

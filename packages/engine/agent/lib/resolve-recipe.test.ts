@@ -452,6 +452,135 @@ describe("resolveRecipe — extends chain integration", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Slice 2: implicit-wire, inverse rejection, object-form spawns
+// ---------------------------------------------------------------------------
+
+describe("resolveRecipe — implicit-wire mesh-spawn", () => {
+  it("adds mesh_spawn + mesh_kill to tools and mesh-spawn to extensions when spawns is non-empty", () => {
+    const recipesDir = writeTmpRecipe(
+      "with-spawns-implicit",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("with-spawns-implicit", { recipesDir });
+    expect(result.tools).toContain("mesh_spawn");
+    expect(result.tools).toContain("mesh_kill");
+    expect(result.extensions).toContain("mesh-spawn");
+  });
+
+  it("does NOT add mesh_spawn tools when spawns is empty", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-spawns-implicit",
+      `tools:\n  - read\nprompt: "p"\n`,
+    );
+    const result = resolveRecipe("no-spawns-implicit", { recipesDir });
+    expect(result.tools).not.toContain("mesh_spawn");
+    expect(result.tools).not.toContain("mesh_kill");
+    expect(result.extensions).not.toContain("mesh-spawn");
+  });
+
+  it("does not duplicate mesh_spawn/mesh_kill when already declared in tools", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-dup-tools",
+      `tools:\n  - read\n  - mesh_spawn\n  - mesh_kill\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("no-dup-tools", { recipesDir });
+    expect(result.tools.filter((t) => t === "mesh_spawn")).toHaveLength(1);
+    expect(result.tools.filter((t) => t === "mesh_kill")).toHaveLength(1);
+  });
+
+  it("does not duplicate mesh-spawn extension when already declared", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-dup-ext",
+      `tools:\n  - read\nprompt: "p"\nextensions:\n  - mesh-spawn\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("no-dup-ext", { recipesDir });
+    expect(result.extensions.filter((e) => e === "mesh-spawn")).toHaveLength(1);
+  });
+});
+
+describe("resolveRecipe — inverse rejection (mesh tools without spawns)", () => {
+  it("throws when tools includes mesh_spawn but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-spawn-no-spawns",
+      `tools:\n  - read\n  - mesh_spawn\nprompt: "p"\n`,
+    );
+    expect(() => resolveRecipe("mesh-spawn-no-spawns", { recipesDir })).toThrow(
+      /mesh_spawn.*mesh_kill.*spawns|spawns/,
+    );
+  });
+
+  it("throws when tools includes mesh_kill but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-kill-no-spawns",
+      `tools:\n  - read\n  - mesh_kill\nprompt: "p"\n`,
+    );
+    expect(() => resolveRecipe("mesh-kill-no-spawns", { recipesDir })).toThrow(/spawns/);
+  });
+
+  it("throws when extensions includes mesh-spawn but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-ext-no-spawns",
+      `tools:\n  - read\nprompt: "p"\nextensions:\n  - mesh-spawn\n`,
+    );
+    expect(() => resolveRecipe("mesh-ext-no-spawns", { recipesDir })).toThrow(/spawns/);
+  });
+
+  it("throws when delegate tool is declared but spawns is absent (legacy inverse rejection)", () => {
+    const recipesDir = writeTmpRecipe(
+      "delegate-no-spawns",
+      `tools:\n  - read\n  - delegate\nprompt: "p"\n`,
+    );
+    expect(() => resolveRecipe("delegate-no-spawns", { recipesDir })).toThrow(/spawns/);
+  });
+
+  it("throws when atomic-delegate extension is declared but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "atomic-no-spawns",
+      `tools:\n  - read\nprompt: "p"\nextensions:\n  - atomic-delegate\n`,
+    );
+    expect(() => resolveRecipe("atomic-no-spawns", { recipesDir })).toThrow(/spawns/);
+  });
+
+  it("allows recipe with both delegate and mesh_spawn when spawns is non-empty", () => {
+    const recipesDir = writeTmpRecipe(
+      "both-tools",
+      `tools:\n  - read\n  - delegate\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("both-tools", { recipesDir });
+    expect(result.tools).toContain("delegate");
+    expect(result.tools).toContain("mesh_spawn");
+  });
+});
+
+describe("resolveRecipe — object-form spawns entries", () => {
+  it("parses object-form {recipe: x} entries as string recipe names", () => {
+    const recipesDir = writeTmpRecipe(
+      "obj-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n`,
+    );
+    const result = resolveRecipe("obj-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["mesh-node"]);
+  });
+
+  it("parses mixed string and object-form spawns entries", () => {
+    const recipesDir = writeTmpRecipe(
+      "mixed-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - plain-node\n  - recipe: fancy-node\n`,
+    );
+    const result = resolveRecipe("mixed-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["plain-node", "fancy-node"]);
+  });
+
+  it("throws when object-form spawns entry is missing recipe key", () => {
+    const recipesDir = writeTmpRecipe(
+      "bad-obj-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - name: mesh-node\n`,
+    );
+    expect(() => resolveRecipe("bad-obj-spawns", { recipesDir })).toThrow(/recipe.*string key|recipe key/i);
+  });
+});
+
 describe("dedupeFirstOccurrence", () => {
   it("returns empty array for empty input", () => {
     expect(dedupeFirstOccurrence([])).toEqual([]);

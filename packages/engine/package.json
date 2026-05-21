@@ -16,7 +16,7 @@
       "agent/extensions/bus-tail-emitter.ts",
       "agent/extensions/mesh-rail.ts",
       "agent/extensions/slash-commands.ts",
-      "agent/extensions/mesh-authority.ts"
+      "agent/extensions/mesh-spawn.ts"
     ]
   },
   "exports": {

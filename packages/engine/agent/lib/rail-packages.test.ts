@@ -54,11 +54,19 @@ describe("RAIL_TO_CLUSTER mapping", () => {
       "slash-commands",
       "bus-tail-emitter",
       "mesh-rail",
-      "mesh-authority",
+      "mesh-spawn",
       "deferred-confirm-baseline",
     ]) {
       expect(RAIL_TO_CLUSTER[rail], `${rail} should be 'engine'`).toBe("engine");
     }
+  });
+
+  it("maps mesh-spawn to engine", () => {
+    expect(RAIL_TO_CLUSTER["mesh-spawn"]).toBe("engine");
+  });
+
+  it("does NOT map mesh-authority (extension deleted in Slice 2)", () => {
+    expect(RAIL_TO_CLUSTER["mesh-authority"]).toBeUndefined();
   });
 });
 

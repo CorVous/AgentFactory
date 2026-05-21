@@ -1,12 +1,8 @@
 # mesh-authority — mesh orchestrator recipe.
-# Inherits peer-bus (peer membership on the bus) from extends: peer, and adds
-# mesh-authority (spawn/stop long-running nodes). Also declares spawns: so the
-# atomic `delegate` tool is available for finite task workers.
+# mesh_spawn/mesh_kill are implicitly wired via spawns: (Slice 2, #161).
+# delegate/atomic-delegate stay as legacy path until Slice 6.
 #
-# The authority's instance name (--agent-name) is what peers use to address it
-# on the bus. Launched with an explicit name so multiple mesh topologies don't
-# collide:
-#
+# Launch:
 #   set -a; source models.env; set +a
 #   npm run agent -- mesh-authority -- --agent-name authority
 #
@@ -29,9 +25,8 @@ prompt: |
   - peer_send({to, body, in_reply_to?}) — fire-and-forget or reply
 
   Node lifecycle (for long-running peer nodes):
-  - mesh_spawn({recipe, name, task?}) — start a node; runs until mesh_stop
-  - mesh_stop({name}) — stop a running node
-  - mesh_nodes() — list nodes spawned this session
+  - mesh_spawn({recipe, name?, task?}) — start a node; runs until mesh_kill
+  - mesh_kill({name}) — stop a running node
 
   Finite task workers (run once and exit):
   - delegate({recipe, task, workspace?, timeout_ms?}) — atomic single call
@@ -48,13 +43,7 @@ tools:
   - peer_send
   - peer_inbox
   - peer_call
-  - mesh_spawn
-  - mesh_stop
-  - mesh_nodes
   - delegate
-
-extensions:
-  - mesh-authority
 
 spawns:
   - mesh-node

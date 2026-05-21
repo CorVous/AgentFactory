@@ -46,7 +46,7 @@ export const RAIL_TO_CLUSTER: Record<string, ClusterName> = {
   "slash-commands": "engine",
   "bus-tail-emitter": "engine",
   "mesh-rail": "engine",
-  "mesh-authority": "engine",
+  "mesh-spawn": "engine",
   "deferred-confirm-baseline": "engine",
 };
 
