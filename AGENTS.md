@@ -8,31 +8,30 @@ installed as a regular npm dependency so the `pi` CLI is available via
 ```sh
 npm install
 set -a; source models.env; set +a
-npm run agent -- deferred-writer            # focused agent, sandboxed to $PWD
+pi --recipe deferred-writer                 # focused agent, sandboxed to $PWD
 npm run pi                                  # raw pi session for exploration
 ```
 
 ## How agents work in this repo
 
-- `npm run agent -- <name>` reads a YAML recipe from `pi-sandbox/agents/`,
-  applies the `sandbox` baseline (no `bash`, no fs activity outside the
-  working directory), and execs pi with the recipe's prompt, tools,
-  extensions, and skills. Full reference: [`docs/agents.md`](./docs/agents.md).
+- `pi --recipe <name>` reads a YAML recipe from `pi-sandbox/agents/`
+  (project-local `.pi/recipes/` is also searched first), loads rails
+  from the installed engine and cluster packages, and configures the
+  pi session with the recipe's prompt, tools, extensions, and skills.
+  Full reference: [`docs/agents.md`](./docs/agents.md).
 - Models live in `models.env` and are addressed by tier:
   `RABBIT_SAGE_MODEL` (planner), `LEAD_HARE_MODEL` (overseer),
   `TASK_RABBIT_MODEL` (worker). Full reference:
   [`docs/model-tiers.md`](./docs/model-tiers.md).
-- Every instance — root or delegated — gets a unique
-  `<breed>-<shortName>` name (a hare breed for `LEAD_HARE_MODEL`,
-  rabbit otherwise) generated at launch. The slug is the canonical
-  `--agent-name`, the bus socket identity, and (prettified) the title
-  in the header / delegation boxes. Override with `-- --agent-name
-  <name>` when peers need a stable role name.
+- Every instance gets a unique `<breed>-<shortName>` name generated at
+  launch. The slug is the canonical `--peer-name`, the bus socket
+  identity, and (prettified) the title in the header. Override with
+  `--peer-name <name>` when peers need a stable role name.
 
 ## More docs
 
-- [`docs/agents.md`](./docs/agents.md) — `npm run agent` recipe shape,
-  sandbox baseline, deferred-writer worked example, sub-agent rails.
+- [`docs/agents.md`](./docs/agents.md) — `pi --recipe` recipe shape,
+  packaging model, deferred-writer worked example, sub-agent rails.
 - [`docs/model-tiers.md`](./docs/model-tiers.md) — tier → model-ID table.
 - [`docs/pi-direct.md`](./docs/pi-direct.md) — running raw pi, the
   `pi-agent-builder` skill, scripted (`-p`) gotchas.

@@ -17,11 +17,12 @@ set -a; source models.env; set +a
 npm run pi -- --model "$TASK_RABBIT_MODEL"    # or $LEAD_HARE_MODEL / $RABBIT_SAGE_MODEL
 ```
 
-In an agent recipe, set `model:` to the tier variable name (the runner
-resolves it) or a literal provider/model ID:
+In an agent recipe, set `model:` to the tier variable name (the engine
+recipe-loader resolves it via env → `~/.pi/agent/models.json` → bundled
+`tier-defaults.json`) or a literal provider/model ID:
 
 ```yaml
-model: TASK_RABBIT_MODEL          # resolved from models.env
+model: TASK_RABBIT_MODEL          # resolved from models.env (or override file / bundled defaults)
 # model: deepseek/deepseek-v3.2   # literal ID also works
 ```
 

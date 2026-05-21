@@ -1,6 +1,6 @@
 # Using pi directly
 
-`npm run agent` is the default entry point for focused agents. Use the
+`pi --recipe <name>` is the default entry point for focused agents. Use the
 direct paths below when you need raw pi (interactive exploration, building
 new extensions, or scripting).
 
@@ -25,8 +25,8 @@ docs as context.
 
 ## Creating pi agents the long way
 
-When the recipe-based runner isn't enough — e.g. you're building a brand
-new extension or a multi-process pipeline — fall back to invoking pi
+When `pi --recipe` isn't enough — e.g. you're building a brand new
+extension or a multi-process pipeline — fall back to invoking pi
 directly with the bundled `pi-agent-builder` skill. Pi reads the skill
 on demand and generates extensions that follow its recipes.
 
