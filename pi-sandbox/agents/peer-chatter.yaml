@@ -5,9 +5,9 @@
 # Launch two panes, each with `set -a; source models.env; set +a`, then:
 #   tmux split-window
 #   # pane A
-#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p1 -- --peer-name planner
+#   pi --recipe peer-chatter --sandbox /tmp/p1 --peer-bus /tmp/bus -- --peer-name planner
 #   # pane B
-#   PI_AGENT_BUS_ROOT=/tmp/bus npm run agent -- peer-chatter --sandbox /tmp/p2 -- --peer-name worker-a
+#   pi --recipe peer-chatter --sandbox /tmp/p2 --peer-bus /tmp/bus -- --peer-name worker-a
 #
 # Then prompt pane A: "call peer_list, then peer_send to worker-a with body 'ping'"
 
@@ -19,9 +19,9 @@ description: Demo peer that talks to other agents over the peer-bus.
 
 prompt: |
   You are a peer agent on a multi-agent bus. Your name is whatever was
-  passed via --peer-name (default "anonymous"). Other agents launched
-  with the same PI_AGENT_BUS_ROOT can send you messages and you can send
-  them messages back. Use `read`, `ls`, `grep`, `find` for local fs work.
+  passed via --peer-name (default "anonymous"). Other agents on the same
+  peer bus can send you messages and you can send them messages back.
+  Use `read`, `ls`, `grep`, `find` for local fs work.
 
 tools:
   - read

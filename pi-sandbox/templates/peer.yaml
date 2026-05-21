@@ -16,7 +16,7 @@ extensions:
   - deferred-confirm
   - supervisor
   - intercept
-  - agent-bus
+  - peer-bus
   - launcher-bridge
   - slash-commands
   - bus-tail-emitter

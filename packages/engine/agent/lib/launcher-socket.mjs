@@ -23,7 +23,7 @@ import { encodeEnvelope, tryDecodeEnvelope } from "./launcher-envelope.mjs";
 
 /**
  * Probe a socket path to see if a live peer is listening. Mirrors
- * agent-bus.ts's probeSocketLive.
+ * peer-bus.ts's probeSocketLive.
  *
  * @param {string} sockPath
  * @param {typeof net.connect} connectFn

@@ -9,7 +9,7 @@
     "name": "pi-engine",
     "extensions": [
       "agent/extensions/recipe-loader.ts",
-      "agent/extensions/agent-bus.ts",
+      "agent/extensions/peer-bus.ts",
       "agent/extensions/supervisor.ts",
       "agent/extensions/intercept.ts",
       "agent/extensions/launcher-bridge.ts",

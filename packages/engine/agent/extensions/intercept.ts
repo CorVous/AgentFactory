@@ -368,7 +368,7 @@ function buildInterceptDispatch(
       } catch { /* Habitat not available */ }
     });
 
-    // Returning true tells agent-bus the envelope was consumed.
+    // Returning true tells peer-bus the envelope was consumed.
     return true;
   };
 }

@@ -350,7 +350,7 @@ export default function (pi: ExtensionAPI) {
   const cleanup = () => {
     for (const [, pending] of state.pendingCalls) {
       clearTimeout(pending.timer);
-      pending.reject(new Error("agent-bus shutdown"));
+      pending.reject(new Error("peer-bus shutdown"));
     }
     state.pendingCalls.clear();
     if (state.server) {

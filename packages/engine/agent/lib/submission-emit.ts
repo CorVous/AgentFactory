@@ -100,7 +100,7 @@ export function takeLastSubmissionMsgId(): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch helper — called by agent-bus.ts when a reply arrives
+// Dispatch helper — called by peer-bus.ts when a reply arrives
 // ---------------------------------------------------------------------------
 
 export function dispatchSubmissionReply(env: Envelope): boolean {

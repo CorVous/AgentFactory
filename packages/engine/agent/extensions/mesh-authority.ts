@@ -1,9 +1,9 @@
 // mesh-authority extension — lifecycle management for long-running mesh peer
-// nodes. Works alongside agent-bus (the authority is itself a bus peer).
+// nodes. Works alongside peer-bus (the authority is itself a bus peer).
 //
 // Registers three tools:
 //   mesh_spawn({recipe, name, sandbox?, task?}) — start a peer node in the
-//     background; it binds to the shared PI_AGENT_BUS_ROOT and can be reached
+//     background; it binds to the shared peer bus and can be reached
 //     by its instance name.
 //   mesh_stop({name}) — send SIGTERM to a spawned node; SIGKILL after 3 s.
 //   mesh_nodes() — list nodes spawned this session with uptime.
@@ -104,8 +104,8 @@ export default function (pi: ExtensionAPI) {
     label: "Mesh Spawn",
     description:
       "Start a long-running peer node on the mesh bus. The node binds to the " +
-      "shared PI_AGENT_BUS_ROOT under its instance name and can be reached by " +
-      "any peer via agent_call or agent_send. Returns immediately; the node runs " +
+      "shared peer bus under its instance name and can be reached by " +
+      "any peer via peer_call or peer_send. Returns immediately; the node runs " +
       "in the background until mesh_stop or session end. Recipe is the YAML " +
       "template (e.g. 'mesh-node'); name is the unique instance identity on the bus.",
     parameters: Type.Object({

@@ -2,7 +2,7 @@
 //
 // The engine cannot depend on pi-sandbox/; this module reimplements the
 // minimal setHabitat function so recipe-loader.ts can store the Habitat on
-// globalThis where other extensions (sandbox, agent-bus, etc.) read it via
+// globalThis where other extensions (sandbox, peer-bus, etc.) read it via
 // getHabitat() from their own habitat.ts copies.
 //
 // The Habitat type is the shared contract (habitat-types.ts).

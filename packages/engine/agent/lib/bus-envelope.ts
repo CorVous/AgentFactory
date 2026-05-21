@@ -1,8 +1,8 @@
-// Wire format for agent-bus envelopes. Versioned (`v: 2`) with a
+// Wire format for peer-bus envelopes. Versioned (`v: 2`) with a
 // discriminated `payload` union. v:1 envelopes are not accepted —
 // both ends update atomically.
 //
-// Used by the TypeScript bus extension (agent-bus.ts) and any agent
+// Used by the TypeScript bus extension (peer-bus.ts) and any agent
 // that talks the bus protocol directly.
 
 import { randomUUID } from "node:crypto";

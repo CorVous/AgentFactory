@@ -121,17 +121,17 @@ export default function (pi: ExtensionAPI) {
 
     // --- Supervisor-routed flow (submitTo set) --------------------------------
     let submitTo: string | undefined;
-    try { submitTo = getHabitat().submitTo; } catch { submitTo = undefined; }
+    try { submitTo = getHabitat().submitsWorkTo; } catch { submitTo = undefined; }
 
     if (submitTo) {
       const allArtifacts: Artifact[] = oks.flatMap((o) => o.result.artifacts ?? []);
 
       let busRoot: string;
-      let agentName: string;
+      let instanceName: string;
       try {
         const h = getHabitat();
         busRoot = h.busRoot;
-        agentName = h.agentName;
+        instanceName = h.instanceName;
       } catch {
         tell(ctx, "error", "submission: habitat not available, cannot ship to supervisor");
         return;
@@ -142,7 +142,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const shipCtx: Parameters<typeof shipSubmission>[0] = {
           busRoot,
-          agentName,
+          instanceName,
           submitTo,
           sendEnvelope: makeBusSender(busRoot),
         };

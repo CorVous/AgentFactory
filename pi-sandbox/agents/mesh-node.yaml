@@ -5,7 +5,7 @@
 #
 # Launched via the mesh launcher (npm run mesh) or directly:
 #   set -a; source models.env; set +a
-#   PI_AGENT_BUS_ROOT=/tmp/mybus npm run agent -- mesh-node -- --peer-name analyst
+#   pi --recipe mesh-node --peer-bus /tmp/mybus -- --peer-name analyst
 #
 # Or spawned by the authority agent via mesh_spawn:
 #   mesh_spawn({recipe: "mesh-node", name: "analyst", task: "wait for requests"})

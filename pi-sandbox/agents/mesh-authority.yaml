@@ -36,7 +36,7 @@ prompt: |
   Finite task workers (run once and exit):
   - delegate({recipe, task, workspace?, timeout_ms?}) — atomic single call
 
-  All nodes you spawn share your PI_AGENT_BUS_ROOT and can reach you by name.
+  All nodes you spawn share the same bus root and can reach you by name.
   Incoming messages arrive as synthetic user prompts; also readable via peer_inbox.
 
 tools:
