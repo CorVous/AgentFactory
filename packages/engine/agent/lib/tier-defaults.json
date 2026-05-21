@@ -1,0 +1,5 @@
+{
+  "RABBIT_SAGE_MODEL": "xiaomi/mimo-v2-pro",
+  "LEAD_HARE_MODEL": "google/gemini-3-flash-preview",
+  "TASK_RABBIT_MODEL": "deepseek/deepseek-v3.2"
+}

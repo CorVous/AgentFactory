@@ -22,6 +22,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { buildHabitat } from "../lib/build-habitat.js";
 import { resolveRecipe } from "../lib/resolve-recipe.js";
 import { resolveModel } from "../lib/resolve-model.js";
+import { loadBundledDefaults, loadOverrideConfig } from "../lib/load-tier-config.js";
 import { resolveSkills } from "../lib/resolve-skills.js";
 import { assemblePrompt } from "../lib/assemble-prompt.js";
 import { setHabitat } from "../lib/habitat-glue.js";
@@ -149,7 +150,14 @@ export default function recipeLoader(pi: ExtensionAPI) {
 
     let concreteModelId: string;
     try {
-      concreteModelId = resolveModel(recipe.model, process.env as Record<string, string | undefined>);
+      const bundledDefaults = loadBundledDefaults();
+      const overrideConfig = loadOverrideConfig();
+      concreteModelId = resolveModel(
+        recipe.model,
+        process.env as Record<string, string | undefined>,
+        overrideConfig,
+        bundledDefaults,
+      );
     } catch (e) {
       ctx.ui.notify(`recipe-loader: ${(e as Error).message}`, "error");
       return;
