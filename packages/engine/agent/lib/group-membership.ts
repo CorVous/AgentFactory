@@ -1,7 +1,7 @@
 // group-membership.ts — unified group-membership aggregator.
 // Canonical engine copy. The project-local .mjs at
-// pi-sandbox/.pi/extensions/_lib/group-membership.mjs is kept for
-// topology-validator.mjs/launch-mesh.mjs consumers; this file is canonical.
+// pi-sandbox/.pi/extensions/_lib/group-membership.mjs is a legacy copy
+// kept for topology-validator.mjs consumers; this file is canonical.
 //
 // Exports:
 //   aggregateGroupMembership(topo)  — legacy topology-shaped builder (unchanged)

@@ -3,7 +3,7 @@
 # (--peer-name) distinguishes nodes — multiple instances of this recipe
 # can run simultaneously under different names.
 #
-# Launched via the mesh launcher (npm run mesh) or directly:
+# Launched via the mesh launcher (npm run mesh -- <host-recipe>) or directly:
 #   set -a; source models.env; set +a
 #   pi --recipe mesh-node --peer-bus /tmp/mybus -- --peer-name analyst
 #

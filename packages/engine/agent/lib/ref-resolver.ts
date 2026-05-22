@@ -1,7 +1,7 @@
 // ref-resolver.ts — pure-function @group reference resolver.
 // Canonical engine copy. The project-local .mjs at
-// pi-sandbox/.pi/extensions/_lib/ref-resolver.mjs is kept for
-// topology-validator.mjs/launch-mesh.mjs consumers; this file is canonical.
+// pi-sandbox/.pi/extensions/_lib/ref-resolver.mjs is a legacy copy
+// kept for topology-validator.mjs consumers; this file is canonical.
 //
 // Resolves a single `@<group>` reference (or literal string) according to
 // a policy, using a caller-owned counter for round-robin selection.

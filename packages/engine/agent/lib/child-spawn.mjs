@@ -1,8 +1,8 @@
 /**
  * child-spawn.mjs — pure argv builder for spawning pi --recipe children.
  *
- * Used by scripts/launch-mesh.mjs (mesh node spawn) and
- * pi-sandbox/.pi/extensions/atomic-delegate.ts (worker spawn).
+ * Used by mesh-mux.ts (mesh node spawn via PtyPool) and
+ * atomic-delegate.ts / mesh-spawn.ts (worker spawn).
  *
  * No I/O. Pure: given the spawn parameters, returns the argv array to pass
  * to `node <piBin> ...` (where piBin is resolved by resolvePiBin).

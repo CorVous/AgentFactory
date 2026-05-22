@@ -2,11 +2,8 @@
 
 - `package.json` — ESM project, pins `@earendil-works/pi-coding-agent`.
   Defines `npm run pi` (raw pi from `pi-sandbox/`) and `npm run mesh`
-  (topology-driven multi-agent launcher).
+  (host-recipe-driven multi-agent launcher — `npm run mesh -- <recipe-name>`).
 - `models.env` — tier → model-ID mapping. See [model-tiers.md](./model-tiers.md).
-- `scripts/launch-mesh.mjs` — topology launcher used by `npm run mesh`;
-  spawns each node as `pi --recipe <recipe>` children via
-  `buildRecipeChildArgv` in `packages/engine/agent/lib/child-spawn.mjs`.
 - `AGENTS.md` / `CLAUDE.md` — thin index files at repo root. **Not** loaded
   into pi sessions (`npm run pi` passes `-nc`).
 - `docs/` — this folder. Long-form docs split out of `AGENTS.md`.
@@ -46,10 +43,11 @@ Pi's working directory is `pi-sandbox/`; the `npm run pi` script handles the
 - `pi-sandbox/agents/` — YAML recipes for `pi --recipe <name>`. Recipe
   search order: project-local `.pi/recipes/` → `~/.pi/agent/recipes/` →
   bundled in the engine package (currently empty). Recipes in this dir
-  are found when `pi --recipe` is invoked from the repo root.
+  are found when `pi --recipe` is invoked from the repo root. Also hosts
+  host recipes (e.g. `anon-grouped-mesh.yaml`, `authority-mesh.yaml`,
+  `grouped-mesh.yaml`) launched via `npm run mesh -- <recipe-name>`.
 - `pi-sandbox/templates/` — Template YAML files used by `extends:` chains
   in recipes (e.g. `peer.yaml`).
-- `pi-sandbox/meshes/` — Topology YAML files consumed by `npm run mesh`.
 - `pi-sandbox/.pi/extensions/` — Project-local pi extensions. Used during
   development; production extensions live in `packages/*/agent/extensions/`.
 - `pi-sandbox/.pi/scratch/` — Throwaway prompt files, raw pi output,

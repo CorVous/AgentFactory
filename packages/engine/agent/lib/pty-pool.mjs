@@ -1,7 +1,7 @@
 /**
  * pty-pool.mjs — spawns and manages peer PTYs for the launcher TUI.
  *
- * Each peer launched by `launch-mesh.mjs` gets a PTY
+ * Each peer launched by `mesh-mux` gets a PTY
  * spawned via `node-pty`. This module owns the PTY lifecycle:
  *
  *   - spawn: create the PTY, wire stdout to a VirtualBuffer.

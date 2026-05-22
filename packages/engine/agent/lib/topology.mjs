@@ -1,6 +1,6 @@
 // CANONICAL COPY: packages/engine/agent/lib/topology.mjs
-// Legacy copy in pi-sandbox/.pi/extensions/_lib/topology.mjs is kept for
-// backward compatibility with launch-mesh.mjs consumers.
+// The project-local .mjs copy at pi-sandbox/.pi/extensions/_lib/topology.mjs
+// has been removed (Slice 5); this is the canonical copy.
 import { parse as parseYaml } from "yaml";
 import { aggregateGroupMembership } from "./group-membership.mjs";
 import { resolveRef } from "./ref-resolver.mjs";

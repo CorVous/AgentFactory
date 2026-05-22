@@ -13,6 +13,9 @@ import {
   runMeshSpawn,
   parseRef,
   classifyBareRef,
+  applyEntryWiringToOverlay,
+  resolveInitialMeshRefs,
+  resolveInitialMeshScalarRef,
   type WorkerHandle,
   type SpawnArgs,
   type DispatchHookRegistry,
@@ -551,6 +554,147 @@ describe("parseRef", () => {
 
   it("@$spawner throws (unsupported symbolic)", () => {
     expect(() => parseRef("@$spawner")).toThrow(/symbolic|unknown/i);
+  });
+});
+
+// ── applyEntryWiringToOverlay — Step 0 fix for initial_mesh per-entry wiring ─
+
+describe("applyEntryWiringToOverlay", () => {
+  it("returns base overlay unchanged when entryWiring is empty", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    const result = applyEntryWiringToOverlay(base, {});
+    expect(result.supervisor).toBe("host");
+    expect(result.submitsWorkTo).toBe("host");
+    expect(result.acceptsWorkFrom).toEqual(["host"]);
+    expect(result.messagesWith).toEqual(["host"]);
+    expect(result.spawns).toEqual([]);
+  });
+
+  it("overrides submitsWorkTo when entry declares it", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    const result = applyEntryWiringToOverlay(base, { submitsWorkTo: "reviewer" });
+    expect(result.submitsWorkTo).toBe("reviewer");
+    // other fields still defaulted to host
+    expect(result.supervisor).toBe("host");
+    expect(result.acceptsWorkFrom).toEqual(["host"]);
+    expect(result.messagesWith).toEqual(["host"]);
+  });
+
+  it("overrides messagesWith when entry declares it", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    const result = applyEntryWiringToOverlay(base, { messagesWith: ["analyst", "writer"] });
+    expect(result.messagesWith).toEqual(["analyst", "writer"]);
+    // other fields unchanged
+    expect(result.supervisor).toBe("host");
+    expect(result.submitsWorkTo).toBe("host");
+    expect(result.acceptsWorkFrom).toEqual(["host"]);
+  });
+
+  it("overrides acceptsWorkFrom when entry declares it", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    const result = applyEntryWiringToOverlay(base, { acceptsWorkFrom: ["writer"] });
+    expect(result.acceptsWorkFrom).toEqual(["writer"]);
+    // supervisor still defaults to host
+    expect(result.supervisor).toBe("host");
+  });
+
+  it("overrides escalatesTo (supervisor) when entry declares it", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    const result = applyEntryWiringToOverlay(base, { escalatesTo: "authority" });
+    expect(result.supervisor).toBe("authority");
+    // other fields unchanged
+    expect(result.submitsWorkTo).toBe("host");
+    expect(result.acceptsWorkFrom).toEqual(["host"]);
+    expect(result.messagesWith).toEqual(["host"]);
+  });
+
+  it("all four overrides applied simultaneously produce correct overlay", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    const result = applyEntryWiringToOverlay(base, {
+      escalatesTo: "authority",
+      submitsWorkTo: "reviewer",
+      acceptsWorkFrom: ["writer"],
+      messagesWith: ["analyst", "reviewer"],
+    });
+    expect(result.supervisor).toBe("authority");
+    expect(result.submitsWorkTo).toBe("reviewer");
+    expect(result.acceptsWorkFrom).toEqual(["writer"]);
+    expect(result.messagesWith).toEqual(["analyst", "reviewer"]);
+    expect(result.spawns).toEqual([]); // unaffected
+  });
+
+  it("does not mutate the base overlay", () => {
+    const base = computeWorkerHabitatOverlay("host");
+    applyEntryWiringToOverlay(base, { submitsWorkTo: "reviewer" });
+    expect(base.submitsWorkTo).toBe("host");
+  });
+});
+
+// ── resolveInitialMeshRefs — group expansion for initial_mesh wiring ─────────
+
+describe("resolveInitialMeshRefs", () => {
+  function makeIndex(entries: Array<[string, string[]]>): Map<string, string[]> {
+    return new Map(entries);
+  }
+
+  it("passes literal refs through unchanged", () => {
+    const index = makeIndex([["analyst", ["workers"]]]);
+    expect(resolveInitialMeshRefs(["analyst"], index)).toEqual(["analyst"]);
+  });
+
+  it("expands @group ref to matching peer names", () => {
+    const index = makeIndex([
+      ["analyst", ["workers"]],
+      ["writer", ["workers"]],
+      ["reviewer", ["reviewers"]],
+    ]);
+    const result = resolveInitialMeshRefs(["@workers"], index);
+    expect(result).toEqual(["analyst", "writer"]);
+  });
+
+  it("expands @group to empty list when no peers match", () => {
+    const index = makeIndex([["analyst", ["workers"]]]);
+    const result = resolveInitialMeshRefs(["@nobody"], index);
+    expect(result).toEqual([]);
+  });
+
+  it("deduplicates peers that appear in multiple groups", () => {
+    const index = makeIndex([["peer-a", ["group1", "group2"]]]);
+    const result = resolveInitialMeshRefs(["@group1", "@group2"], index);
+    expect(result).toEqual(["peer-a"]); // only once
+  });
+
+  it("mixes literals and group refs", () => {
+    const index = makeIndex([
+      ["analyst", ["workers"]],
+      ["reviewer", ["reviewers"]],
+    ]);
+    const result = resolveInitialMeshRefs(["reviewer", "@workers"], index);
+    expect(result).toEqual(["reviewer", "analyst"]);
+  });
+});
+
+describe("resolveInitialMeshScalarRef", () => {
+  function makeIndex(entries: Array<[string, string[]]>): Map<string, string[]> {
+    return new Map(entries);
+  }
+
+  it("returns literal ref unchanged", () => {
+    const index = makeIndex([]);
+    expect(resolveInitialMeshScalarRef("authority", index)).toBe("authority");
+  });
+
+  it("returns first matching peer for @group ref", () => {
+    const index = makeIndex([
+      ["authority", ["authority-group"]],
+      ["other", ["other-group"]],
+    ]);
+    expect(resolveInitialMeshScalarRef("@authority-group", index)).toBe("authority");
+  });
+
+  it("returns raw ref when @group matches nothing", () => {
+    const index = makeIndex([]);
+    expect(resolveInitialMeshScalarRef("@nobody", index)).toBe("@nobody");
   });
 });
 

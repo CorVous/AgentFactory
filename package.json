@@ -13,7 +13,7 @@
   "scripts": {
     "sandcastle": "npx tsx .sandcastle/main.ts",
     "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
-    "mesh": "bash -c 'set -a && source models.env && set +a && exec node scripts/launch-mesh.mjs \"$@\"' --",
+    "mesh": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --recipe \"$1\" --is-host' --",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },

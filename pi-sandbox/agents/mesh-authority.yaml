@@ -6,8 +6,8 @@
 #   set -a; source models.env; set +a
 #   npm run agent -- mesh-authority -- --agent-name authority
 #
-# Or via the mesh launcher:
-#   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
+# Or via the mesh launcher (host recipe):
+#   npm run mesh -- authority-mesh
 
 extends: peer
 model: LEAD_HARE_MODEL

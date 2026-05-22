@@ -5,7 +5,7 @@
 // --is-host) it:
 //   1. Binds ${busRoot}/__launcher__.sock via LauncherSocket.
 //   2. Creates PtyPool / Multiplexer / FocusController / DecisionsQueue /
-//      BusTailBuffer — same as scripts/launch-mesh.mjs.
+//      BusTailBuffer — the same subsystems used to run the launcher.
 //   3. Processes the recipe's initial_mesh: block (pre-spawns peers).
 //   4. Handles spawn-request / kill-request envelopes from worker peers.
 //   5. Broadcasts mesh-update data-bus envelopes to visible peers on changes.
@@ -39,6 +39,10 @@ import { validateInitialMesh } from "../lib/initial-mesh-validator.js";
 import {
   computeWorkerHabitatOverlay,
   serializeHabitatOverlay,
+  applyEntryWiringToOverlay,
+  resolveInitialMeshRefs,
+  resolveInitialMeshScalarRef,
+  type InitialMeshEntryWiring,
 } from "../lib/peer-spawn.js";
 // @ts-ignore — no TS declarations for .mjs; same pattern as mesh-spawn.ts
 import { buildRecipeChildArgv, resolvePiBin, resolveRepoRoot } from "../lib/child-spawn.mjs";
@@ -164,6 +168,8 @@ function spawnPeerViaPtyPool(
     workspace?: { include: string[] };
     busRoot: string;
     debug: boolean;
+    /** Optional per-entry wiring overrides; host-defaults apply for omitted fields. */
+    entryWiring?: InitialMeshEntryWiring;
   },
 ): string {
   const { workerName, recipe, spawnerName, groups, task, busRoot, debug } = opts;
@@ -172,8 +178,11 @@ function spawnPeerViaPtyPool(
     path.join(os.tmpdir(), `pi-mesh-${workerName}-`),
   );
 
-  // Build habitat overlay
-  const habitatOverlay = computeWorkerHabitatOverlay(spawnerName);
+  // Build habitat overlay — start from host defaults, then apply entry overrides
+  let habitatOverlay = computeWorkerHabitatOverlay(spawnerName);
+  if (opts.entryWiring) {
+    habitatOverlay = applyEntryWiringToOverlay(habitatOverlay, opts.entryWiring);
+  }
   if (groups && groups.length > 0) {
     habitatOverlay.groups = groups;
   }
@@ -358,6 +367,17 @@ async function processInitialMesh(
     }
   }
 
+  // Build a peer→groups index for resolving @group refs in entry wiring fields.
+  // Each allocated name is mapped to its declared groups (or [] if ungrouped).
+  // This index lets resolveInitialMeshRefs expand @<group> refs to concrete peer
+  // names even before any peer is running (cohort registry is not yet populated).
+  const peerGroupIndex = new Map<string, string[]>();
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const groups: string[] = Array.isArray(entry.groups) ? (entry.groups as string[]) : [];
+    peerGroupIndex.set(allocatedNames[i], groups);
+  }
+
   // Spawn each entry
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -365,6 +385,29 @@ async function processInitialMesh(
     const spawnerName = hostName; // host is the spawner for initial_mesh
     const groups: string[] = Array.isArray(entry.groups) ? (entry.groups as string[]) : [];
     const task = typeof entry.task === "string" ? entry.task : undefined;
+
+    // Build per-entry wiring overrides. Ref strings in these fields are resolved
+    // against the pre-allocated peer-group index (not the cohort registry, which
+    // isn't populated yet at initial_mesh spawn time).
+    const entryWiring: InitialMeshEntryWiring = {};
+    if (typeof entry.escalatesTo === "string") {
+      entryWiring.escalatesTo = resolveInitialMeshScalarRef(entry.escalatesTo, peerGroupIndex);
+    }
+    if (typeof entry.submitsWorkTo === "string") {
+      entryWiring.submitsWorkTo = resolveInitialMeshScalarRef(entry.submitsWorkTo, peerGroupIndex);
+    }
+    if (Array.isArray(entry.acceptsWorkFrom)) {
+      entryWiring.acceptsWorkFrom = resolveInitialMeshRefs(
+        (entry.acceptsWorkFrom as string[]).filter((r): r is string => typeof r === "string"),
+        peerGroupIndex,
+      );
+    }
+    if (Array.isArray(entry.messagesWith)) {
+      entryWiring.messagesWith = resolveInitialMeshRefs(
+        (entry.messagesWith as string[]).filter((r): r is string => typeof r === "string"),
+        peerGroupIndex,
+      );
+    }
 
     let scratchRoot: string;
     try {
@@ -376,6 +419,7 @@ async function processInitialMesh(
         task,
         busRoot,
         debug,
+        entryWiring: Object.keys(entryWiring).length > 0 ? entryWiring : undefined,
       });
     } catch (e) {
       ctx.ui.notify(

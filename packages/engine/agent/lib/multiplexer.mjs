@@ -20,7 +20,7 @@
  *   See docs/agents.md § "Verifying the multi-agent rails under tmux" for the
  *   tmux commands that verify rendering fidelity and clean teardown.
  *
- * TODO(manual-tmux-check): after wiring into launch-mesh.mjs,
+ * TODO(manual-tmux-check): to verify agent-header and agent-footer render correctly,
  *   run the following to verify agent-header and agent-footer render correctly:
  *
  *   set -a; source models.env; set +a

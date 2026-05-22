@@ -305,6 +305,111 @@ export function computeWorkerHabitatOverlay(callerName: string): SpawnArgs["habi
   };
 }
 
+/**
+ * Per-entry wiring fields that an initial_mesh: entry may declare.
+ * Any declared field overrides the host-default from computeWorkerHabitatOverlay.
+ * Literal peer names and @<group> refs are both valid; group refs must already
+ * have been expanded (by the caller) to concrete peer name strings before passing
+ * them here — this function is purely additive, it does NOT resolve refs.
+ */
+export interface InitialMeshEntryWiring {
+  /** Overrides `supervisor` (serialised as `escalatesTo`). */
+  escalatesTo?: string;
+  /** Overrides `submitsWorkTo`. */
+  submitsWorkTo?: string;
+  /** Overrides `acceptsWorkFrom` list. */
+  acceptsWorkFrom?: string[];
+  /** Overrides `messagesWith` list. */
+  messagesWith?: string[];
+}
+
+/**
+ * Merge per-entry wiring overrides into a base overlay produced by
+ * `computeWorkerHabitatOverlay`. Entry-declared fields win; the host-default
+ * applies only for fields the entry omits.
+ *
+ * @param base    The default overlay from computeWorkerHabitatOverlay(hostName).
+ * @param wiring  Per-entry wiring overrides (already resolved to concrete names).
+ * @returns       A new overlay object with the entry's overrides applied.
+ */
+export function applyEntryWiringToOverlay(
+  base: SpawnArgs["habitatOverlay"],
+  wiring: InitialMeshEntryWiring,
+): SpawnArgs["habitatOverlay"] {
+  return {
+    ...base,
+    ...(wiring.escalatesTo !== undefined ? { supervisor: wiring.escalatesTo } : {}),
+    ...(wiring.submitsWorkTo !== undefined ? { submitsWorkTo: wiring.submitsWorkTo } : {}),
+    ...(wiring.acceptsWorkFrom !== undefined ? { acceptsWorkFrom: wiring.acceptsWorkFrom } : {}),
+    ...(wiring.messagesWith !== undefined ? { messagesWith: wiring.messagesWith } : {}),
+  };
+}
+
+/**
+ * Resolve a list of ref strings that may contain `@<group>` refs by expanding
+ * them against a simple name→groups lookup (the pre-allocated initial_mesh peers).
+ *
+ * Used by processInitialMesh in mesh-mux.ts to resolve wiring refs before the
+ * cohort registry is populated (initial peers aren't running yet).
+ *
+ * Literal strings are passed through unchanged.
+ * `@<group>` refs expand to all peers whose groups include `<group>`.
+ * Unknown group refs expand to [] (empty — the peer can simply add no one).
+ *
+ * @param refs            List of ref strings (literal names or @-refs).
+ * @param peerGroupIndex  Map of peer name → groups[], built from pre-allocated entries.
+ * @returns               Deduplicated list of concrete peer names.
+ */
+export function resolveInitialMeshRefs(
+  refs: string[],
+  peerGroupIndex: Map<string, string[]>,
+): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (name: string) => {
+    if (!seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+  };
+
+  for (const ref of refs) {
+    if (!ref.startsWith("@")) {
+      add(ref);
+      continue;
+    }
+    const groupName = ref.slice(1); // strip @
+    // Expand to all peers whose groups include groupName
+    for (const [peer, groups] of peerGroupIndex) {
+      if (groups.includes(groupName)) {
+        add(peer);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Resolve a scalar ref string against the pre-allocated initial_mesh peer map.
+ * Literal → returned as-is.
+ * `@<group>` → first matching peer (alphabetically stable via declaration order).
+ * Unknown or empty → returns the original ref unchanged (host catches the error).
+ */
+export function resolveInitialMeshScalarRef(
+  ref: string,
+  peerGroupIndex: Map<string, string[]>,
+): string {
+  if (!ref.startsWith("@")) return ref;
+  const groupName = ref.slice(1);
+  for (const [peer, groups] of peerGroupIndex) {
+    if (groups.includes(groupName)) return peer;
+  }
+  // Unknown group → return raw ref (downstream will fail clearly)
+  return ref;
+}
+
 /** Serialize a habitat overlay to the JSON string for --topology-overlay.
  *  Maps `supervisor` → `escalatesTo` per mergeTopologyOverlay's expected keys.
  */

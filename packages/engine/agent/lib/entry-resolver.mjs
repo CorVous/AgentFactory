@@ -1,6 +1,6 @@
 // CANONICAL COPY: packages/engine/agent/lib/entry-resolver.mjs
-// Legacy copy in pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs is kept
-// for backward compatibility with launch-mesh.mjs consumers.
+// The project-local .mjs copy at pi-sandbox/.pi/extensions/_lib/entry-resolver.mjs
+// has been removed (Slice 5); this is the canonical copy.
 /**
  * entry-resolver.mjs — resolves the `entry:` field in a topology to a concrete
  * peer name, and provides the crash-auto-shift target (the top supervisor).

@@ -1,0 +1,43 @@
+# anon-grouped-mesh — host recipe (Slice 5, supersedes the old topology YAML pattern).
+#
+# Topology: host (authority) + 1 anonymous mesh-node worker in group "workers".
+# The host accepts work from anyone in @workers.
+#
+# Launch:
+#   set -a; source models.env; set +a
+#   pi --recipe anon-grouped-mesh --is-host
+
+extends: peer
+model: LEAD_HARE_MODEL
+shortName: anon-grouped-mesh
+
+description: "Anon-grouped mesh host — pre-spawns one anonymous worker in the 'workers' group."
+
+prompt: |
+  You are the authority in this mesh. One anonymous worker peer is pre-spawned
+  for you in the "workers" group. Worker messages arrive as [from <peer>] prompts.
+  When a peer sends a request, handle it with your tools and reply via
+  peer_send({to: "<peer>", body: "<answer>", in_reply_to: "<msg_id>"}).
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - peer_list
+  - peer_send
+  - peer_inbox
+  - peer_call
+
+acceptsWorkFrom: ["@workers"]
+
+spawns:
+  - mesh-node
+
+initial_mesh:
+  - recipe: mesh-node
+    groups: [workers]
+    task: |
+      You are a worker node in this mesh. Your supervisor is the host.
+      Wait for requests from the host. Handle them using your tools and reply
+      via peer_send.

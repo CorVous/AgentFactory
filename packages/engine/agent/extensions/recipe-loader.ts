@@ -151,7 +151,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
     type: "string",
   });
   pi.registerFlag("peer-bus", {
-    description: "Absolute path to the peer bus root directory (forwarded by launch-mesh and atomic-delegate; may be unused at runtime)",
+    description: "Absolute path to the peer bus root directory (forwarded by mesh-mux and atomic-delegate; may be unused at runtime)",
     type: "string",
   });
   pi.registerFlag("inherit-pty", {
@@ -397,7 +397,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
       readFragment: readExtensionFragment,
     });
 
-    // --task text (from launch-mesh / atomic-delegate) is appended to the
+    // --task text (from mesh-mux / atomic-delegate) is appended to the
     // assembled system prompt as per-instance role context.
     const taskFlag = (pi.getFlag("task") as string | undefined)?.trim();
     if (taskFlag) {
