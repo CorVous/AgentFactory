@@ -1,5 +1,6 @@
 // CANONICAL COPY: packages/engine/agent/lib/topology.mjs
-// This legacy copy is kept for launch-mesh.mjs consumers.
+// Legacy copy in pi-sandbox/.pi/extensions/_lib/topology.mjs is kept for
+// backward compatibility with launch-mesh.mjs consumers.
 import { parse as parseYaml } from "yaml";
 import { aggregateGroupMembership } from "./group-membership.mjs";
 import { resolveRef } from "./ref-resolver.mjs";
@@ -55,7 +56,7 @@ import { resolveRef } from "./ref-resolver.mjs";
 export function parseTopology(yamlText) {
   const raw = parseYaml(yamlText);
 
-  if (!raw || typeof raw !== "object") throw new Error("topology: YAML must be a mapping");
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("topology: YAML must be a mapping");
   if (!Array.isArray(raw.nodes) || raw.nodes.length === 0) {
     throw new Error("topology: 'nodes' must be a non-empty array");
   }

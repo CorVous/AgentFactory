@@ -1,5 +1,6 @@
 // CANONICAL COPY: packages/engine/agent/lib/topology-validator.mjs
-// This legacy copy is kept for launch-mesh.mjs consumers.
+// Legacy copy in pi-sandbox/.pi/extensions/_lib/topology-validator.mjs is kept
+// for backward compatibility with launch-mesh.mjs consumers.
 /**
  * topology-validator.mjs — validates a parsed topology against the schema rules
  * required by the launcher-multiplexed TUI architecture (ADR-0004).

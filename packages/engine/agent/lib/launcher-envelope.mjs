@@ -19,6 +19,9 @@
  *   - pin-request: peer promotes the currently-open ctx.ui.confirm dialog into the launcher queue.
  *   - pinned-resolved: launcher notifies the source peer that a pinned item was resolved.
  *   - decisions-jump: peer requests focus into the launcher's decisions-queue panel.
+ *   - spawn-request: worker asks the host to spawn a new peer (ADR-0009).
+ *   - spawn-result: host replies with success/failure + assigned name (ADR-0009).
+ *   - kill-request: worker asks the host to kill a named peer (ADR-0009, OQ-2).
  *
  * All fields are plain strings / booleans — no complex sub-objects — so
  * JSON.parse + JSON.stringify is sufficient for encoding/decoding.
@@ -27,7 +30,7 @@
 import { randomUUID } from "node:crypto";
 
 /**
- * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump" | "mesh-rail-update"} EnvelopeKind
+ * @typedef {"focus-changed" | "signal" | "focus-request" | "heartbeat" | "tail-event" | "tail-toggle" | "decision-pending" | "pin-request" | "pinned-resolved" | "decisions-jump" | "mesh-rail-update" | "spawn-request" | "spawn-result" | "kill-request"} EnvelopeKind
  */
 
 /**
@@ -281,6 +284,104 @@ export function makeMeshRailUpdateEnvelope(args) {
   };
   if (args.decisions !== undefined) env.decisions = args.decisions;
   return env;
+}
+
+/**
+ * Create a `spawn-request` envelope (worker → host on __launcher__.sock).
+ *
+ * Sent when a peer calls `mesh_spawn` and a host is present. The host's
+ * `mesh-mux` extension validates the request, spawns the child, and replies
+ * with a `spawn-result` envelope.
+ *
+ * @param {{
+ *   msg_id: string;
+ *   from: string;
+ *   recipe: string;
+ *   name?: string;
+ *   groups?: string[];
+ *   escalatesTo?: string;
+ *   submitsWorkTo?: string;
+ *   messagesWith?: string[];
+ *   acceptsWorkFrom?: string[];
+ *   task?: string;
+ *   workspace?: { include: string[] };
+ * }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeSpawnRequestEnvelope(args) {
+  const env = {
+    v: 1,
+    id: randomUUID(),
+    kind: "spawn-request",
+    ts: Date.now(),
+    msg_id: args.msg_id,
+    from: args.from,
+    recipe: args.recipe,
+  };
+  if (args.name !== undefined) env.name = args.name;
+  if (args.groups !== undefined) env.groups = args.groups;
+  if (args.escalatesTo !== undefined) env.escalatesTo = args.escalatesTo;
+  if (args.submitsWorkTo !== undefined) env.submitsWorkTo = args.submitsWorkTo;
+  if (args.messagesWith !== undefined) env.messagesWith = args.messagesWith;
+  if (args.acceptsWorkFrom !== undefined) env.acceptsWorkFrom = args.acceptsWorkFrom;
+  if (args.task !== undefined) env.task = args.task;
+  if (args.workspace !== undefined) env.workspace = args.workspace;
+  return env;
+}
+
+/**
+ * Create a `spawn-result` envelope (host → worker on __launcher__.sock).
+ *
+ * Sent by the host's `mesh-mux` extension in reply to a `spawn-request`.
+ *
+ * @param {{
+ *   msg_id: string;
+ *   in_reply_to: string;
+ *   ok: boolean;
+ *   name?: string;
+ *   error?: string;
+ * }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeSpawnResultEnvelope(args) {
+  const env = {
+    v: 1,
+    id: randomUUID(),
+    kind: "spawn-result",
+    ts: Date.now(),
+    msg_id: args.msg_id,
+    in_reply_to: args.in_reply_to,
+    ok: args.ok,
+  };
+  if (args.name !== undefined) env.name = args.name;
+  if (args.error !== undefined) env.error = args.error;
+  return env;
+}
+
+/**
+ * Create a `kill-request` envelope (worker → host on __launcher__.sock).
+ *
+ * Sent when a peer calls `mesh_kill` and a host is present. The host's
+ * `mesh-mux` extension sends a `shutdown` data-bus envelope to the target
+ * and pool-kills it.
+ *
+ * @param {{
+ *   msg_id: string;
+ *   from: string;
+ *   target: string;
+ * }} args
+ * @returns {LauncherEnvelope}
+ */
+export function makeKillRequestEnvelope(args) {
+  return {
+    v: 1,
+    id: randomUUID(),
+    kind: "kill-request",
+    ts: Date.now(),
+    msg_id: args.msg_id,
+    from: args.from,
+    target: args.target,
+  };
 }
 
 /**

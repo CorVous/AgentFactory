@@ -47,6 +47,7 @@ export const RAIL_TO_CLUSTER: Record<string, ClusterName> = {
   "bus-tail-emitter": "engine",
   "mesh-rail": "engine",
   "mesh-spawn": "engine",
+  "mesh-mux": "engine",
   "deferred-confirm-baseline": "engine",
 };
 

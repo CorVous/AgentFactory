@@ -18,6 +18,13 @@ export interface Habitat {
   // Verbose diagnostic logging toggle (forwarded by --debug; default false).
   debug: boolean;
 
+  // Slice 4 (ADR-0009): marks this session as the mesh host.
+  isHost: boolean;
+  /** Slice 4: initial_mesh: entries from the recipe (present only when isHost = true). */
+  initialMesh?: Array<{ recipe: string; name?: string; groups?: string[]; task?: string; [key: string]: unknown }>;
+  /** Slice 4: per-spawn wiring from object-form spawns: entries. */
+  spawnWiring?: Array<{ recipe: string; escalatesTo?: string; submitsWorkTo?: string; acceptsWorkFrom?: string[]; messagesWith?: string[] }>;
+
   // Phase 3b: peer relationships
   supervisor?: string;
   submitTo?: string;

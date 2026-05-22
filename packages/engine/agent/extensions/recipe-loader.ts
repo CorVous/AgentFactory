@@ -130,9 +130,13 @@ export default function recipeLoader(pi: ExtensionAPI) {
     type: "string",
   });
 
-  // Six launch flags — set by launch-mesh.mjs and atomic-delegate when spawning
+  // Seven launch flags — set by launch-mesh.mjs and atomic-delegate when spawning
   // pi --recipe children. The engine registers them so pi does not reject them
   // as unknown flags; recipe-loader consumes them at session_start / before_agent_start.
+  pi.registerFlag("is-host", {
+    description: "When set, this session is the mesh host — mesh-mux extension binds the launcher socket, processes initial_mesh:, and owns the PTY pool",
+    type: "boolean",
+  });
   pi.registerFlag("sandbox", {
     description: "Absolute path to the sandbox / working directory for this agent session",
     type: "string",
@@ -251,6 +255,9 @@ export default function recipeLoader(pi: ExtensionAPI) {
     // --debug sets Habitat.debug.
     const debugFlag = Boolean(pi.getFlag("debug"));
 
+    // --is-host marks this session as the mesh host.
+    const isHostFlag = Boolean(pi.getFlag("is-host"));
+
     // --topology-overlay carries peer relationship fields from the launcher.
     const topologyOverlayJson = (pi.getFlag("topology-overlay") as string | undefined)?.trim() ?? "";
 
@@ -259,14 +266,14 @@ export default function recipeLoader(pi: ExtensionAPI) {
     const habitatOpts: {
       instanceName: string;
       cwd: string;
-      flags: { debug?: boolean };
+      flags: { debug?: boolean; isHost?: boolean };
       recipe: typeof recipe;
       peerFields?: import("../lib/build-habitat.js").PeerFields;
       spawns?: string[];
     } = {
       instanceName,
       cwd,
-      flags: { debug: debugFlag },
+      flags: { debug: debugFlag, isHost: isHostFlag },
       recipe,
     };
 
@@ -296,6 +303,9 @@ export default function recipeLoader(pi: ExtensionAPI) {
       recipe,
       peerFields: habitatOpts.peerFields,
     });
+
+    // NOTE: --is-host flag is NOT forwarded to children via buildRecipeChildArgv.
+    // isHost is a host-only launch property; workers always get isHost = false.
 
     try {
       setHabitat(habitat);

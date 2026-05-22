@@ -8,6 +8,7 @@
 import os from "node:os";
 import path from "node:path";
 import type { Habitat } from "./habitat-types.js";
+import type { InitialMeshEntry, SpawnWiringEntry } from "./resolve-recipe.js";
 
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 
@@ -19,6 +20,10 @@ export interface RecipeForHabitat {
   description?: string;
   skills?: string[];
   spawns?: string[];
+  /** Slice 4: parsed initial_mesh: block (populated on host recipes). */
+  initialMesh?: InitialMeshEntry[];
+  /** Slice 4: per-spawn wiring from object-form spawns: entries. */
+  spawnWiring?: SpawnWiringEntry[];
 }
 
 /** Peer relationship fields — from topology overlay or defaults. */
@@ -36,6 +41,8 @@ export interface PeerFields {
 /** Flags that influence Habitat construction. */
 export interface HabitatFlags {
   debug?: boolean;
+  /** Slice 4 (ADR-0009): true when launched with --is-host. */
+  isHost?: boolean;
 }
 
 export interface BuildHabitatOptions {
@@ -133,9 +140,14 @@ export function buildHabitat(opts: BuildHabitatOptions): Habitat {
   const scratchRoot = path.resolve(cwd);
   const busRoot = path.join(os.homedir(), ".pi-agent-bus", path.basename(scratchRoot));
   const debug = flags.debug === true;
+  const isHost = flags.isHost === true;
 
   const skills = recipe?.skills?.filter((s): s is string => typeof s === "string").slice() ?? [];
   const spawns = recipe?.spawns?.filter((a): a is string => typeof a === "string").slice() ?? [];
+
+  // Slice 4: initial_mesh and spawnWiring carried from recipe when present.
+  const initialMesh = recipe?.initialMesh?.slice();
+  const spawnWiring = recipe?.spawnWiring?.slice();
 
   const description =
     typeof recipe?.description === "string" && recipe.description.trim()
@@ -154,7 +166,7 @@ export function buildHabitat(opts: BuildHabitatOptions): Habitat {
   const groups = peerFields?.groups?.slice() ?? [];
   const spawnerName = peerFields?.spawnerName;
 
-  return {
+  const habitat: Habitat = {
     instanceName,
     description,
     tier,
@@ -163,6 +175,7 @@ export function buildHabitat(opts: BuildHabitatOptions): Habitat {
     skills,
     spawns,
     debug,
+    isHost,
     supervisor,
     submitsWorkTo,
     acceptsWorkFrom,
@@ -170,4 +183,9 @@ export function buildHabitat(opts: BuildHabitatOptions): Habitat {
     groups,
     spawnerName,
   };
+
+  if (initialMesh !== undefined) habitat.initialMesh = initialMesh;
+  if (spawnWiring !== undefined) habitat.spawnWiring = spawnWiring;
+
+  return habitat;
 }

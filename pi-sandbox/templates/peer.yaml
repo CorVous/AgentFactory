@@ -21,3 +21,4 @@ extensions:
   - slash-commands
   - bus-tail-emitter
   - mesh-rail
+  - mesh-mux

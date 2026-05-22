@@ -31,6 +31,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Stash on globalThis so other extensions can reach the bridge API after
 // the extension is loaded (jiti module isolation pattern).
+interface PendingSpawn {
+  resolve: (result: { ok: boolean; name?: string; error?: string }) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface BridgeState {
   client: any | null;
   focusState: ReturnType<typeof createFocusState>;
@@ -45,6 +51,8 @@ interface BridgeState {
   // first, mesh-rail last — so the envelope can land in the empty handler
   // list and be lost).
   lastMeshRailUpdate: any | null;
+  // Pending spawn-request correlations keyed by spawn-request msg_id.
+  pendingSpawns: Map<string, PendingSpawn>;
 }
 
 function getBridgeState(): BridgeState {
@@ -56,6 +64,7 @@ function getBridgeState(): BridgeState {
     signalHandlers: [],
     meshRailUpdateHandlers: [],
     lastMeshRailUpdate: null,
+    pendingSpawns: new Map(),
   });
 }
 
@@ -97,6 +106,43 @@ export function onMeshRailUpdate(handler: (env: any) => void): void {
  */
 export function getFocusState(): ReturnType<typeof createFocusState> {
   return getBridgeState().focusState;
+}
+
+/**
+ * Send a spawn-request envelope to the host launcher socket and await the
+ * matching spawn-result reply.
+ *
+ * Resolves with `{ ok, name?, error? }` on a `spawn-result` whose
+ * `in_reply_to` matches the request's `msg_id`.
+ *
+ * Rejects on timeout (default 5 minutes) or if not connected.
+ *
+ * @param env         The spawn-request envelope to send.
+ * @param timeoutMs   Optional timeout in ms (default 5 min).
+ */
+export function requestSpawn(
+  env: Record<string, unknown>,
+  timeoutMs = 5 * 60_000,
+): Promise<{ ok: boolean; name?: string; error?: string }> {
+  const state = getBridgeState();
+  if (!state.ready || !state.client) {
+    return Promise.reject(new Error("requestSpawn: launcher-bridge not connected"));
+  }
+
+  const msgId = env.msg_id as string;
+  if (!msgId) {
+    return Promise.reject(new Error("requestSpawn: env.msg_id is required"));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      state.pendingSpawns.delete(msgId);
+      reject(new Error(`requestSpawn: timed out after ${timeoutMs}ms waiting for spawn-result`));
+    }, timeoutMs);
+
+    state.pendingSpawns.set(msgId, { resolve, reject, timer });
+    state.client.send(env);
+  });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -156,6 +202,23 @@ export default function (pi: ExtensionAPI) {
           state.lastMeshRailUpdate = env;
           for (const handler of state.meshRailUpdateHandlers) {
             try { handler(env); } catch { /* ignore handler errors */ }
+          }
+          break;
+        }
+        case "spawn-result": {
+          // Route to the pending spawn correlation map.
+          const inReplyTo = env.in_reply_to as string | undefined;
+          if (inReplyTo) {
+            const pending = state.pendingSpawns.get(inReplyTo);
+            if (pending) {
+              clearTimeout(pending.timer);
+              state.pendingSpawns.delete(inReplyTo);
+              pending.resolve({
+                ok: Boolean(env.ok),
+                name: env.name as string | undefined,
+                error: env.error as string | undefined,
+              });
+            }
           }
           break;
         }

@@ -234,6 +234,55 @@ describe("mergeTopologyOverlay", () => {
   });
 });
 
+describe("buildHabitat — Slice 4: isHost flag", () => {
+  it("defaults isHost to false when not in flags", () => {
+    const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: {} });
+    expect(h.isHost).toBe(false);
+  });
+
+  it("sets isHost = true when flags.isHost is true", () => {
+    const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: { isHost: true } });
+    expect(h.isHost).toBe(true);
+  });
+
+  it("does not set isHost = true when flags.isHost is falsy", () => {
+    const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: { isHost: false } });
+    expect(h.isHost).toBe(false);
+  });
+
+  it("carries initialMesh from recipe when provided", () => {
+    const initialMesh = [{ recipe: "mesh-node", name: "worker-1", groups: ["research"] }];
+    const h = buildHabitat({
+      instanceName: "host",
+      cwd: "/tmp",
+      flags: { isHost: true },
+      recipe: { model: "LEAD_HARE_MODEL", tools: [], prompt: "p", initialMesh },
+    });
+    expect(h.initialMesh).toEqual(initialMesh);
+  });
+
+  it("leaves initialMesh undefined when recipe has none", () => {
+    const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: {} });
+    expect(h.initialMesh).toBeUndefined();
+  });
+
+  it("carries spawnWiring from recipe when provided", () => {
+    const spawnWiring = [{ recipe: "mesh-writer", escalatesTo: "host" }];
+    const h = buildHabitat({
+      instanceName: "host",
+      cwd: "/tmp",
+      flags: { isHost: true },
+      recipe: { model: "LEAD_HARE_MODEL", tools: [], prompt: "p", spawnWiring },
+    });
+    expect(h.spawnWiring).toEqual(spawnWiring);
+  });
+
+  it("leaves spawnWiring undefined when recipe has none", () => {
+    const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: {} });
+    expect(h.spawnWiring).toBeUndefined();
+  });
+});
+
 describe("buildHabitat — Slice 3: groups field", () => {
   it("defaults groups to empty array", () => {
     const h = buildHabitat({ instanceName: "a", cwd: "/tmp", flags: {} });

@@ -16,13 +16,16 @@
 // session_shutdown handler: cascade-kills all registry entries (reproduces
 // cleanup logic from the deleted mesh-authority.ts).
 //
-// TODO Slice 4: mesh_spawn will be re-routed through the host launcher socket
-// (mesh-mux) instead of spawning direct child processes. The direct-spawn form
-// below is correct for Slice 2.
+// Slice 4: mesh_spawn now routes through the host launcher socket when a host
+// is present (getHabitat().isHost = false on workers, mesh-mux binds the socket
+// on the host). When inside the host process itself (isHost = true), the
+// globalThis.__pi_mesh_mux_spawn__ hook is called directly (OQ-1).
+// No-host fallback: direct spawn via runMeshSpawn + productionSpawnWorker.
 
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -40,10 +43,45 @@ import {
 } from "../lib/peer-spawn.js";
 import { generateInstanceName } from "../lib/agent-naming.js";
 import { buildRecipeChildArgv, resolvePiBin, resolveRepoRoot } from "../lib/child-spawn.mjs";
+import {
+  makeSpawnRequestEnvelope,
+  makeKillRequestEnvelope,
+} from "../lib/launcher-envelope.mjs";
+// requestSpawn and sendControl imported lazily from launcher-bridge to avoid
+// circular module issues; they are accessed via getBridgeAPI() below.
 
 const REPO_ROOT = resolveRepoRoot();
 const PI_BIN = resolvePiBin(REPO_ROOT);
 const AGENTS_DIR = path.join(REPO_ROOT, "pi-sandbox", "agents");
+
+/**
+ * Lazily access the launcher-bridge module's exported API.
+ * Returns null when the bridge is not loaded (solo run, no launcher socket).
+ */
+function getBridgeAPI(): { requestSpawn: typeof import("./launcher-bridge.js").requestSpawn; sendControl: typeof import("./launcher-bridge.js").sendControl } | null {
+  try {
+    // jiti loads .ts extensions; the bridge stash is on globalThis.
+    // We dynamically import to avoid circular-import issues at module load time.
+    // In practice, launcher-bridge is loaded before mesh-spawn (both in peer.yaml).
+    const g = globalThis as Record<string, unknown>;
+    // If the bridge state is present and ready, use it.
+    const bridgeState = g.__pi_launcher_bridge__ as { ready?: boolean } | undefined;
+    if (!bridgeState?.ready) return null;
+    // Import the module synchronously via require — safe since it's loaded by jiti.
+    const { requestSpawn, sendControl } = require("./launcher-bridge.js") as typeof import("./launcher-bridge.js");
+    return { requestSpawn, sendControl };
+  } catch {
+    return null;
+  }
+}
+
+/** Check if the globalThis host hook is installed (OQ-1: in-process host path). */
+function getHostSpawnHook(): ((req: Record<string, unknown>) => Promise<{ ok: boolean; name?: string; error?: string }>) | null {
+  const g = globalThis as Record<string, unknown>;
+  const hook = g.__pi_mesh_mux_spawn__;
+  if (typeof hook === "function") return hook as (req: Record<string, unknown>) => Promise<{ ok: boolean; name?: string; error?: string }>;
+  return null;
+}
 
 interface MeshNode {
   name: string;
@@ -269,7 +307,97 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      // ── 5. runMeshSpawn ─────────────────────────────────────────────────
+      // ── 5. Route: host-relay or direct spawn ────────────────────────────
+
+      // OQ-1: If running inside the host process itself, call the hook directly.
+      const hostHook = getHostSpawnHook();
+      if (hostHook) {
+        const req = makeSpawnRequestEnvelope({
+          msg_id: randomUUID(),
+          from: callerName,
+          recipe: params.recipe,
+          name: workerName,
+          groups: params.groups,
+          task: params.task,
+          workspace: params.workspace,
+          escalatesTo: params.escalatesTo,
+          submitsWorkTo: params.submitsWorkTo,
+          messagesWith: params.messagesWith,
+          acceptsWorkFrom: params.acceptsWorkFrom,
+        });
+        let spawnResult: { ok: boolean; name?: string; error?: string };
+        try {
+          spawnResult = await hostHook(req as Record<string, unknown>);
+        } catch (e) {
+          return {
+            content: [{ type: "text", text: `mesh_spawn (host hook) failed: ${(e as Error).message}` }],
+            details: { error: "spawn_failed_hook", reason: (e as Error).message },
+          };
+        }
+        if (!spawnResult.ok) {
+          return {
+            content: [{ type: "text", text: `mesh_spawn failed: ${spawnResult.error ?? "unknown error"}` }],
+            details: { error: "spawn_failed", reason: spawnResult.error },
+          };
+        }
+        const assignedName = spawnResult.name ?? workerName;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Spawned worker '${assignedName}' (recipe: ${params.recipe}) via host. ` +
+                `Address it via peer_send({to: "${assignedName}", ...}) or peer_call.`,
+            },
+          ],
+          details: { name: assignedName, recipe: params.recipe },
+        };
+      }
+
+      // Launcher-bridge path: round-trip through host launcher socket.
+      const bridge = getBridgeAPI();
+      if (bridge) {
+        const req = makeSpawnRequestEnvelope({
+          msg_id: randomUUID(),
+          from: callerName,
+          recipe: params.recipe,
+          name: workerName,
+          groups: params.groups,
+          task: params.task,
+          workspace: params.workspace,
+          escalatesTo: params.escalatesTo,
+          submitsWorkTo: params.submitsWorkTo,
+          messagesWith: params.messagesWith,
+          acceptsWorkFrom: params.acceptsWorkFrom,
+        });
+        let spawnResult: { ok: boolean; name?: string; error?: string };
+        try {
+          spawnResult = await bridge.requestSpawn(req as Record<string, unknown>);
+        } catch (e) {
+          return {
+            content: [{ type: "text", text: `mesh_spawn (launcher) failed: ${(e as Error).message}` }],
+            details: { error: "spawn_failed_launcher", reason: (e as Error).message },
+          };
+        }
+        if (!spawnResult.ok) {
+          return {
+            content: [{ type: "text", text: `mesh_spawn failed: ${spawnResult.error ?? "unknown error"}` }],
+            details: { error: "spawn_failed", reason: spawnResult.error },
+          };
+        }
+        const assignedName = spawnResult.name ?? workerName;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Spawned worker '${assignedName}' (recipe: ${params.recipe}) via launcher. ` +
+                `Address it via peer_send({to: "${assignedName}", ...}) or peer_call.`,
+            },
+          ],
+          details: { name: assignedName, recipe: params.recipe },
+        };
+      }
+
+      // fallback: no host — direct spawn
       const result = await runMeshSpawn({
         recipe: params.recipe,
         workerName,
@@ -289,7 +417,7 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      // ── 6. Register ─────────────────────────────────────────────────────
+      // ── 6. Register (fallback-direct-spawned nodes only) ─────────────────
       const node: MeshNode = {
         name: workerName,
         recipe: params.recipe,
