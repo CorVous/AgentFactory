@@ -90,7 +90,7 @@ nodes:
   - name: authority
     recipe: mesh-authority
 `);
-    expect(errors.some((e) => /nonexistent/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /nonexistent/.test(e))).toBe(true);
   });
 
   it("emits an error when all nodes have escalatesTo (no top supervisor)", () => {
@@ -103,7 +103,7 @@ nodes:
     recipe: r
     escalatesTo: a
 `);
-    expect(errors.some((e) => /every node has/.test(e) || /at least one/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /every node has/.test(e) || /at least one/.test(e))).toBe(true);
   });
 
   it("emits an error when multiple nodes have no escalatesTo", () => {
@@ -114,7 +114,7 @@ nodes:
   - name: b
     recipe: r
 `);
-    expect(errors.some((e) => /multiple nodes/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /multiple nodes/.test(e))).toBe(true);
   });
 
   it("emits an error for unknown node type", () => {
@@ -124,7 +124,7 @@ nodes:
     recipe: r
     type: relay
 `);
-    expect(errors.some((e) => /unknown node type/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /unknown node type/.test(e))).toBe(true);
   });
 
   it("emits an error for @group ref to undefined group in escalatesTo", () => {
@@ -134,7 +134,7 @@ nodes:
     recipe: r
     escalatesTo: "@undefined-group"
 `);
-    expect(errors.some((e) => /undefined-group/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /undefined-group/.test(e))).toBe(true);
   });
 
   it("emits an error for acceptsWorkFrom referencing an undeclared peer", () => {
@@ -147,7 +147,7 @@ nodes:
     escalatesTo: authority
     acceptsWorkFrom: [nonexistent]
 `);
-    expect(errors.some((e) => /nonexistent/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /nonexistent/.test(e))).toBe(true);
   });
 
   it("emits an error for messagesWith referencing an undeclared peer", () => {
@@ -160,7 +160,7 @@ nodes:
     escalatesTo: authority
     messagesWith: [ghost]
 `);
-    expect(errors.some((e) => /ghost/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /ghost/.test(e))).toBe(true);
   });
 
   it("emits an error for @group ref to empty group in group_bindings.escalatesTo", () => {
@@ -177,7 +177,7 @@ nodes:
     recipe: r
     groups: [workers]
 `);
-    expect(errors.some((e) => /empty/.test(e))).toBe(true);
+    expect(errors.some((e: string) => /empty/.test(e))).toBe(true);
   });
 });
 
