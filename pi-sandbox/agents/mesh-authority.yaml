@@ -45,6 +45,7 @@ tools:
   - peer_send
   - peer_inbox
   - peer_call
+  - respond_to_request
 
 spawns:
   - mesh-node

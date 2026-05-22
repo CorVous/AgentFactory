@@ -59,3 +59,4 @@ tools:
   - peer_send
   - peer_call
   - peer_inbox
+  - respond_to_request
