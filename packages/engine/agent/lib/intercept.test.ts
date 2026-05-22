@@ -4,7 +4,7 @@
 // The routing functions are pure; tests only check the route decision.
 
 import { describe, it, expect } from "vitest";
-import { routeEnvelope, isTopSupervisor, hasSupervisorInboundRail } from "./intercept";
+import { routeEnvelope, isTopSupervisor, hasSupervisorInboundRail, batchDecision, createInterceptBatch } from "./intercept";
 
 // ---------------------------------------------------------------------------
 // routeEnvelope — "message" kind is always "llm"
@@ -117,6 +117,132 @@ describe("hasSupervisorInboundRail", () => {
     // misconfigured state. Cast to any to test the defensive path.
     expect(hasSupervisorInboundRail(null as unknown as string[])).toBe(false);
     expect(hasSupervisorInboundRail(undefined as unknown as string[])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Focus-change semantics — demonstrate focus=false → focus=true → focus=false
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// batchDecision — pure delegation to routeEnvelope
+// ---------------------------------------------------------------------------
+
+describe("batchDecision", () => {
+  it("returns collect for submission when focused=true", () => {
+    expect(batchDecision("submission", true)).toBe("collect");
+  });
+
+  it("returns passthrough for submission when focused=false", () => {
+    expect(batchDecision("submission", false)).toBe("passthrough");
+  });
+
+  it("returns collect for approval-request when focused=true", () => {
+    expect(batchDecision("approval-request", true)).toBe("collect");
+  });
+
+  it("returns passthrough for approval-request when focused=false", () => {
+    expect(batchDecision("approval-request", false)).toBe("passthrough");
+  });
+
+  it("returns passthrough for message regardless of focus (always LLM)", () => {
+    expect(batchDecision("message", true)).toBe("passthrough");
+    expect(batchDecision("message", false)).toBe("passthrough");
+  });
+
+  it("returns passthrough for approval-result regardless of focus", () => {
+    expect(batchDecision("approval-result", true)).toBe("passthrough");
+    expect(batchDecision("approval-result", false)).toBe("passthrough");
+  });
+
+  it("returns passthrough for revision-requested regardless of focus", () => {
+    expect(batchDecision("revision-requested", true)).toBe("passthrough");
+    expect(batchDecision("revision-requested", false)).toBe("passthrough");
+  });
+
+  it("returns passthrough for unknown future kinds regardless of focus", () => {
+    expect(batchDecision("some-future-kind", true)).toBe("passthrough");
+    expect(batchDecision("some-future-kind", false)).toBe("passthrough");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createInterceptBatch — stateful queue
+// ---------------------------------------------------------------------------
+
+describe("createInterceptBatch", () => {
+  it("starts with size 0 and empty peek", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    expect(batch.size()).toBe(0);
+    expect(batch.peek()).toEqual([]);
+  });
+
+  it("collect adds envelopes and size increments", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    batch.collect({ kind: "submission" });
+    expect(batch.size()).toBe(1);
+    batch.collect({ kind: "approval-request" });
+    expect(batch.size()).toBe(2);
+  });
+
+  it("peek returns a copy without clearing", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    batch.collect({ kind: "submission" });
+    const first = batch.peek();
+    const second = batch.peek();
+    expect(first).toEqual([{ kind: "submission" }]);
+    expect(second).toEqual([{ kind: "submission" }]);
+    expect(batch.size()).toBe(1); // still 1 after two peeks
+  });
+
+  it("peek returns a copy (mutation does not affect internal queue)", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    batch.collect({ kind: "submission" });
+    const copy = batch.peek();
+    copy.push({ kind: "intruder" });
+    expect(batch.size()).toBe(1); // internal queue unchanged
+  });
+
+  it("flush returns all items and clears the queue", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    batch.collect({ kind: "submission" });
+    batch.collect({ kind: "approval-request" });
+    const items = batch.flush();
+    expect(items).toEqual([{ kind: "submission" }, { kind: "approval-request" }]);
+    expect(batch.size()).toBe(0);
+    expect(batch.peek()).toEqual([]);
+  });
+
+  it("flush on empty batch returns []", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    expect(batch.flush()).toEqual([]);
+  });
+
+  it("multiple collects then flush returns items in insertion order", () => {
+    const batch = createInterceptBatch<{ kind: string; id: number }>();
+    batch.collect({ kind: "submission", id: 1 });
+    batch.collect({ kind: "submission", id: 2 });
+    batch.collect({ kind: "submission", id: 3 });
+    const items = batch.flush();
+    expect(items.map((e) => e.id)).toEqual([1, 2, 3]);
+  });
+
+  it("flush can be called repeatedly; only first call has items", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    batch.collect({ kind: "submission" });
+    const first = batch.flush();
+    const second = batch.flush();
+    expect(first.length).toBe(1);
+    expect(second.length).toBe(0);
+  });
+
+  it("collect after flush adds to a fresh queue", () => {
+    const batch = createInterceptBatch<{ kind: string }>();
+    batch.collect({ kind: "submission" });
+    batch.flush();
+    batch.collect({ kind: "approval-request" });
+    expect(batch.size()).toBe(1);
+    expect(batch.peek()).toEqual([{ kind: "approval-request" }]);
   });
 });
 

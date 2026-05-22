@@ -37,7 +37,7 @@ prompt: |                         # system prompt for the agent
 description: Reads files…         # optional; shown in the TUI header
 extensions: [deferred-write]      # optional; rails to load
 skills: [pi-agent-builder]        # optional; skills to activate
-agents: [child-recipe]            # optional; recipes this agent may delegate to
+spawns: [child-recipe]            # optional; recipes this agent may spawn via mesh_spawn
 ```
 
 Source `models.env` before launching so tier vars resolve:

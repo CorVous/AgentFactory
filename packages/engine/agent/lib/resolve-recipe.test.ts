@@ -526,30 +526,14 @@ describe("resolveRecipe — inverse rejection (mesh tools without spawns)", () =
     expect(() => resolveRecipe("mesh-ext-no-spawns", { recipesDir })).toThrow(/spawns/);
   });
 
-  it("throws when delegate tool is declared but spawns is absent (legacy inverse rejection)", () => {
+  it("allows recipe with mesh_spawn tools when spawns is non-empty", () => {
     const recipesDir = writeTmpRecipe(
-      "delegate-no-spawns",
-      `tools:\n  - read\n  - delegate\nprompt: "p"\n`,
+      "mesh-tools",
+      `tools:\n  - read\n  - mesh_spawn\n  - mesh_kill\nprompt: "p"\nspawns:\n  - mesh-node\n`,
     );
-    expect(() => resolveRecipe("delegate-no-spawns", { recipesDir })).toThrow(/spawns/);
-  });
-
-  it("throws when atomic-delegate extension is declared but spawns is absent", () => {
-    const recipesDir = writeTmpRecipe(
-      "atomic-no-spawns",
-      `tools:\n  - read\nprompt: "p"\nextensions:\n  - atomic-delegate\n`,
-    );
-    expect(() => resolveRecipe("atomic-no-spawns", { recipesDir })).toThrow(/spawns/);
-  });
-
-  it("allows recipe with both delegate and mesh_spawn when spawns is non-empty", () => {
-    const recipesDir = writeTmpRecipe(
-      "both-tools",
-      `tools:\n  - read\n  - delegate\nprompt: "p"\nspawns:\n  - mesh-node\n`,
-    );
-    const result = resolveRecipe("both-tools", { recipesDir });
-    expect(result.tools).toContain("delegate");
+    const result = resolveRecipe("mesh-tools", { recipesDir });
     expect(result.tools).toContain("mesh_spawn");
+    expect(result.tools).toContain("mesh_kill");
   });
 });
 

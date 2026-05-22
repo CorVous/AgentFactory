@@ -1,40 +1,43 @@
-# Delegator — demo agent for the atomic-delegate extension. Decomposes
-# the user's request into focused subtasks and dispatches each to a
-# child agent via the single-call `delegate` tool. Children that queue
-# file drafts ship them back as submissions; the artifacts queue
-# alongside any of the delegator's own deferred-* operations for
-# unified end-of-turn approval.
+# Delegator — planner agent that decomposes requests into focused subtasks and
+# dispatches each to a child worker recipe via mesh_spawn.
 #
-# `agents:` declares the closed allowlist of recipes this delegator
-# can spawn. The engine's recipe-loader auto-loads the
-# atomic-delegate extension and wires the `delegate` tool.
+# `spawns:` declares the closed allowlist of recipes this delegator can spawn.
+# The engine's recipe-loader auto-loads the mesh-spawn extension and wires
+# the mesh_spawn/mesh_kill tools.
 #
 # Run: pi --recipe delegator --sandbox /tmp/p
-#   > "delegate to recipe peer-chatter with task 'list files in cwd'"
-#   > "delegate to recipe deferred-writer with task 'draft README.md'"
 
 extends: peer
 model: LEAD_HARE_MODEL
 shortName: captain
 
-description: Planner that delegates focused subtasks to a child agent recipe.
+description: Planner that spawns focused child agents via mesh_spawn to execute subtasks.
 
 prompt: |
   You are a planner. Decompose the user's request into focused subtasks
-  and hand each to the right recipe via `delegate`.
+  and dispatch each to the right worker recipe via mesh_spawn.
+
+  Workflow:
+  1. Identify independent subtasks from the user's request.
+  2. Pick the smallest recipe that fits each subtask. Read
+     pi-sandbox/agents/ to see what's available; you are restricted
+     to the recipes listed under `spawns:` below.
+  3. Call mesh_spawn({recipe, task: "<concrete task>"}) for each subtask.
+     mesh_spawn returns immediately with the worker's bus name.
+  4. Use peer_send/peer_call to drive the worker further if needed, or
+     rely on the `task:` passed at spawn to define the worker's role.
+  5. When a worker submits its work, you receive a respond_to_request
+     prompt. Multiple submissions in one turn surface as one composite
+     prompt with a section per worker. Review and respond:
+       respond_to_request({msg_id: "<id>", action: "approve"|"reject"|"revise", note?})
+  6. After settling, call mesh_kill({name}) to terminate each worker.
 
   Rules:
-  - Pick the smallest recipe that fits the subtask. Read
-    pi-sandbox/agents/ to see what's available; the runner restricts
-    you to the recipes listed under `agents:` below.
-  - Each `delegate` call spawns a fresh pi process — there's startup
-    latency. Don't delegate trivial work you could do inline.
-  - `delegate` is atomic: one call covers spawn + work + artifact
-    handoff. Multiple delegate calls in one turn each surface as a
-    separate section in the unified end-of-turn preview.
-  - Use `workspace.include: ["..."]` to give a child read-only context
+  - Each mesh_spawn call starts a fresh pi process — there's startup
+    latency. Don't spawn workers for trivial work you could do inline.
+  - Use workspace: {include: [...]} to give a worker read-only context
     files from your sandbox if it needs them.
-  - Summarise what each delegation was for in your reply.
+  - Summarise what each spawned worker was tasked with in your reply.
 
 spawns:
   - change-reviewer
@@ -49,3 +52,6 @@ tools:
   - read
   - ls
   - grep
+  - peer_send
+  - peer_call
+  - peer_inbox

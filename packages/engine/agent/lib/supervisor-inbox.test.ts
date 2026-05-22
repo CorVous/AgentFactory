@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setHabitat, type Habitat } from "./habitat";
 import {
   createSupervisorInbox,
+  assembleCompositePrompt,
   type SupervisorInbox,
   type InboundEnvelope,
 } from "./supervisor-inbox";
@@ -1056,5 +1057,230 @@ describe("respondToRequest — unknown msg_id", () => {
     expect(result.error).toContain("any-msg-id");
     expect(result.error).toMatch(/inbox is empty or msg_id was already resolved/i);
     expect(sendEnvelope).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Turn-batch buffering — Slice 6 composite-submission behaviour
+// ---------------------------------------------------------------------------
+
+describe("turn-batch: turnStart + dispatch + turnEnd", () => {
+  it("(1) 3 dispatches during a turn → turnEnd calls sendMessage EXACTLY ONCE with all 3 msg_ids", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    const envs = [
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT], summary: "one" }),
+      makeSubmissionEnvelope({ from: "worker-b", to: "supervisor", artifacts: [WRITE_ARTIFACT], summary: "two" }),
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT], summary: "three" }),
+    ];
+
+    inbox.turnStart();
+    const immediateMessages: string[] = [];
+    for (const env of envs) {
+      inbox.dispatchEnvelope(env, (_msgId, text) => { immediateMessages.push(text); });
+    }
+    // Nothing should have been sent yet
+    expect(immediateMessages).toHaveLength(0);
+
+    // After turnEnd, exactly one composite message with all 3 msg_ids
+    const sent: string[] = [];
+    inbox.turnEnd((_msgId, text) => { sent.push(text); });
+    expect(sent).toHaveLength(1);
+    const composite = sent[0]!;
+    for (const env of envs) {
+      expect(composite).toContain(env.msg_id);
+    }
+  });
+
+  it("(2) all 3 envelopes are in pending IMMEDIATELY after dispatch (before turnEnd)", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    const envs = [
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+      makeSubmissionEnvelope({ from: "worker-b", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+    ];
+
+    inbox.turnStart();
+    for (const env of envs) {
+      inbox.dispatchEnvelope(env, vi.fn());
+      // Each envelope is registered in pending immediately after dispatchEnvelope
+      expect(inbox.pendingCount()).toBeGreaterThan(0);
+    }
+    expect(inbox.pendingCount()).toBe(3);
+  });
+
+  it("(3) respondToRequest for one of 3 resolves only that entry", async () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    const envs = [
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+      makeSubmissionEnvelope({ from: "worker-b", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+    ];
+
+    inbox.turnStart();
+    for (const env of envs) { inbox.dispatchEnvelope(env, vi.fn()); }
+    inbox.turnEnd(vi.fn());
+
+    expect(inbox.pendingCount()).toBe(2);
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+    const result = await inbox.respondToRequest({
+      msg_id: envs[0]!.msg_id,
+      action: "reject",
+      sendEnvelope,
+      agentName: "supervisor",
+    });
+    expect(result.ok).toBe(true);
+    // Only the first was resolved; second remains pending
+    expect(inbox.pendingCount()).toBe(1);
+  });
+
+  it("(4) single submission in a turn → turnEnd produces single-section format (regression-safe)", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+    const env = makeSubmissionEnvelope({
+      from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT], summary: "solo",
+    });
+
+    inbox.turnStart();
+    inbox.dispatchEnvelope(env, vi.fn());
+
+    const sent: Array<[string, string]> = [];
+    inbox.turnEnd((msgId, text) => { sent.push([msgId, text]); });
+
+    expect(sent).toHaveLength(1);
+    const [msgId, text] = sent[0]!;
+    expect(msgId).toBe(env.msg_id);
+    // Single-section format: no composite header
+    expect(text).toContain("respond_to_request");
+    expect(text).not.toMatch(/Submission \d+ of \d+/);
+  });
+
+  it("(5) envelope arriving BETWEEN turns (inTurn=false) is dispatched immediately", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+    const env = makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] });
+
+    let called = false;
+    inbox.dispatchEnvelope(env, (_msgId, _text) => { called = true; });
+    expect(called).toBe(true);
+  });
+
+  it("(6) acceptsWorkFrom rejection still drops and does NOT batch", () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+    const rogueEnv = makeSubmissionEnvelope({
+      from: "rogue-agent",
+      to: "supervisor",
+      artifacts: [WRITE_ARTIFACT],
+    });
+
+    inbox.turnStart();
+    const sent: string[] = [];
+    inbox.dispatchEnvelope(rogueEnv, (_msgId, text) => { sent.push(text); });
+    inbox.turnEnd(vi.fn());
+
+    // Rogue envelope was not batched and not forwarded
+    expect(sent).toHaveLength(0);
+    expect(inbox.pendingCount()).toBe(0);
+  });
+
+  it("(7) revision continuation + revision cap still work inside batched path", async () => {
+    setHabitat(BASE_HABITAT);
+    const inbox = createSupervisorInbox();
+
+    // Open thread inside a turn
+    inbox.turnStart();
+    const original = makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] });
+    inbox.dispatchEnvelope(original, vi.fn());
+    inbox.turnEnd(vi.fn());
+
+    const sendEnvelope = vi.fn().mockResolvedValue({ delivered: true });
+
+    // Three revisions — track current msg_id as it changes with each resubmit
+    let currentMsgId = original.msg_id;
+    for (let i = 0; i < 3; i++) {
+      const r = await inbox.respondToRequest({
+        msg_id: currentMsgId,
+        action: "revise",
+        note: `round ${i + 1}`,
+        sendEnvelope,
+        agentName: "supervisor",
+      });
+      expect(r.ok).toBe(true);
+
+      // Re-submission via in_reply_to (revision continuation).
+      // registerPending deletes the old key and inserts the new msg_id,
+      // so subsequent respondToRequest must use the new msg_id.
+      const resubmit = makeSubmissionEnvelope({
+        from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT],
+        in_reply_to: currentMsgId,
+      });
+      inbox.dispatchEnvelope(resubmit, vi.fn()); // delivered immediately (not in turn)
+      currentMsgId = resubmit.msg_id;
+    }
+
+    // 4th revise should fail — cap reached (using the current msg_id)
+    const r4 = await inbox.respondToRequest({
+      msg_id: currentMsgId,
+      action: "revise",
+      note: "round 4",
+      sendEnvelope,
+      agentName: "supervisor",
+    });
+    expect(r4.ok).toBe(false);
+    expect(r4.error).toMatch(/revision.*cap/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assembleCompositePrompt — pure helper unit tests
+// ---------------------------------------------------------------------------
+
+describe("assembleCompositePrompt", () => {
+  it("returns single-section format for N===1 (contains msg_id and respond_to_request)", () => {
+    setHabitat(BASE_HABITAT);
+    const env = makeSubmissionEnvelope({
+      from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT], summary: "solo submit",
+    });
+    const result = assembleCompositePrompt([env]);
+    expect(result).toContain(env.msg_id);
+    expect(result).toContain("respond_to_request");
+    // Single section — no composite divider header
+    expect(result).not.toMatch(/Submission \d+ of \d+/);
+  });
+
+  it("returns composite format for N>1 with numbered sections and all msg_ids", () => {
+    setHabitat(BASE_HABITAT);
+    const envs = [
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+      makeSubmissionEnvelope({ from: "worker-b", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+      makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] }),
+    ];
+    const result = assembleCompositePrompt(envs);
+    // All msg_ids present
+    for (const env of envs) {
+      expect(result).toContain(env.msg_id);
+    }
+    // Divider headers
+    expect(result).toMatch(/Submission 1 of 3/);
+    expect(result).toMatch(/Submission 2 of 3/);
+    expect(result).toMatch(/Submission 3 of 3/);
+    // Composite summary hint
+    expect(result).toMatch(/3 submissions arrived/i);
+  });
+
+  it("composite sections appear in declaration order (first sender first)", () => {
+    setHabitat(BASE_HABITAT);
+    const env1 = makeSubmissionEnvelope({ from: "worker-a", to: "supervisor", artifacts: [WRITE_ARTIFACT] });
+    const env2 = makeSubmissionEnvelope({ from: "worker-b", to: "supervisor", artifacts: [WRITE_ARTIFACT] });
+    const result = assembleCompositePrompt([env1, env2]);
+    const idx1 = result.indexOf(env1.msg_id);
+    const idx2 = result.indexOf(env2.msg_id);
+    expect(idx1).toBeLessThan(idx2);
   });
 });

@@ -2,6 +2,18 @@
 //
 // supervisor.ts wraps this with the pi tool registration; tests drive
 // it directly with mocked sendEnvelope / escalateToSupervisor callbacks.
+//
+// Turn-batch behaviour (Slice 6 composite submissions):
+// When `inTurn` is true, dispatched envelopes are buffered in `inTurnBatch`
+// rather than immediately calling sendMessage. At turnEnd(), the batch is
+// assembled into ONE composite prompt via assembleCompositePrompt and
+// sendMessage is called exactly once. This ensures N submissions arriving
+// within one turn (e.g. multiple mesh_spawn workers finishing in parallel)
+// surface as one composite respond_to_request prompt with a section per
+// worker, matching the batching behaviour introduced in Slice 6.
+//
+// Envelopes arriving between turns (inTurn=false) are dispatched immediately
+// (legacy behaviour preserved).
 
 import { getHabitat } from "./habitat";
 import {
@@ -25,8 +37,20 @@ interface PendingEntry {
 
 export interface SupervisorInbox {
   pendingCount(): number;
+  /**
+   * Dispatch an envelope. If inTurn is true the envelope is buffered; it will
+   * be flushed as a composite prompt at turnEnd(). If inTurn is false the
+   * envelope is dispatched immediately (legacy behaviour).
+   */
   dispatchEnvelope(env: Envelope, sendMessage: (msgId: string, text: string) => void): void;
   respondToRequest(opts: RespondOpts): Promise<RespondResult>;
+  /** Call at turn_start. Enables turn-batch buffering. */
+  turnStart(): void;
+  /**
+   * Call at turn_end. Flushes buffered envelopes as one composite prompt via
+   * sendMessage (called exactly once when the batch is non-empty).
+   */
+  turnEnd(sendMessage: (msgId: string, text: string) => void): void;
 }
 
 export interface RespondOpts {
@@ -54,6 +78,45 @@ export interface RespondResult {
   error?: string;
 }
 
+/**
+ * Assemble N queued envelopes into a single composite prompt string.
+ *
+ * For N===1: returns the EXISTING single-section format, byte-identical to
+ * today's per-envelope format (regression-safe).
+ * For N>1: returns one string with a numbered "── Submission k of N ──" divider
+ * section per envelope, followed by a composite tool hint listing all msg_ids.
+ *
+ * @param envs  Non-empty array of envelopes to render.
+ * @returns     Composite prompt string; always a single string.
+ */
+export function assembleCompositePrompt(envs: Envelope[]): string {
+  if (envs.length === 0) return "";
+  if (envs.length === 1) {
+    const env = envs[0]!;
+    const rendered = renderInboundForUser(env);
+    const toolHint = `\nUse respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?}) to respond.`;
+    return rendered + toolHint;
+  }
+
+  const sections: string[] = [];
+  for (let i = 0; i < envs.length; i++) {
+    const env = envs[i]!;
+    const header = `── Submission ${i + 1} of ${envs.length} — from ${env.from} (msg_id: ${env.msg_id}) ──`;
+    const body = renderInboundForUser(env);
+    const hint = `respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?})`;
+    sections.push(`${header}\n${body}\n${hint}`);
+  }
+
+  const compositeHint =
+    `\n\n${envs.length} submissions arrived in this turn. Respond to each independently using respond_to_request with its msg_id.`;
+  return sections.join("\n\n") + compositeHint;
+}
+
+/** Returns the synthetic msg_id used when calling sendMessage for a composite batch. */
+function compositeMsgId(envs: Envelope[]): string {
+  return envs[0]!.msg_id;
+}
+
 function isAllowed(from: string): boolean {
   let acceptsWorkFrom: string[];
   try {
@@ -64,12 +127,59 @@ function isAllowed(from: string): boolean {
   return acceptsWorkFrom.includes(from);
 }
 
+/**
+ * Eagerly register an envelope in the pending map (before any batching or
+ * sendMessage call). This ensures respondToRequest works the instant the
+ * model acts — even if the model is mid-turn when the envelope arrives.
+ */
+function registerPending(pending: Map<string, PendingEntry>, env: Envelope): boolean {
+  const kind = env.payload.kind;
+  if (kind !== "approval-request" && kind !== "submission") return false;
+
+  // Revision continuation check (for submission with in_reply_to).
+  if (kind === "submission" && env.in_reply_to) {
+    const existing = pending.get(env.in_reply_to);
+    if (existing) {
+      const updated: PendingEntry = {
+        env,
+        revisionCount: existing.revisionCount,
+        rootMsgId: existing.rootMsgId,
+      };
+      pending.delete(env.in_reply_to);
+      pending.set(env.msg_id, updated);
+      return true; // revision continuation — registered
+    }
+    // in_reply_to points at no live entry — fresh thread
+  }
+
+  pending.set(env.msg_id, {
+    env,
+    revisionCount: 0,
+    rootMsgId: env.msg_id,
+  });
+  return false; // fresh entry
+}
+
 export function createSupervisorInbox(): SupervisorInbox {
   const pending: Map<string, PendingEntry> = new Map();
+  const inTurnBatch: Envelope[] = [];
+  let inTurn = false;
 
   return {
     pendingCount() {
       return pending.size;
+    },
+
+    turnStart() {
+      inTurn = true;
+    },
+
+    turnEnd(sendMessage: (msgId: string, text: string) => void) {
+      inTurn = false;
+      if (inTurnBatch.length === 0) return;
+      const batch = inTurnBatch.splice(0);
+      const text = assembleCompositePrompt(batch);
+      sendMessage(compositeMsgId(batch), text);
     },
 
     dispatchEnvelope(env: Envelope, sendMessage: (msgId: string, text: string) => void) {
@@ -87,35 +197,28 @@ export function createSupervisorInbox(): SupervisorInbox {
         return;
       }
 
-      // Revision continuation: a `submission` whose in_reply_to matches an
-      // already-pending entry rebinds that entry to the new msg_id. The
-      // revisionCount (incremented at revise-time) carries forward so the
-      // cap is enforced across the whole thread, not just one msg_id.
-      if (kind === "submission" && env.in_reply_to) {
-        const existing = pending.get(env.in_reply_to);
-        if (existing) {
-          const updated: PendingEntry = {
-            env,
-            revisionCount: existing.revisionCount,
-            rootMsgId: existing.rootMsgId,
-          };
-          pending.delete(env.in_reply_to);
-          pending.set(env.msg_id, updated);
-          const rendered = renderInboundForUser(env);
-          const hint =
-            `\n[revision ${existing.revisionCount}] respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?}) to respond.`;
-          sendMessage(env.msg_id, rendered + hint);
-          return;
-        }
-        // in_reply_to points at no live entry — fall through to fresh-thread path.
+      // Eagerly register in pending so respondToRequest works immediately.
+      const isRevisionContinuation = registerPending(pending, env);
+
+      if (isRevisionContinuation) {
+        // Revision continuations always render immediately (they're replies to
+        // an existing thread, not part of the fan-out batch). This also means
+        // the revision-cap is visible to the model right away.
+        const entry = pending.get(env.msg_id)!;
+        const rendered = renderInboundForUser(env);
+        const hint =
+          `\n[revision ${entry.revisionCount}] respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?}) to respond.`;
+        sendMessage(env.msg_id, rendered + hint);
+        return;
       }
 
-      pending.set(env.msg_id, {
-        env,
-        revisionCount: 0,
-        rootMsgId: env.msg_id,
-      });
+      // Fresh thread: buffer during turns, immediate outside turns.
+      if (inTurn) {
+        inTurnBatch.push(env);
+        return;
+      }
 
+      // Between turns: dispatch immediately (legacy behaviour preserved).
       const rendered = renderInboundForUser(env);
       const toolHint = `\nUse respond_to_request({msg_id: "${env.msg_id}", action: "approve"|"reject"|"revise"|"escalate", note?}) to respond.`;
       sendMessage(env.msg_id, rendered + toolHint);

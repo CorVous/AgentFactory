@@ -162,3 +162,26 @@ describe("peer-bus.ts — Slice 3 source-level assertions", () => {
     expect(SRC).toMatch(/getCohortLookupHook|__pi_cohort_lookup__/);
   });
 });
+
+// ── Dynamic-worker admission predicate (Slice 6) ─────────────────────────────
+
+describe("peer-bus.ts — dynamic-worker admission via __pi_mesh_spawn_is_my_worker__", () => {
+  it("reads __pi_mesh_spawn_is_my_worker__ predicate from globalThis", () => {
+    expect(SRC).toMatch(/__pi_mesh_spawn_is_my_worker__/);
+  });
+
+  it("uses predicate alongside acceptsWorkFrom in the admission check", () => {
+    // The predicate result (isMyWorker) must be used in combination with acceptsWorkFrom.includes.
+    // Admission logic: admit if acceptsWorkFrom.includes(from) || isMyWorker (positive form), OR
+    // equivalently deny if !acceptsWorkFrom.includes(from) && !isMyWorker (De Morgan form).
+    expect(SRC).toMatch(/isMyWorker/);
+    // Accept either the positive-OR or negative-AND (De Morgan equivalent) form.
+    expect(SRC).toMatch(
+      /acceptsWorkFrom\.includes.*\|\|.*isMyWorker|isMyWorker.*\|\|.*acceptsWorkFrom\.includes|!acceptsWorkFrom\.includes.*&&.*!isMyWorker|!isMyWorker.*&&.*!acceptsWorkFrom\.includes/s
+    );
+  });
+
+  it("does NOT reference __pi_atomic_delegate_dispatch__ (deleted in Slice 6)", () => {
+    expect(SRC).not.toMatch(/__pi_atomic_delegate_dispatch__/);
+  });
+});

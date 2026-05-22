@@ -1,5 +1,5 @@
 // TS twin of scripts/agent-naming.mjs, sharing the same breed-names.json
-// data file. Used by atomic-delegate to pre-generate child worker names
+// data file. Used by mesh-spawn to pre-generate child worker names
 // before the worker boots, and by mesh-authority's mesh_spawn to pick
 // unique slugs for long-running peer nodes.
 //

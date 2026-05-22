@@ -9,7 +9,6 @@ import {
   computeWorkerHabitatOverlay,
   serializeHabitatOverlay,
   copyWorkspace,
-  runAtomicDelegate,
   runMeshSpawn,
   parseRef,
   classifyBareRef,
@@ -18,8 +17,6 @@ import {
   resolveInitialMeshScalarRef,
   type WorkerHandle,
   type SpawnArgs,
-  type DispatchHookRegistry,
-  type PeerSpawnContext,
   type MeshSpawnContext,
 } from "./peer-spawn.js";
 
@@ -28,18 +25,6 @@ import {
 /** Create a tmpdir, return its path. */
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "peer-spawn-test-"));
-}
-
-/** Build a simple in-memory dispatch-hook registry. */
-function makeRegistry(): DispatchHookRegistry & {
-  fire(workerName: string, artifacts: import("./bus-envelope.js").Artifact[]): void;
-} {
-  const hooks = new Map<string, (artifacts: import("./bus-envelope.js").Artifact[]) => void>();
-  return {
-    register(name, cb) { hooks.set(name, cb); },
-    unregister(name) { hooks.delete(name); },
-    fire(name, artifacts) { hooks.get(name)?.(artifacts); },
-  };
 }
 
 /** Build a fake WorkerHandle that never exits (unless explicitly resolved). */
@@ -54,15 +39,6 @@ function makePendingHandle(): WorkerHandle & { resolve: (code?: number) => void 
     exited,
     kill: killMock,
     resolve: (code = 0) => resolveExit({ code, signal: null }),
-  };
-}
-
-/** Build a fake WorkerHandle that exits immediately with the given code. */
-function makeExitedHandle(code = 0): WorkerHandle {
-  return {
-    pid: 999,
-    exited: Promise.resolve({ code, signal: null }),
-    kill: vi.fn(),
   };
 }
 
@@ -149,171 +125,6 @@ describe("copyWorkspace", () => {
     const scratchRoot = makeTmpDir();
     copyWorkspace(callerSandbox, scratchRoot, []);
     expect(fs.readdirSync(scratchRoot)).toHaveLength(0);
-  });
-});
-
-// ── runAtomicDelegate ─────────────────────────────────────────────────────
-
-describe("runAtomicDelegate", () => {
-  it("happy path: returns artifacts when worker sends submission", async () => {
-    const registry = makeRegistry();
-    const handle = makePendingHandle();
-    const artifacts: import("./bus-envelope.js").Artifact[] = [
-      { kind: "write", relPath: "hello.txt", content: "hi", sha256: "abc" },
-    ];
-    const callerSandbox = makeTmpDir();
-
-    const spawnWorker = vi.fn((_args: SpawnArgs) => {
-      setTimeout(() => registry.fire(_args.workerName, artifacts), 10);
-      return handle as WorkerHandle;
-    });
-
-    const ctx: PeerSpawnContext = {
-      recipe: "deferred-writer",
-      task: "draft something",
-      callerName: "foreman",
-      callerSandbox,
-      busRoot: "/tmp/bus",
-      spawnWorker,
-      dispatchHookRegistry: registry,
-      nameGenerator: () => "test-worker",
-    };
-
-    const result = await runAtomicDelegate(ctx);
-    expect(result.ok).toBe(true);
-    expect(result.artifacts).toEqual(artifacts);
-    expect(result.workerName).toBe("test-worker");
-    expect(result.scratchRoot).toBeTruthy();
-    // scratchRoot is created
-    expect(fs.existsSync(result.scratchRoot)).toBe(true);
-    // cleanup
-    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
-  });
-
-  it("returns error when worker exits without submission", async () => {
-    const registry = makeRegistry();
-    const handle = makeExitedHandle(1);
-    const callerSandbox = makeTmpDir();
-
-    const spawnWorker = vi.fn((_args: SpawnArgs) => handle);
-
-    const ctx: PeerSpawnContext = {
-      recipe: "deferred-writer",
-      task: "draft",
-      callerName: "foreman",
-      callerSandbox,
-      busRoot: "/tmp/bus",
-      spawnWorker,
-      dispatchHookRegistry: registry,
-      nameGenerator: () => "dying-worker",
-    };
-
-    const result = await runAtomicDelegate(ctx);
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/exited without submission/);
-    expect(result.artifacts).toEqual([]);
-    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
-  });
-
-  it("times out and kills worker when no submission arrives within timeoutMs", async () => {
-    const registry = makeRegistry();
-    const handle = makePendingHandle();
-    const killMock = handle.kill as ReturnType<typeof vi.fn>;
-    const callerSandbox = makeTmpDir();
-
-    const spawnWorker = vi.fn((_args: SpawnArgs) => handle as WorkerHandle);
-
-    const ctx: PeerSpawnContext = {
-      recipe: "deferred-writer",
-      task: "draft",
-      callerName: "foreman",
-      callerSandbox,
-      busRoot: "/tmp/bus",
-      spawnWorker,
-      dispatchHookRegistry: registry,
-      timeoutMs: 50, // very short timeout
-      nameGenerator: () => "slow-worker",
-    };
-
-    const result = await runAtomicDelegate(ctx);
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/timed out/);
-    expect(killMock).toHaveBeenCalled();
-    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
-  }, 5000);
-
-  it("copies workspace files into scratchRoot before spawning", async () => {
-    const registry = makeRegistry();
-    const callerSandbox = makeTmpDir();
-    fs.writeFileSync(path.join(callerSandbox, "context.md"), "important");
-
-    let capturedScratchRoot = "";
-    const artifacts: import("./bus-envelope.js").Artifact[] = [
-      { kind: "write", relPath: "out.txt", content: "done", sha256: "xyz" },
-    ];
-    const spawnWorker = vi.fn((args: SpawnArgs) => {
-      capturedScratchRoot = args.scratchRoot;
-      const h = makePendingHandle();
-      setTimeout(() => registry.fire(args.workerName, artifacts), 10);
-      return h as WorkerHandle;
-    });
-
-    const ctx: PeerSpawnContext = {
-      recipe: "deferred-writer",
-      task: "use the context",
-      callerName: "foreman",
-      callerSandbox,
-      busRoot: "/tmp/bus",
-      workspace: { include: ["context.md"] },
-      spawnWorker,
-      dispatchHookRegistry: registry,
-      nameGenerator: () => "workspace-worker",
-    };
-
-    const result = await runAtomicDelegate(ctx);
-    expect(result.ok).toBe(true);
-    expect(fs.existsSync(path.join(capturedScratchRoot, "context.md"))).toBe(true);
-    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
-  });
-
-  it("scratchRoot uniqueness: two concurrent calls produce different roots", async () => {
-    const registry1 = makeRegistry();
-    const registry2 = makeRegistry();
-    const callerSandbox = makeTmpDir();
-
-    const artifacts: import("./bus-envelope.js").Artifact[] = [];
-    let n = 0;
-
-    const makeSpawner = (reg: typeof registry1) =>
-      vi.fn((args: SpawnArgs) => {
-        const h = makePendingHandle();
-        setTimeout(() => reg.fire(args.workerName, artifacts), 10);
-        return h as WorkerHandle;
-      });
-
-    const ctx1: PeerSpawnContext = {
-      recipe: "r",
-      task: "t",
-      callerName: "c",
-      callerSandbox,
-      busRoot: "/tmp/bus",
-      spawnWorker: makeSpawner(registry1),
-      dispatchHookRegistry: registry1,
-      nameGenerator: () => `worker-${++n}`,
-    };
-    const ctx2: PeerSpawnContext = {
-      ...ctx1,
-      spawnWorker: makeSpawner(registry2),
-      dispatchHookRegistry: registry2,
-    };
-
-    const [r1, r2] = await Promise.all([
-      runAtomicDelegate(ctx1),
-      runAtomicDelegate(ctx2),
-    ]);
-    expect(r1.scratchRoot).not.toBe(r2.scratchRoot);
-    fs.rmSync(r1.scratchRoot, { recursive: true, force: true });
-    fs.rmSync(r2.scratchRoot, { recursive: true, force: true });
   });
 });
 

@@ -3,9 +3,8 @@
 // Supersedes the deleted mesh-authority extension (Slice 2, #161).
 // Registers two tools:
 //   mesh_spawn({recipe, name?, task?, workspace?, ...}) — start a long-lived
-//     peer node; returns immediately with the worker's instance name. Unlike
-//     `delegate`, the worker is NOT killed automatically after submitting work —
-//     it runs until mesh_kill or session end.
+//     peer node; returns immediately with the worker's instance name.
+//     The worker runs until mesh_kill or session end.
 //   mesh_kill({name}) — terminate a running node gracefully (SIGTERM + SIGKILL
 //     fallback); sends a `shutdown` bus envelope before killing so the worker
 //     can clean up.
@@ -96,6 +95,23 @@ function getRegistry(): Map<string, MeshNode> {
   return (g.__pi_mesh_spawn_nodes__ ??= new Map());
 }
 
+/**
+ * Dynamic-worker admission predicate for peer-bus.ts.
+ * Returns true for any worker name that this process spawned via mesh_spawn
+ * and that is still in the registry (i.e. running or recently killed).
+ * Published on globalThis so peer-bus can find it without a direct import.
+ * Published so peer-bus can admit dynamically-spawned workers before the
+ * static acceptsWorkFrom check (via the __pi_mesh_spawn_is_my_worker__ predicate).
+ */
+function isMeshSpawnWorker(name: string): boolean {
+  return getRegistry().has(name);
+}
+
+function registerMeshSpawnPredicate(): void {
+  (globalThis as { __pi_mesh_spawn_is_my_worker__?: (name: string) => boolean })
+    .__pi_mesh_spawn_is_my_worker__ = isMeshSpawnWorker;
+}
+
 /** Gracefully kill a node: SIGTERM, then SIGKILL after 2 s. */
 function killNode(node: MeshNode): Promise<void> {
   return new Promise((resolve) => {
@@ -151,6 +167,9 @@ function productionSpawnWorker(args: SpawnArgs): WorkerHandle {
 export default function (pi: ExtensionAPI) {
   const registry = getRegistry();
 
+  // Register the dynamic-worker admission predicate for peer-bus.ts.
+  registerMeshSpawnPredicate();
+
   // ── session_shutdown: cascade-kill all spawned nodes ─────────────────────
   const cleanup = async () => {
     await Promise.all([...registry.values()].map(killNode));
@@ -171,8 +190,7 @@ export default function (pi: ExtensionAPI) {
       "Start a long-lived peer worker on the mesh bus. The worker binds to the " +
       "shared peer bus under its instance name and can be reached via peer_send / " +
       "peer_call. Returns immediately; the worker runs until mesh_kill or session " +
-      "end. Recipe must be in the agent's spawns: allowlist. Unlike delegate, " +
-      "the worker is NOT killed automatically after submitting work.",
+      "end. Recipe must be in the agent's spawns: allowlist.",
     parameters: Type.Object({
       recipe: Type.String({
         description: "Recipe YAML name in pi-sandbox/agents/ (without .yaml).",

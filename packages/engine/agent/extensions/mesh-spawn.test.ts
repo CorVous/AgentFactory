@@ -109,4 +109,36 @@ describe("mesh-spawn.ts — source-level", () => {
   it("groups param description does NOT say 'ignored for now'", () => {
     expect(SRC).not.toMatch(/ignored for now/);
   });
+
+  it("registers __pi_mesh_spawn_is_my_worker__ predicate on globalThis (Slice 6)", () => {
+    expect(SRC).toMatch(/__pi_mesh_spawn_is_my_worker__/);
+  });
+
+  it("does NOT register __pi_atomic_delegate_dispatch__ (deleted in Slice 6)", () => {
+    expect(SRC).not.toMatch(/__pi_atomic_delegate_dispatch__/);
+  });
+
+  it("does NOT reference the delegate tool (deleted in Slice 6)", () => {
+    // mesh-spawn.ts must not mention the delegate tool
+    expect(SRC).not.toMatch(/["']delegate["']/);
+  });
+});
+
+// ── Dynamic-worker admission predicate — registry-membership logic ──────────
+
+describe("__pi_mesh_spawn_is_my_worker__ predicate — registry membership", () => {
+  it("returns true for a name in the registry (pure logic via source inspection)", () => {
+    // The predicate reads from the getRegistry() map. Verify the source pattern:
+    // isMeshSpawnWorker(name) should call getRegistry().has(name)
+    expect(SRC).toMatch(/getRegistry\(\)\.has\(name\)/);
+  });
+
+  it("predicate function is exported via globalThis (so peer-bus can read it)", () => {
+    // Must assign to globalThis.__pi_mesh_spawn_is_my_worker__
+    expect(SRC).toMatch(/\.__pi_mesh_spawn_is_my_worker__\s*=\s*isMeshSpawnWorker/);
+  });
+
+  it("predicate is registered at extension init (registerMeshSpawnPredicate called)", () => {
+    expect(SRC).toMatch(/registerMeshSpawnPredicate\(\)/);
+  });
 });

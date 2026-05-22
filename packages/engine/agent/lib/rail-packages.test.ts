@@ -48,7 +48,6 @@ describe("RAIL_TO_CLUSTER mapping", () => {
       "peer-bus",
       "supervisor",
       "intercept",
-      "atomic-delegate",
       "habitat",
       "launcher-bridge",
       "slash-commands",
@@ -59,6 +58,10 @@ describe("RAIL_TO_CLUSTER mapping", () => {
     ]) {
       expect(RAIL_TO_CLUSTER[rail], `${rail} should be 'engine'`).toBe("engine");
     }
+  });
+
+  it("does NOT map atomic-delegate (deleted in Slice 6)", () => {
+    expect(RAIL_TO_CLUSTER["atomic-delegate"]).toBeUndefined();
   });
 
   it("maps mesh-spawn to engine", () => {

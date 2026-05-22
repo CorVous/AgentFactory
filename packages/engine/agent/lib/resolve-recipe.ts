@@ -560,16 +560,6 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
     );
   }
 
-  // Legacy inverse rejection: delegate tool or atomic-delegate extension without spawns.
-  const hasDelegateTools = finalTools.includes("delegate");
-  const hasAtomicDelegateExt = finalExtensions.includes("atomic-delegate");
-  if ((hasDelegateTools || hasAtomicDelegateExt) && spawns.length === 0) {
-    throw new Error(
-      `resolveRecipe: recipe '${name}' declares 'delegate' tool or ` +
-      `'atomic-delegate' extension but has no 'spawns:' list. Add a 'spawns:' field.`,
-    );
-  }
-
   const result: ResolvedRecipe = {
     model,
     tools: finalTools,

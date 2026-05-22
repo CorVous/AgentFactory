@@ -13,15 +13,16 @@ mesh_spawn({
 ```
 
 Spawns a **long-lived peer worker** and returns its bus name immediately.
-Unlike `delegate` (which blocks until the worker finishes and ships artifacts),
-`mesh_spawn` returns at once — the worker runs in the background until you
-explicitly call `mesh_kill` or the session ends.
+The worker runs in the background until you explicitly call `mesh_kill` or
+the session ends.
 
 - The recipe must appear in this agent's `spawns:` list or the call is rejected.
-- The worker is sandboxed to a fresh tmpdir and wired to communicate only with
-  its spawner (richer group wiring lands in a later slice).
+- The worker is sandboxed to a fresh tmpdir and wired to communicate with its spawner.
 - Drive the worker with `peer_send({to: name, body: "..."})` or
   `peer_call({to: name, body: "...", timeout_ms?})`.
+- When the worker submits work via a `submission` envelope, it surfaces as a
+  `respond_to_request` prompt. Multiple submissions in one turn are batched
+  into one composite prompt with a numbered section per worker.
 
 ## mesh_kill
 
@@ -34,11 +35,10 @@ Terminates a worker started by `mesh_spawn`. Sends a `shutdown` envelope over
 the bus so the worker can clean up, then SIGTERM; SIGKILL after 2 s if still
 running.
 
-## When to use mesh_spawn vs delegate
+## Typical spawn → drive → submission → kill lifecycle
 
-| | `delegate` | `mesh_spawn` |
-|---|---|---|
-| Worker lifetime | Ephemeral (exits after submitting) | Long-lived (runs until killed) |
-| Return value | Artifacts queued for approval | Worker's bus name |
-| Interaction | Single task, structured return | Ongoing dialogue via peer_send/call |
-| Use for | Finite drafting / coding tasks | Persistent sub-agents, conversation |
+1. `mesh_spawn({recipe, task})` — starts the worker, returns its name
+2. Optionally `peer_send`/`peer_call` the worker for further instructions
+3. Worker drafts work and ships a `submission` envelope
+4. `respond_to_request({msg_id, action: "approve"|"reject"|"revise", note?})` — review the work
+5. `mesh_kill({name})` — terminate the worker once settled

@@ -40,7 +40,6 @@ export const RAIL_TO_CLUSTER: Record<string, ClusterName> = {
   "peer-bus": "engine",
   "supervisor": "engine",
   "intercept": "engine",
-  "atomic-delegate": "engine",
   "habitat": "engine",
   "launcher-bridge": "engine",
   "slash-commands": "engine",

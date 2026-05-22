@@ -19,7 +19,7 @@ also passes `--no-context-files` so the outer `AGENTS.md`/`CLAUDE.md`
   events, `-nc` / `--no-context-files` to suppress AGENTS.md/CLAUDE.md).
 
 Note: `npm run pi` auto-discovers `pi-sandbox/.pi/extensions/` and loads
-`atomic-delegate` and `deferred-confirm` (plus their `_lib` dependencies).
+`deferred-confirm` (plus its `_lib` dependencies).
 The mesh/supervisor/bus extensions and the rail extensions (sandbox, no-edit,
 deferred-write/edit/move/delete, UI rails) are no longer in that directory —
 they now live in the `packages/` cluster packages and are only active when

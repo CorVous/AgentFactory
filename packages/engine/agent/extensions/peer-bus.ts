@@ -18,9 +18,9 @@
 // envelope construction, encoding, decoding, and inbound rendering all
 // route through that library.
 //
-// Companion to atomic-delegate. Atomic delegate uses the bus's submission
-// flow internally; for explicit peer messaging, agents call peer_send /
-// peer_call directly.
+// Companion to mesh-spawn. Workers spawned via mesh_spawn communicate over
+// this bus; for explicit peer messaging, agents call peer_send / peer_call
+// directly.
 //
 // LAZY ACQUISITION: socket binding is gated on habitatHasPeers(). A solo
 // pi --recipe run (no peers) binds no OS socket; mesh tools are still
@@ -208,15 +208,6 @@ function handleIncoming(state: BusState, env: Envelope) {
   // revision-requested), route it to the submission-emit dispatch and stop.
   if (env.in_reply_to && dispatchSubmissionReply(env)) return;
 
-  // atomic-delegate hook: spawned workers send submissions FROM names
-  // that don't appear in this agent's static acceptsWorkFrom list. The
-  // hook self-gates on its own pending-workers map and runs BEFORE the
-  // acceptsWorkFrom check so dynamic workers aren't dropped.
-  const adHook = (
-    globalThis as { __pi_atomic_delegate_dispatch__?: (env: Envelope) => boolean }
-  ).__pi_atomic_delegate_dispatch__;
-  if (adHook && adHook(env)) return;
-
   // Typed dispatch: non-message envelopes go to the supervisor rail when it
   // is loaded; message-kind envelopes always flow through the general inbox.
   const kind = env.payload.kind;
@@ -261,11 +252,18 @@ function handleIncoming(state: BusState, env: Envelope) {
   if (kind !== "message") {
     // acceptsWorkFrom enforcement for typed (non-message) inbound envelopes.
     // Message-kind envelopes are unrestricted for v1 peer chat.
+    // Dynamic workers spawned via mesh_spawn are admitted via the
+    // __pi_mesh_spawn_is_my_worker__ predicate even if they aren't in the
+    // static acceptsWorkFrom list (they're in our registry so we know them).
     let acceptsWorkFrom: string[] = [];
     try {
       acceptsWorkFrom = getHabitat().acceptsWorkFrom;
     } catch { /* Habitat not yet available — default to empty (drop) */ }
-    if (!acceptsWorkFrom.includes(env.from)) {
+    const meshSpawnPredicate = (
+      globalThis as { __pi_mesh_spawn_is_my_worker__?: (name: string) => boolean }
+    ).__pi_mesh_spawn_is_my_worker__;
+    const isMyWorker = meshSpawnPredicate ? meshSpawnPredicate(env.from) : false;
+    if (!acceptsWorkFrom.includes(env.from) && !isMyWorker) {
       try {
         if (getHabitat().debug === true) {
           process.stderr.write(

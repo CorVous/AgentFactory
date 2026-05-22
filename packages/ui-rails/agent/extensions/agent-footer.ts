@@ -23,7 +23,7 @@ function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
-const HIDDEN_TOOLS = new Set(["delegate"]);
+const HIDDEN_TOOLS = new Set<string>([]);
 
 function renderLeftRight(
   width: number,

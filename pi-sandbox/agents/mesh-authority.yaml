@@ -1,13 +1,9 @@
 # mesh-authority — mesh orchestrator recipe.
 # mesh_spawn/mesh_kill are implicitly wired via spawns: (Slice 2, #161).
-# delegate/atomic-delegate stay as legacy path until Slice 6.
 #
 # Launch:
 #   set -a; source models.env; set +a
-#   npm run agent -- mesh-authority -- --agent-name authority
-#
-# Or via the mesh launcher (host recipe):
-#   npm run mesh -- authority-mesh
+#   pi --recipe mesh-authority
 
 extends: peer
 model: LEAD_HARE_MODEL
@@ -24,12 +20,18 @@ prompt: |
   - peer_call({to, body, timeout_ms?}) — blocking request-response
   - peer_send({to, body, in_reply_to?}) — fire-and-forget or reply
 
-  Node lifecycle (for long-running peer nodes):
-  - mesh_spawn({recipe, name?, task?}) — start a node; runs until mesh_kill
+  Node lifecycle (spawn → drive → review → kill):
+  - mesh_spawn({recipe, name?, task?, workspace?}) — start a node; runs until mesh_kill
   - mesh_kill({name}) — stop a running node
 
-  Finite task workers (run once and exit):
-  - delegate({recipe, task, workspace?, timeout_ms?}) — atomic single call
+  Workflow for a finite task worker:
+  1. mesh_spawn({recipe: "<recipe>", task: "<role context>"}) — returns worker name immediately
+  2. Drive the worker via peer_send/peer_call, or rely on task: context
+  3. Worker submits work via a submission envelope; you receive it as a
+     respond_to_request prompt. Multiple submissions in one turn render
+     as one composite prompt with a numbered section per worker. Respond:
+       respond_to_request({msg_id: "<id>", action: "approve"|"reject"|"revise", note?})
+  4. After settling the submission, call mesh_kill({name}) to terminate the worker
 
   All nodes you spawn share the same bus root and can reach you by name.
   Incoming messages arrive as synthetic user prompts; also readable via peer_inbox.
@@ -43,7 +45,6 @@ tools:
   - peer_send
   - peer_inbox
   - peer_call
-  - delegate
 
 spawns:
   - mesh-node

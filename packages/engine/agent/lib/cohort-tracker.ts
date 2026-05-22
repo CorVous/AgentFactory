@@ -7,7 +7,7 @@
 // fully unit-testable without a live pi session.
 //
 // The `__pi_cohort_lookup__` hook interface mirrors the
-// `__pi_atomic_delegate_dispatch__` pattern — a globalThis-resident hook
+// `__pi_mesh_spawn_is_my_worker__` pattern — a globalThis-resident hook
 // that the host (mesh-mux, Slice 4) installs at runtime. The no-op default
 // ensures that Slice 3 code paths compile and pass tests even before the
 // host exists.

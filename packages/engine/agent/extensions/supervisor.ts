@@ -152,13 +152,16 @@ async function runLocalEscalateDialog(
 
 // Called by peer-bus.ts's handleIncoming to forward typed envelopes.
 // Returns true if the envelope was consumed (approval-request or submission).
+// The inbox's dispatchEnvelope internally buffers during turns when inTurn=true;
+// turn-end flushing is handled by the turn_end listener registered below.
 export function dispatchToSupervisor(env: Envelope): boolean {
   const kind = env.payload.kind;
   if (kind !== "approval-request" && kind !== "submission") return false;
   const state = getState();
   state.inbox.dispatchEnvelope(env, (_msgId, text) => {
     // Deliver directly to the model via the pi.sendUserMessage reference
-    // captured at session_start — no turn_end queue needed.
+    // captured at session_start. During turns, the inbox buffers the envelope
+    // and this callback is only invoked at turnEnd (for batch delivery).
     if (state.sendUserMessage) {
       try {
         state.sendUserMessage(text, { deliverAs: "followUp" });
@@ -265,6 +268,20 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("supervisor: inbound rail active", "info");
       }
     } catch { /* Habitat not available */ }
+  });
+
+  pi.on("turn_start", async () => {
+    state.inbox.turnStart();
+  });
+
+  pi.on("turn_end", async () => {
+    state.inbox.turnEnd((_msgId, text) => {
+      if (state.sendUserMessage) {
+        try {
+          state.sendUserMessage(text, { deliverAs: "followUp" });
+        } catch { /* best-effort */ }
+      }
+    });
   });
 
   pi.registerTool({

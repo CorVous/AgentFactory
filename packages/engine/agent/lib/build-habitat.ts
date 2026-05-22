@@ -54,7 +54,7 @@ export interface BuildHabitatOptions {
   flags: HabitatFlags;
   /** Resolved recipe fields (optional — when no recipe is active). */
   recipe?: RecipeForHabitat;
-  /** Peer relationship overlay from topology or atomic-delegate. */
+  /** Peer relationship overlay from topology or mesh-spawn. */
   peerFields?: PeerFields;
 }
 
