@@ -33,6 +33,7 @@ const BASE_HABITAT: Habitat = {
   skills: [],
   spawns: [],
   debug: false,
+  isHost: false,
   acceptsWorkFrom: ["worker-a", "worker-b"],
   messagesWith: [],
   supervisor: undefined,

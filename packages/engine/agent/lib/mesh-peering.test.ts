@@ -20,6 +20,7 @@ const SOLO: Habitat = {
   skills: [],
   spawns: [],
   debug: false,
+  isHost: false,
   supervisor: undefined,
   submitsWorkTo: undefined,
   acceptsWorkFrom: [],

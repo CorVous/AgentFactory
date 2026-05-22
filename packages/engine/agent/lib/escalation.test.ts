@@ -11,6 +11,7 @@ const BASE_HABITAT: Habitat = {
   skills: [],
   spawns: [],
   debug: false,
+  isHost: false,
   acceptsWorkFrom: [],
   messagesWith: [],
   groups: [],
