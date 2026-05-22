@@ -467,7 +467,6 @@ export default function (pi: ExtensionAPI) {
     let makeFocusChangedEnvelope: any;
     let makeTailToggleEnvelope: any;
     let makeSpawnResultEnvelope: any;
-    let makeSpawnRequestEnvelope: any;
 
     try {
       const sockMod = _require(libPath("launcher-socket.mjs"));
@@ -492,8 +491,9 @@ export default function (pi: ExtensionAPI) {
       const envMod = _require(libPath("launcher-envelope.mjs"));
       makeFocusChangedEnvelope = envMod.makeFocusChangedEnvelope;
       makeTailToggleEnvelope = envMod.makeTailToggleEnvelope;
+      // The host creates spawn-result envelopes; makeSpawnRequestEnvelope is
+      // used by workers (mesh-spawn.ts), not the host.
       makeSpawnResultEnvelope = envMod.makeSpawnResultEnvelope;
-      makeSpawnRequestEnvelope = envMod.makeSpawnRequestEnvelope;
     } catch (e) {
       ctx.ui.notify(`mesh-mux: failed to load engine-lib modules: ${(e as Error).message}`, "error");
       return;

@@ -130,9 +130,10 @@ export default function recipeLoader(pi: ExtensionAPI) {
     type: "string",
   });
 
-  // Seven launch flags — set by launch-mesh.mjs and atomic-delegate when spawning
-  // pi --recipe children. The engine registers them so pi does not reject them
-  // as unknown flags; recipe-loader consumes them at session_start / before_agent_start.
+  // Eight launch flags registered here (the engine registers them so pi does not
+  // reject them as unknown flags; recipe-loader consumes them at session_start /
+  // before_agent_start). NOTE: --is-host is host-only and is NOT forwarded by
+  // buildRecipeChildArgv to children; the other seven are forwarded as needed.
   pi.registerFlag("is-host", {
     description: "When set, this session is the mesh host — mesh-mux extension binds the launcher socket, processes initial_mesh:, and owns the PTY pool",
     type: "boolean",
