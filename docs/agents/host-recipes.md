@@ -99,7 +99,7 @@ initial_mesh:
 | `acceptsWorkFrom` | string[] (optional) | Override which peers can send typed envelopes |
 | `messagesWith` | string[] (optional) | Override which peers this worker may address |
 
-`@ref` expressions (`@<group>`, `@$spawner`, etc.) are resolved against
+`@ref` expressions (`@<group>`, `@$myGroups`, etc.) are resolved against
 the pre-allocated peer-group index before any peer is running.
 
 ### `spawns:` on a host vs a worker

@@ -114,10 +114,9 @@ Spawner-scoped groups let recipes tag peers with logical roles. The reference gr
 | --- | --- |
 | `@<group>` | All peers in the named group under the same spawner |
 | `@<group>:<recipe>` | Peers in the named group whose recipe is `<recipe>` |
-| `@<recipe>` | All peers whose recipe is `<recipe>` |
-| `@$myGroups` | All groups this agent itself belongs to |
+| `@<recipe>` | Peers in this agent's own groups whose recipe is `<recipe>` (short for `@$myGroups:<recipe>`) |
+| `@$myGroups` | All peers in any group this agent itself belongs to |
 | `@$myGroups:<recipe>` | Peers in this agent's own groups whose recipe is `<recipe>` |
-| `@$spawner` | The agent that spawned this agent |
 
 `@_default` is the implicit group for ungrouped peers. See
 `pi-sandbox/agents/grouped-mesh.yaml` for a live example that uses
