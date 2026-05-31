@@ -146,7 +146,7 @@ function productionSpawnWorker(args: SpawnArgs): WorkerHandle {
     task: args.task && args.task.length > 0 ? args.task : undefined,
   });
   const child = spawn(process.execPath, childArgs, {
-    cwd: REPO_ROOT,
+    cwd: args.callerCwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env },
   });
@@ -239,7 +239,7 @@ export default function (pi: ExtensionAPI) {
         Type.Array(Type.String(), { description: "Override inbound peers (Slice 3+, accepted but not yet plumbed to wiring resolver)." }),
       ),
     }),
-    async execute(_id, params): Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }> {
+    async execute(_id, params, _signal, _onUpdate, ctx): Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }> {
       // ── 1. Read habitat ──────────────────────────────────────────────────
       let spawns: string[] = [];
       let callerName = "anonymous";
@@ -425,6 +425,7 @@ export default function (pi: ExtensionAPI) {
         groups: params.groups,
         callerSandbox,
         callerName,
+        callerCwd: ctx.cwd,
         spawnWorker: productionSpawnWorker,
       });
 

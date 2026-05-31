@@ -84,6 +84,8 @@ interface MeshMuxState {
   peers: Map<string, SpawnedPeer>;
   /** Pending spawn-result resolvers keyed by spawner-clientId:msg_id. */
   pendingSpawns: Map<string, (result: { ok: boolean; name?: string; error?: string }) => void>;
+  /** The cwd of the host session — inherited by all spawned workers. */
+  hostCwd: string;
 }
 
 function getMuxState(): MeshMuxState | undefined {
@@ -208,11 +210,11 @@ function spawnPeerViaPtyPool(
   // Spawn via PtyPool
   state.pool.spawn({
     name: workerName,
-    cmd: process.execPath,
-    args: argv.slice(1), // first element is the pi bin (the "cmd")
+    cmd: argv[0], // pi bin — invoked directly via its shebang
+    args: argv.slice(1),
     cols,
     rows,
-    cwd: REPO_ROOT,
+    cwd: state.hostCwd,
     env: process.env as Record<string, string>,
   });
 
@@ -579,6 +581,7 @@ export default function (pi: ExtensionAPI) {
       cohortRegistry,
       peers: new Map(),
       pendingSpawns: new Map(),
+      hostCwd: ctx.cwd,
     };
 
     setMuxState(state);
