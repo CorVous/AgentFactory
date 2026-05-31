@@ -51,10 +51,13 @@ describe("peer-bus.ts — lazy acquisition gate", () => {
     expect(SRC).toMatch(/import.*habitatHasPeers.*from/);
   });
 
-  it("guards bindServer call with habitatHasPeers", () => {
-    // The gate check must appear before the bindServer call in session_start.
+  it("guards transport.listen call with habitatHasPeers", () => {
+    // The gate check must appear before the transport bind/listen call in session_start.
     const gateIdx = SRC.indexOf("habitatHasPeers");
-    const bindIdx = SRC.indexOf("await bindServer");
+    // Accept either the old "await bindServer" or the new "transport.listen" pattern.
+    const bindIdx = SRC.indexOf("await bindServer") !== -1
+      ? SRC.indexOf("await bindServer")
+      : SRC.indexOf(".listen(");
     expect(gateIdx).toBeGreaterThan(-1);
     expect(bindIdx).toBeGreaterThan(-1);
     // Gate comes before bind (lazy acquisition).
