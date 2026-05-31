@@ -10,7 +10,7 @@
 //   - `tail-toggle { on: false }` received from launcher.
 //
 // When active, registers a `__pi_bus_tail_observe__` hook on globalThis so
-// agent-bus.ts notifies it of every inbound/outbound envelope. Each envelope
+// peer-bus.ts notifies it of every inbound/outbound envelope. Each envelope
 // is forwarded to the launcher as a `tail-event` via the launcher-bridge's
 // sendControl.
 //
@@ -118,9 +118,9 @@ function syncObserver(state: BusTailEmitterState) {
     let peerName = "unknown";
     try {
       const { getHabitat } = _require(path.resolve(__dirname, "../lib/habitat")) as {
-        getHabitat?: () => { agentName: string };
+        getHabitat?: () => { instanceName: string };
       };
-      if (getHabitat) peerName = getHabitat().agentName;
+      if (getHabitat) peerName = getHabitat().instanceName;
     } catch { /* ignore */ }
 
     const tailEnv = makeTailEventEnvelope({

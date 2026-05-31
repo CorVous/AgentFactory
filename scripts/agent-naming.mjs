@@ -3,14 +3,14 @@
 // `LEAD_HARE_MODEL` tier) plus the recipe's `shortName:` (or filename
 // stem). The slug is filesystem-safe and used as the canonical
 // `--agent-name` flowing to header rendering, status envelopes, and
-// agent-bus socket identity.
+// peer-bus socket identity.
 //
 // Collision detection: the caller passes a `taken` set of slugs that
 // must not be reused; the helper iterates breeds in a random order and
 // returns the first uncollided pairing. If every breed is taken, it
 // falls back to numeric suffixes (`-2`, `-3`, …) on a random breed.
 //
-// `probeBusRoot` mirrors `probeSocketLive` from agent-bus.ts to detect
+// `probeBusRoot` mirrors `probeSocketLive` from peer-bus.ts to detect
 // live peers in the bus root so the runner can populate `taken`
 // without having to import extension code.
 

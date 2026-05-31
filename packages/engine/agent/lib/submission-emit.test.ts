@@ -112,7 +112,7 @@ describe("shipSubmission — basic send and pending registration", () => {
     const mockSender = vi.fn().mockResolvedValue({ delivered: true });
     const ctx: ShipContext = {
       busRoot: "/tmp/bus",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "supervisor",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -150,7 +150,7 @@ describe("shipSubmission — basic send and pending registration", () => {
     });
     const ctx: ShipContext = {
       busRoot: "/tmp/bus",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "supervisor",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -171,7 +171,7 @@ describe("shipSubmission — basic send and pending registration", () => {
     const mockSender = vi.fn().mockResolvedValue({ delivered: true });
     const ctx: ShipContext = {
       busRoot: "/tmp",
-      agentName: "a",
+      instanceName: "a",
       submitTo: "b",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -197,7 +197,7 @@ describe("shipSubmission — delivery failure", () => {
     const mockSender = vi.fn().mockResolvedValue({ delivered: false, reason: "peer offline" });
     const ctx: ShipContext = {
       busRoot: "/tmp",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "sup",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -216,7 +216,7 @@ describe("shipSubmission — timeout", () => {
     const mockSender = vi.fn().mockResolvedValue({ delivered: true });
     const ctx: ShipContext = {
       busRoot: "/tmp",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "sup",
       sendEnvelope: mockSender,
       timeoutMs: 10, // very short
@@ -433,7 +433,7 @@ describe("shipSubmission — in_reply_to threading", () => {
     const mockSender = vi.fn().mockResolvedValue({ delivered: true });
     const ctx: ShipContext = {
       busRoot: "/tmp/bus",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "supervisor",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -453,7 +453,7 @@ describe("shipSubmission — in_reply_to threading", () => {
     const mockSender = vi.fn().mockResolvedValue({ delivered: true });
     const ctx: ShipContext = {
       busRoot: "/tmp/bus",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "supervisor",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -477,7 +477,7 @@ describe("shipSubmission — resolves with originalMsgId", () => {
     });
     const ctx: ShipContext = {
       busRoot: "/tmp",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "sup",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -507,7 +507,7 @@ describe("shipSubmission — resolves with originalMsgId", () => {
     });
     const ctx: ShipContext = {
       busRoot: "/tmp",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "sup",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,
@@ -622,7 +622,7 @@ describe("shipSubmission + dispatchSubmissionReply end-to-end", () => {
     });
     const ctx: ShipContext = {
       busRoot: "/tmp",
-      agentName: "worker",
+      instanceName: "worker",
       submitTo: "sup",
       sendEnvelope: mockSender,
       timeoutMs: 60_000,

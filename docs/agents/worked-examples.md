@@ -1,7 +1,7 @@
 # Worked examples — composing recipes
 
 Parent: [`docs/agents.md`](../agents.md). For the rails referenced here,
-see [`rails-reference.md`](./rails-reference.md); for the delegate flow,
+see [`rails-reference.md`](./rails-reference.md); for the mesh_spawn flow,
 [`multi-agent.md`](./multi-agent.md).
 
 ## deferred-writer
@@ -67,51 +67,43 @@ allowlist already omits the built-in `edit`/`write`, and each
 deferred-* tool enforces its own existence/non-existence preconditions
 at queue time.
 
-## writer-foreman (atomic delegate)
+## writer-foreman (mesh_spawn)
 
 `pi-sandbox/agents/writer-foreman.yaml` is a Lead-tier foreman that
-decomposes a drafting request and dispatches focused batches to a
-`deferred-writer` child. The recipe declares only:
+decomposes a drafting request and dispatches focused batches to
+`deferred-writer` workers. The recipe declares:
 
 ```yaml
-agents: [deferred-writer]
-tools: [read, ls, grep, find]
+spawns: [deferred-writer]
+tools: [read, ls, grep, find, mesh_spawn, mesh_kill, peer_send, peer_call, peer_inbox, respond_to_request]
 ```
 
-The runner implicitly loads `atomic-delegate` and adds `delegate` to
-the tool allowlist; the spawned worker is locked to recipes in
-`deferred-writer`'s allowlist.
+Flow per task:
 
-Flow per batch:
+1. Foreman calls `mesh_spawn({recipe: "deferred-writer", task: "…"})`.
+   The call spawns a long-lived worker with the given task and returns
+   immediately with the worker's name.
+2. `mesh-spawn` allocates a fresh tmpdir scratch root, constructs a
+   habitat overlay (`supervisor = submitTo = acceptedFrom = [foreman]`),
+   and spawns the worker via `pi --recipe deferred-writer` (using
+   `buildRecipeChildArgv` from `packages/engine/agent/lib/child-spawn.mjs`).
+   The worker's name is registered in the `__pi_mesh_spawn_nodes__` registry.
+3. The worker runs, drafts files into its in-memory `deferred-write`
+   queue, hits `agent_end`. Because `submitTo` is set, `deferred-confirm`
+   ships a `submission` envelope to the foreman over the bus and waits
+   for a reply.
+4. The foreman's supervisor rail receives the submission. The
+   `__pi_mesh_spawn_is_my_worker__` predicate (set by `mesh-spawn`) admits
+   the worker's envelope before the static `acceptedFrom` check, so
+   dynamically-spawned names don't need to be pre-listed.
+5. The supervisor rail queues the submission and prompts the foreman's
+   model. Multiple submissions arriving in the same turn are batched
+   into one composite prompt (N-of-M style), so the foreman reviews all
+   pending work together in one `respond_to_request` call per item.
+6. The foreman calls `respond_to_request` to approve, reject, or revise.
+   On approval, artifacts are applied to the canonical filesystem and the
+   worker receives `approval-result(approved:true)` — the worker exits
+   cleanly. The foreman can then call `mesh_kill` to clean up.
 
-1. Foreman calls `delegate({recipe: "deferred-writer", task: "…"})`.
-   The call is a single atomic round-trip.
-2. The atomic-delegate extension allocates a fresh tmpdir scratch root,
-   constructs a habitat overlay (`supervisor = submitTo = peers =
-   acceptedFrom = [foreman]`, `agents = []`), spawns the worker via
-   `pi --recipe deferred-writer` (using `buildRecipeChildArgv` from
-   `packages/engine/agent/lib/child-spawn.mjs`), and registers a
-   per-worker dispatch hook on the bus.
-3. The worker runs `pi -p`, drafts files into its in-memory
-   `deferred-write` queue, hits `agent_end`. Because `submitTo` is set,
-   `deferred-confirm` ships a `submission` envelope to the foreman over
-   the bus and waits for a reply.
-4. Foreman's `agent-bus.handleIncoming` calls the
-   `__pi_atomic_delegate_dispatch__` hook (which runs BEFORE the
-   `acceptedFrom` check). The hook:
-   - Sends `approval-result(approved=true, note="queued for end-of-turn approval")` back to the worker so its `shipSubmission` Promise resolves and the worker's process exits cleanly.
-   - Resolves the `delegate` tool call's pending Promise with the artifacts.
-   - Registers the artifacts as a `deferred-confirm` handler labelled
-     `Delegate (<workerName>)`.
-5. The `delegate` tool returns synchronously to the foreman's model
-   with a textual summary; multiple `delegate` calls in one turn each
-   register their own handler.
-6. At `agent_end`, the foreman's `deferred-confirm` collects every
-   handler (its own deferred-* operations and one per delegate), shows
-   one unified preview, and applies on approval. If the foreman has
-   `submitTo` set itself, the artifacts bundle up and ship to the
-   foreman's supervisor instead — the recursive shape Just Works.
-
-A foreman that is itself launched as a child of `delegator` works the
-same way at every level: each tier's `delegate` is atomic; submissions
-flow up through whatever escalation chain is configured.
+A foreman that is itself a worker in a larger mesh submits its own
+artifacts to its supervisor; the recursive shape works at every tier.

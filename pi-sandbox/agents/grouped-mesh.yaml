@@ -1,0 +1,73 @@
+# grouped-mesh — host recipe (Slice 5, supersedes the old topology YAML pattern).
+#
+# Topology:
+#   host (authority) — Lead-tier orchestrator; top supervisor; acceptsWorkFrom @workers
+#   analyst          — mesh-node, group workers; messagesWith @reviewers
+#   writer           — mesh-writer, group workers; messagesWith @reviewers; submitsWorkTo reviewer
+#   reviewer         — mesh-node, group reviewers; messagesWith @workers; acceptsWorkFrom [writer]
+#
+# group_bindings from the old topology YAML are expanded into each entry's explicit
+# messagesWith lists (since host recipes use per-entry fields, not group_bindings).
+# Per-entry submitsWorkTo / acceptsWorkFrom only work because of the Step-0 fix in
+# mesh-mux.ts (processInitialMesh now honours those fields).
+#
+# Launch:
+#   set -a; source models.env; set +a
+#   pi --recipe grouped-mesh --is-host
+
+extends: peer
+model: LEAD_HARE_MODEL
+shortName: grouped-mesh
+
+description: "Grouped mesh host — authority + analyst, writer, reviewer in named groups."
+
+prompt: |
+  You are the authority in this mesh. Your peers are: analyst, writer, reviewer.
+  Worker messages arrive as [from <peer>] prompts. When one does, coordinate
+  with your peers as needed and reply via peer_send.
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - peer_list
+  - peer_send
+  - peer_inbox
+  - peer_call
+
+acceptsWorkFrom: ["@workers"]
+
+spawns:
+  - mesh-node
+  - mesh-writer
+
+initial_mesh:
+  - recipe: mesh-node
+    name: analyst
+    groups: [workers]
+    messagesWith: ["@reviewers"]
+    task: |
+      You are the analyst in this mesh. Your supervisor is authority.
+      When a research request arrives as [from <peer>] <body>,
+      research it using your tools and reply with peer_send.
+
+  - recipe: mesh-writer
+    name: writer
+    groups: [workers]
+    messagesWith: ["@reviewers"]
+    submitsWorkTo: reviewer
+    task: |
+      You are the writer in this mesh. Your supervisor is authority; you submit
+      drafts to reviewer. When a drafting request arrives, draft the content,
+      save it to a file, then reply with the file path and a summary.
+
+  - recipe: mesh-node
+    name: reviewer
+    groups: [reviewers]
+    messagesWith: ["@workers"]
+    acceptsWorkFrom: [writer]
+    task: |
+      You are the reviewer in this mesh. Your supervisor is authority.
+      When a submission arrives from writer, review it for quality and completeness,
+      then send feedback back via peer_send.

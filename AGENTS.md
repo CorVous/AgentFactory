@@ -40,7 +40,7 @@ npm run pi                                  # raw pi session for exploration
 - [`docs/repo-layout.md`](./docs/repo-layout.md) — directory tour and the
   build-by-pi workflow.
 - [`docs/conventions.md`](./docs/conventions.md) — branch, commit, secrets.
-- [`scripts/_lib/launcher-envelope.mjs`](./scripts/_lib/launcher-envelope.mjs) — typed wire format (`v: 1`) for the launcher control socket; reference for extension authors emitting focus-request, pin-request, tail-event, and related envelopes.
+- [`packages/engine/agent/lib/launcher-envelope.mjs`](./packages/engine/agent/lib/launcher-envelope.mjs) — typed wire format (`v: 1`) for the launcher control socket; reference for extension authors emitting focus-request, pin-request, tail-event, and related envelopes.
 
 ## Agent skills
 

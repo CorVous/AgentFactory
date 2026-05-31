@@ -4,7 +4,7 @@
 // Loaded as a baseline extension by the engine for every recipe. Both
 // this extension and intercept self-gate via getHabitat().acceptedFrom —
 // no-ops when the topology assigns no inbound peers. Registers a globalThis
-// hook so agent-bus.ts can forward typed inbound envelopes here instead of
+// hook so peer-bus.ts can forward typed inbound envelopes here instead of
 // the general inbox.
 //
 // The testable core lives in ../lib/supervisor-inbox.ts.
@@ -150,15 +150,18 @@ async function runLocalEscalateDialog(
   return { approved, note };
 }
 
-// Called by agent-bus.ts's handleIncoming to forward typed envelopes.
+// Called by peer-bus.ts's handleIncoming to forward typed envelopes.
 // Returns true if the envelope was consumed (approval-request or submission).
+// The inbox's dispatchEnvelope internally buffers during turns when inTurn=true;
+// turn-end flushing is handled by the turn_end listener registered below.
 export function dispatchToSupervisor(env: Envelope): boolean {
   const kind = env.payload.kind;
   if (kind !== "approval-request" && kind !== "submission") return false;
   const state = getState();
   state.inbox.dispatchEnvelope(env, (_msgId, text) => {
     // Deliver directly to the model via the pi.sendUserMessage reference
-    // captured at session_start — no turn_end queue needed.
+    // captured at session_start. During turns, the inbox buffers the envelope
+    // and this callback is only invoked at turnEnd (for batch delivery).
     if (state.sendUserMessage) {
       try {
         state.sendUserMessage(text, { deliverAs: "followUp" });
@@ -168,7 +171,7 @@ export function dispatchToSupervisor(env: Envelope): boolean {
   return true;
 }
 
-// Register the supervisor hook on globalThis so agent-bus can find it.
+// Register the supervisor hook on globalThis so peer-bus can find it.
 function registerDispatchHook(): void {
   (globalThis as { __pi_supervisor_dispatch__?: typeof dispatchToSupervisor }).__pi_supervisor_dispatch__ =
     dispatchToSupervisor;
@@ -182,7 +185,7 @@ async function sendToPeer(
   return sendOverBus(busRoot, env.to, encodeEnvelope(env));
 }
 
-// Escalate to the supervisor via bus agent_call pattern:
+// Escalate to the supervisor via bus peer_call pattern:
 // send an approval-request envelope and wait for an approval-result reply.
 async function escalateViaBus(
   busRoot: string,
@@ -245,7 +248,7 @@ export default function (pi: ExtensionAPI) {
 
     try {
       const h = getHabitat();
-      state.agentName = h.agentName;
+      state.agentName = h.instanceName;
       state.busRoot = h.busRoot;
       // Replace inbox with a fresh one for this session
       state.inbox = createSupervisorInbox();
@@ -256,7 +259,7 @@ export default function (pi: ExtensionAPI) {
     // Capture pi.sendUserMessage so dispatchToSupervisor can deliver inbound
     // envelopes immediately — no turn_end queue. An envelope arriving mid-turn
     // while pi's loop is live goes through pi.sendUserMessage directly;
-    // agent-bus's own pendingDuringTurn queue handles the actual delivery
+    // peer-bus's own pendingDuringTurn queue handles the actual delivery
     // ordering for the message kind; typed envelopes come here.
     state.sendUserMessage = (text, opts) => pi.sendUserMessage(text, opts);
 
@@ -265,6 +268,20 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("supervisor: inbound rail active", "info");
       }
     } catch { /* Habitat not available */ }
+  });
+
+  pi.on("turn_start", async () => {
+    state.inbox.turnStart();
+  });
+
+  pi.on("turn_end", async () => {
+    state.inbox.turnEnd((_msgId, text) => {
+      if (state.sendUserMessage) {
+        try {
+          state.sendUserMessage(text, { deliverAs: "followUp" });
+        } catch { /* best-effort */ }
+      }
+    });
   });
 
   pi.registerTool({

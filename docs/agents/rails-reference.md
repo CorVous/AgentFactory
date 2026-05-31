@@ -31,15 +31,12 @@ independently-installable cluster packages.
 - `agent-footer` — replaces pi's default footer. Line 1 shows the
   sandbox root on the left and the comma-separated active tools (from
   `pi.getActiveTools()`, i.e. the recipe's `tools:` allowlist plus any
-  extension-registered tools) on the right. `delegate` is filtered out
-  of the tool list because every delegating agent has it — it tells
-  the user nothing about what the recipe can actually do, and the
-  agents-it-can-spawn list on line 2 already conveys delegation
-  capability. Line 2 (when populated) shows the recipe's `skills:`
-  list on the left and the recipes this agent may `delegate` to on
-  the right — both as plain comma-separated lists, no labels,
-  matching line 1's bare style. Reads both from `getHabitat()`; the
-  line is skipped entirely when both lists are empty. Line 3 shows
+  extension-registered tools) on the right. Line 2 (when populated) shows
+  the recipe's `skills:` list on the left and the recipes this agent may
+  spawn via `mesh_spawn` on the right — both as plain comma-separated
+  lists, no labels, matching line 1's bare style. Reads both from
+  `getHabitat()`; the line is skipped entirely when both lists are empty.
+  Line 3 shows
   `$cost` and the context-usage percent on the left, model id on the
   right — pi's default token-flow stats (↑input, ↓output, cache R/W,
   context window size) are intentionally dropped. Line 4 is the

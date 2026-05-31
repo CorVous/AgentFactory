@@ -1,0 +1,52 @@
+# authority-mesh — host recipe (Slice 5, supersedes the old topology YAML pattern).
+#
+# Topology: host (authority) + 2 anonymous workers (mesh-node analyst, mesh-writer scribe).
+# Workers have per-node task: blocks. Per-node sandbox: is dropped (mesh-mux allocates
+# a fresh tmpdir per peer). escalatesTo defaults to the host — omitted per-entry.
+#
+# Launch:
+#   set -a; source models.env; set +a
+#   pi --recipe authority-mesh --is-host
+
+extends: peer
+model: LEAD_HARE_MODEL
+shortName: authority-mesh
+
+description: "Authority mesh host — pre-spawns anonymous analyst and writer peers."
+
+prompt: |
+  You are the authority in this mesh. Two worker peers (an analyst and a writer)
+  are pre-spawned for you. Peer messages arrive as [from <peer>] prompts.
+  When a peer sends a request, handle it with your tools and reply via
+  peer_send({to: "<peer>", body: "<answer>", in_reply_to: "<msg_id>"}).
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - peer_list
+  - peer_send
+  - peer_inbox
+  - peer_call
+
+spawns:
+  - mesh-node
+  - mesh-writer
+
+initial_mesh:
+  - recipe: mesh-node
+    task: |
+      You are the research analyst in this mesh. Your supervisor is authority.
+      When a request arrives as [from <peer> re:<id>] <body>, research or
+      analyse it using your tools, then reply with:
+        peer_send({to: "<peer>", body: "<findings>", in_reply_to: "<full_msg_id>"})
+
+  - recipe: mesh-writer
+    task: |
+      You are the drafting writer in this mesh. Your supervisor is authority.
+      When a drafting request arrives as [from <peer> re:<id>] <body>, draft the
+      content, SAVE IT TO A FILE using the write tool, then reply with the file
+      path and a summary:
+        peer_send({to: "<peer>", body: "Saved to <path>: <summary>", in_reply_to: "<full_msg_id>"})
+      Always write the file before replying — do not return content inline.

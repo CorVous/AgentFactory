@@ -17,8 +17,8 @@
 // isolation (loader.js uses `moduleCache: false` and a fresh createJiti
 // per extension).
 //
-// Canonical source: this package. A local copy remains in pi-sandbox/.pi/extensions/
-// because atomic-delegate.ts (ADR-0010, kept out of the engine) still imports it directly.
+// Canonical source: this package. A local copy may remain in pi-sandbox/.pi/extensions/
+// for local development convenience.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestHumanApproval } from "@agentfactory/pi-engine/lib/escalation.js";
@@ -121,17 +121,17 @@ export default function (pi: ExtensionAPI) {
 
     // --- Supervisor-routed flow (submitTo set) --------------------------------
     let submitTo: string | undefined;
-    try { submitTo = getHabitat().submitTo; } catch { submitTo = undefined; }
+    try { submitTo = getHabitat().submitsWorkTo; } catch { submitTo = undefined; }
 
     if (submitTo) {
       const allArtifacts: Artifact[] = oks.flatMap((o) => o.result.artifacts ?? []);
 
       let busRoot: string;
-      let agentName: string;
+      let instanceName: string;
       try {
         const h = getHabitat();
         busRoot = h.busRoot;
-        agentName = h.agentName;
+        instanceName = h.instanceName;
       } catch {
         tell(ctx, "error", "submission: habitat not available, cannot ship to supervisor");
         return;
@@ -142,7 +142,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const shipCtx: Parameters<typeof shipSubmission>[0] = {
           busRoot,
-          agentName,
+          instanceName,
           submitTo,
           sendEnvelope: makeBusSender(busRoot),
         };

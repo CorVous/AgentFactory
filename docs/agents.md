@@ -23,7 +23,7 @@ pi --recipe deferred-writer -p "draft a README" --thinking off
 | --- | --- |
 | Baseline extensions, cluster packages, missing-cluster error | [`agents/rails-reference.md`](./agents/rails-reference.md) |
 | Worked recipes (deferred-writer, deferred-author, writer-foreman) | [`agents/worked-examples.md`](./agents/worked-examples.md) |
-| `delegate`, `agent-bus` peer messaging, supervisor rail, sub-agent safety | [`agents/multi-agent.md`](./agents/multi-agent.md) |
+| `mesh_spawn`, `peer-bus` peer messaging, supervisor rail, sub-agent safety | [`agents/multi-agent.md`](./agents/multi-agent.md) |
 | Topology YAML — schema, groups, resolution, validation | [`agents/topology.md`](./agents/topology.md) |
 | Debugging rails, unit tests, tmux integration, verifying a mesh | [`agents/testing.md`](./agents/testing.md) |
 
@@ -40,7 +40,7 @@ prompt: |                         # the agent's role, prepended with extension f
 tools: [read, ls, grep, deferred_write]
 extensions: [deferred-write]      # rails required by this recipe; owning cluster must be installed
 skills: [pi-agent-builder]        # optional; resolved against <cwd>/.pi/skills/ → ~/.pi/agent/skills/ → bundled
-agents: [deferred-writer]         # optional; recipes this agent may delegate to
+spawns: [deferred-writer]         # optional; recipes this agent may spawn via mesh_spawn
 ```
 
 > **Peer wiring is topology-only.** Recipes no longer accept `supervisor`, `submitTo`, `acceptedFrom`, or `peers` — the engine rejects them at parse time. All peer relationships are declared in the [topology YAML](./agents/topology.md) and reach the agent's Habitat via `--topology-overlay` at launch.
@@ -54,7 +54,7 @@ in each recipe's `prompt:`. For each loaded extension `<name>`, the engine
 looks for a sibling `<name>.prompt.md` in the extension's owning package
 and, if present, prepends it to the system prompt that pi receives.
 Recipes only need to describe the agent's role; the standard rules for
-`deferred_write`, `deferred_edit`, `delegate`, etc. come from the
+`deferred_write`, `deferred_edit`, `mesh_spawn`, etc. come from the
 fragments.
 
 One conditional fragment is gated by the engine so it doesn't appear
@@ -63,23 +63,18 @@ semantics) is loaded only when at least one `deferred-*` tool extension
 is active — baseline `deferred-confirm` itself is a no-op without one.
 
 Final order seen by the model: engine-extension fragments → recipe-
-extension fragments (including `atomic-delegate.prompt.md` when implicit
-from `agents:`) → recipe `prompt:`. Edit a fragment to change behaviour
+extension fragments → recipe `prompt:`. Edit a fragment to change behaviour
 for every recipe that loads its extension; edit a recipe's `prompt:`
 for that one agent only.
 
-### Launch flags and implicit delegation
+### Launch flags
 
-The engine registers six launch flags that `scripts/launch-mesh.mjs` and
-`atomic-delegate` pass when spawning `pi --recipe` children: `--sandbox`,
-`--task`, `--peer-name`, `--topology-overlay`, `--inherit-pty`, and
-`--debug`. All six appear under "Extension CLI Flags" in `pi --help`.
+The engine registers six launch flags that `mesh-mux` and `mesh-spawn`
+pass when spawning `pi --recipe` children: `--sandbox`, `--task`,
+`--peer-name`, `--topology-overlay`, `--inherit-pty`, and `--debug`.
+All six appear under "Extension CLI Flags" in `pi --help`.
 
-When `agents:` is non-empty the engine also implicitly adds
-`atomic-delegate` to `extensions:` and `delegate` to `tools:`. Explicit
-duplicates in the recipe are fine. To disable delegation, drop the
-`agents:` field entirely. See [`agents/multi-agent.md`](./agents/multi-agent.md)
-for the delegate flow.
+See [`agents/multi-agent.md`](./agents/multi-agent.md) for the mesh_spawn flow.
 
 If a recipe lists an extension whose owning cluster package is not
 installed, the engine refuses to start with a `pi install
@@ -88,7 +83,7 @@ npm:@agentfactory/<cluster>` hint rather than silently skipping the rail
 
 ## Per-instance names
 
-Every agent instance — user-launched root or delegated child — is named
+Every agent instance — user-launched root or spawned child — is named
 `<breed>-<shortName>`. The breed is a randomly-picked rabbit (or a hare
 if `model:` is `LEAD_HARE_MODEL`); the short name comes from the
 recipe's optional `shortName:` field, falling back to the recipe
@@ -99,9 +94,9 @@ in [`scripts/breed-names.json`](../scripts/breed-names.json) and the
 generator + collision detection in
 [`scripts/agent-naming.mjs`](../scripts/agent-naming.mjs).
 
-Collision detection runs in two places: `atomic-delegate` tracks
-in-flight sibling slugs in its pending-workers map so two parallel
-`deferred-writer` children always get different breeds; `scripts/launch-mesh.mjs`
+Collision detection runs in two places: `mesh-spawn` tracks
+in-flight sibling slugs in its registry so two parallel
+`deferred-writer` children always get different breeds; `mesh-mux`
 probes `${BUS_ROOT}/*.sock` so a second `peer-chatter` launched in
 another terminal won't pick a breed that's already bound. `--peer-name
 <override>` wins for both — useful when you want a stable peer name on

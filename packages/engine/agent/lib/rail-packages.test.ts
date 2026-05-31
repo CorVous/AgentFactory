@@ -45,20 +45,31 @@ describe("RAIL_TO_CLUSTER mapping", () => {
 
   it("maps engine-owned rails to 'engine'", () => {
     for (const rail of [
-      "agent-bus",
+      "peer-bus",
       "supervisor",
       "intercept",
-      "atomic-delegate",
       "habitat",
       "launcher-bridge",
       "slash-commands",
       "bus-tail-emitter",
       "mesh-rail",
-      "mesh-authority",
+      "mesh-spawn",
       "deferred-confirm-baseline",
     ]) {
       expect(RAIL_TO_CLUSTER[rail], `${rail} should be 'engine'`).toBe("engine");
     }
+  });
+
+  it("does NOT map atomic-delegate (deleted in Slice 6)", () => {
+    expect(RAIL_TO_CLUSTER["atomic-delegate"]).toBeUndefined();
+  });
+
+  it("maps mesh-spawn to engine", () => {
+    expect(RAIL_TO_CLUSTER["mesh-spawn"]).toBe("engine");
+  });
+
+  it("does NOT map mesh-authority (extension deleted in Slice 2)", () => {
+    expect(RAIL_TO_CLUSTER["mesh-authority"]).toBeUndefined();
   });
 });
 
@@ -103,7 +114,7 @@ describe("resolveRailPackages", () => {
 
   it("engine-marker rails are never reported missing", () => {
     const { missing } = resolveRailPackages(
-      ["agent-bus", "supervisor", "intercept"],
+      ["peer-bus", "supervisor", "intercept"],
       [], // nothing installed
     );
     expect(missing).toHaveLength(0);
@@ -111,13 +122,13 @@ describe("resolveRailPackages", () => {
 
   it("engine-marker rails appear in resolved list", () => {
     const { resolved } = resolveRailPackages(
-      ["agent-bus", "supervisor"],
+      ["peer-bus", "supervisor"],
       [],
     );
     expect(resolved.map((r) => r.rail)).toEqual(
-      expect.arrayContaining(["agent-bus", "supervisor"]),
+      expect.arrayContaining(["peer-bus", "supervisor"]),
     );
-    expect(resolved.find((r) => r.rail === "agent-bus")?.cluster).toBe("engine");
+    expect(resolved.find((r) => r.rail === "peer-bus")?.cluster).toBe("engine");
   });
 
   it("install hint uses exact pi install format", () => {

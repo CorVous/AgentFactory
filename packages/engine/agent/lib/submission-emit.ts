@@ -1,7 +1,7 @@
 // Submission-emit helpers for the worker-side bus-routed approval flow.
-// Used by deferred-confirm.ts when getHabitat().submitTo is set.
+// Used by deferred-confirm.ts when getHabitat().submitsWorkTo is set.
 //
-// The pending-submissions Map is stashed on globalThis so agent-bus.ts can
+// The pending-submissions Map is stashed on globalThis so peer-bus.ts can
 // dispatch supervisor replies into it from a different module graph —
 // the same pattern as deferred-confirm's handler registry.
 
@@ -100,7 +100,7 @@ export function takeLastSubmissionMsgId(): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch helper — called by agent-bus.ts when a reply arrives
+// Dispatch helper — called by peer-bus.ts when a reply arrives
 // ---------------------------------------------------------------------------
 
 export function dispatchSubmissionReply(env: Envelope): boolean {
@@ -130,7 +130,7 @@ export function dispatchSubmissionReply(env: Envelope): boolean {
 
 export interface ShipContext {
   busRoot: string;
-  agentName: string;
+  instanceName: string;
   submitTo: string;
   sendEnvelope: (env: Envelope) => Promise<{ delivered: boolean; reason?: string }>;
   timeoutMs?: number;
@@ -146,7 +146,7 @@ export async function shipSubmission(
   summary?: string,
 ): Promise<SubmissionReply> {
   const envArgs: Parameters<typeof makeSubmissionEnvelope>[0] = {
-    from: ctx.agentName,
+    from: ctx.instanceName,
     to: ctx.submitTo,
     artifacts,
   };

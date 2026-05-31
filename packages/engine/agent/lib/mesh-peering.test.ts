@@ -14,16 +14,18 @@ import type { Habitat } from "./habitat-types.js";
 
 /** Baseline solo Habitat — all four peer fields empty / absent. */
 const SOLO: Habitat = {
-  agentName: "solo-agent",
+  instanceName: "solo-agent",
   scratchRoot: "/tmp/solo",
   busRoot: "/tmp/solo-bus",
   skills: [],
-  agents: [],
+  spawns: [],
   debug: false,
+  isHost: false,
   supervisor: undefined,
-  submitTo: undefined,
-  acceptedFrom: [],
-  peers: [],
+  submitsWorkTo: undefined,
+  acceptsWorkFrom: [],
+  messagesWith: [],
+  groups: [],
 };
 
 describe("habitatHasPeers — solo (no peers)", () => {
@@ -32,21 +34,21 @@ describe("habitatHasPeers — solo (no peers)", () => {
   });
 
   it("returns false when acceptedFrom is empty and others absent", () => {
-    expect(habitatHasPeers({ ...SOLO, acceptedFrom: [] })).toBe(false);
+    expect(habitatHasPeers({ ...SOLO, acceptsWorkFrom: [] })).toBe(false);
   });
 
   it("returns false when peers is empty and others absent", () => {
-    expect(habitatHasPeers({ ...SOLO, peers: [] })).toBe(false);
+    expect(habitatHasPeers({ ...SOLO, messagesWith: [] })).toBe(false);
   });
 });
 
 describe("habitatHasPeers — individual field triggers", () => {
   it("returns true when peers has one entry", () => {
-    expect(habitatHasPeers({ ...SOLO, peers: ["worker-a"] })).toBe(true);
+    expect(habitatHasPeers({ ...SOLO, messagesWith: ["worker-a"] })).toBe(true);
   });
 
   it("returns true when acceptedFrom has one entry", () => {
-    expect(habitatHasPeers({ ...SOLO, acceptedFrom: ["authority"] })).toBe(true);
+    expect(habitatHasPeers({ ...SOLO, acceptsWorkFrom: ["authority"] })).toBe(true);
   });
 
   it("returns true when supervisor is set", () => {
@@ -54,7 +56,7 @@ describe("habitatHasPeers — individual field triggers", () => {
   });
 
   it("returns true when submitTo is set", () => {
-    expect(habitatHasPeers({ ...SOLO, submitTo: "collector" })).toBe(true);
+    expect(habitatHasPeers({ ...SOLO, submitsWorkTo: "collector" })).toBe(true);
   });
 });
 
@@ -64,9 +66,9 @@ describe("habitatHasPeers — combinations", () => {
       habitatHasPeers({
         ...SOLO,
         supervisor: "boss",
-        submitTo: "sink",
-        acceptedFrom: ["worker-a", "worker-b"],
-        peers: ["boss", "sink"],
+        submitsWorkTo: "sink",
+        acceptsWorkFrom: ["worker-a", "worker-b"],
+        messagesWith: ["boss", "sink"],
       }),
     ).toBe(true);
   });
@@ -75,8 +77,8 @@ describe("habitatHasPeers — combinations", () => {
     expect(
       habitatHasPeers({
         ...SOLO,
-        acceptedFrom: ["authority"],
-        peers: ["authority"],
+        acceptsWorkFrom: ["authority"],
+        messagesWith: ["authority"],
       }),
     ).toBe(true);
   });
@@ -87,6 +89,6 @@ describe("habitatHasPeers — combinations", () => {
   });
 
   it("returns false for empty string submitTo (treated as absent)", () => {
-    expect(habitatHasPeers({ ...SOLO, submitTo: "" })).toBe(false);
+    expect(habitatHasPeers({ ...SOLO, submitsWorkTo: "" })).toBe(false);
   });
 });

@@ -66,3 +66,70 @@ export function isTopSupervisor(supervisorName: string | undefined): boolean {
 export function hasSupervisorInboundRail(acceptedFrom: string[]): boolean {
   return Array.isArray(acceptedFrom) && acceptedFrom.length > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Intercept batch-collect helpers (Slice 6: composite-submission batching)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal envelope shape required for batch-collect decisions.
+ * The intercept batch helpers only care about the kind and focus, not
+ * the full envelope structure.
+ */
+export interface BatchEnvelope {
+  kind: EnvelopeKind;
+}
+
+/**
+ * InterceptBatch holds envelopes destined for the human that arrived during
+ * a turn (when focused=true). The extension layer calls `collectForBatch` for
+ * each intercepted envelope and `flushBatch` at turn_end to open one dialog
+ * over the whole batch.
+ *
+ * Pure bookkeeping only — no ctx.ui calls here.
+ */
+export interface InterceptBatch<T extends BatchEnvelope> {
+  /** Add an envelope to the batch. Only call when the route is "human". */
+  collect(env: T): void;
+  /** Returns the current batch contents without clearing. */
+  peek(): T[];
+  /**
+   * Flush and return the batch, clearing it. If the batch is empty, returns [].
+   * The extension layer opens a dialog for each returned envelope.
+   */
+  flush(): T[];
+  /** Current batch size. */
+  size(): number;
+}
+
+/**
+ * Create a fresh intercept batch collector.
+ * @returns A stateful collector whose `flush()` drains the queue.
+ */
+export function createInterceptBatch<T extends BatchEnvelope>(): InterceptBatch<T> {
+  const queue: T[] = [];
+  return {
+    collect(env: T) { queue.push(env); },
+    peek() { return queue.slice(); },
+    flush() { return queue.splice(0); },
+    size() { return queue.length; },
+  };
+}
+
+/**
+ * Decide whether an envelope should be added to the intercept batch
+ * (focused human path) or passed through to the LLM path.
+ *
+ * A "collect" result means: add to batch and do NOT call the LLM path yet.
+ * A "passthrough" result means: let the LLM path handle it immediately.
+ *
+ * This is a pure decision function; actual batching is done by the caller.
+ *
+ * @param kind    - Payload kind of the envelope.
+ * @param focused - Whether this peer is the focused peer in the launcher.
+ * @returns "collect" | "passthrough"
+ */
+export function batchDecision(kind: EnvelopeKind, focused: boolean): "collect" | "passthrough" {
+  const route = routeEnvelope(kind, focused);
+  return route === "human" ? "collect" : "passthrough";
+}

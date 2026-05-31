@@ -61,3 +61,30 @@ describe("launcher-bridge.ts — lazy acquisition gate (Slice 5)", () => {
     expect(SRC).not.toMatch(/scripts\/_lib\/launcher-socket\.mjs/);
   });
 });
+
+describe("launcher-bridge.ts — Slice 4: requestSpawn correlation", () => {
+  it("exports requestSpawn function", () => {
+    expect(SRC).toMatch(/export\s+function\s+requestSpawn/);
+  });
+
+  it("requestSpawn uses pendingSpawns map for correlation", () => {
+    expect(SRC).toMatch(/pendingSpawns/);
+  });
+
+  it("handles spawn-result envelope kind in the switch", () => {
+    expect(SRC).toMatch(/case\s+["']spawn-result["']/);
+  });
+
+  it("routes spawn-result to pending spawn via in_reply_to", () => {
+    expect(SRC).toMatch(/in_reply_to/);
+    expect(SRC).toMatch(/pendingSpawns\.get\s*\(/);
+  });
+
+  it("requestSpawn rejects when not connected", () => {
+    expect(SRC).toMatch(/launcher-bridge not connected/);
+  });
+
+  it("requestSpawn rejects on timeout", () => {
+    expect(SRC).toMatch(/timed out/i);
+  });
+});

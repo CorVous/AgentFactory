@@ -1,17 +1,9 @@
 # mesh-authority — mesh orchestrator recipe.
-# Inherits agent-bus (peer membership on the bus) from extends: peer, and adds
-# mesh-authority (spawn/stop long-running nodes). Also declares agents: so the
-# atomic `delegate` tool is available for finite task workers.
+# mesh_spawn/mesh_kill are implicitly wired via spawns: (Slice 2, #161).
 #
-# The authority's instance name (--agent-name) is what peers use to address it
-# on the bus. Launched with an explicit name so multiple mesh topologies don't
-# collide:
-#
+# Launch:
 #   set -a; source models.env; set +a
-#   npm run agent -- mesh-authority -- --agent-name authority
-#
-# Or via the mesh launcher:
-#   npm run mesh -- pi-sandbox/meshes/authority-mesh.yaml
+#   pi --recipe mesh-authority
 
 extends: peer
 model: LEAD_HARE_MODEL
@@ -24,39 +16,38 @@ prompt: |
   orchestrator for the mesh.
 
   Peer communication (you are reachable by all nodes by your instance name):
-  - agent_list() — see live peers
-  - agent_call({to, body, timeout_ms?}) — blocking request-response
-  - agent_send({to, body, in_reply_to?}) — fire-and-forget or reply
+  - peer_list() — see live peers
+  - peer_call({to, body, timeout_ms?}) — blocking request-response
+  - peer_send({to, body, in_reply_to?}) — fire-and-forget or reply
 
-  Node lifecycle (for long-running peer nodes):
-  - mesh_spawn({recipe, name, task?}) — start a node; runs until mesh_stop
-  - mesh_stop({name}) — stop a running node
-  - mesh_nodes() — list nodes spawned this session
+  Node lifecycle (spawn → drive → review → kill):
+  - mesh_spawn({recipe, name?, task?, workspace?}) — start a node; runs until mesh_kill
+  - mesh_kill({name}) — stop a running node
 
-  Finite task workers (run once and exit):
-  - delegate({recipe, task, workspace?, timeout_ms?}) — atomic single call
+  Workflow for a finite task worker:
+  1. mesh_spawn({recipe: "<recipe>", task: "<role context>"}) — returns worker name immediately
+  2. Drive the worker via peer_send/peer_call, or rely on task: context
+  3. Worker submits work via a submission envelope; you receive it as a
+     respond_to_request prompt. Multiple submissions in one turn render
+     as one composite prompt with a numbered section per worker. Respond:
+       respond_to_request({msg_id: "<id>", action: "approve"|"reject"|"revise", note?})
+  4. After settling the submission, call mesh_kill({name}) to terminate the worker
 
-  All nodes you spawn share your PI_AGENT_BUS_ROOT and can reach you by name.
-  Incoming messages arrive as synthetic user prompts; also readable via agent_inbox.
+  All nodes you spawn share the same bus root and can reach you by name.
+  Incoming messages arrive as synthetic user prompts; also readable via peer_inbox.
 
 tools:
   - read
   - ls
   - grep
   - find
-  - agent_list
-  - agent_send
-  - agent_inbox
-  - agent_call
-  - mesh_spawn
-  - mesh_stop
-  - mesh_nodes
-  - delegate
+  - peer_list
+  - peer_send
+  - peer_inbox
+  - peer_call
+  - respond_to_request
 
-extensions:
-  - mesh-authority
-
-agents:
+spawns:
   - mesh-node
   - deferred-writer
   - deferred-editor

@@ -23,7 +23,7 @@ function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
 }
 
-const HIDDEN_TOOLS = new Set(["delegate"]);
+const HIDDEN_TOOLS = new Set<string>([]);
 
 function renderLeftRight(
   width: number,
@@ -62,7 +62,7 @@ export default function (pi: ExtensionAPI) {
       const h = getHabitat();
       scratchRoot = path.resolve(h.scratchRoot);
       skills = h.skills;
-      agents = h.agents;
+      agents = h.spawns;
     } catch {
       // Habitat not available; fall back to ctx.cwd with empty lists.
     }

@@ -10,9 +10,32 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { parseRef } from "./peer-spawn.js";
 
 const TIER_VARS = new Set(["RABBIT_SAGE_MODEL", "LEAD_HARE_MODEL", "TASK_RABBIT_MODEL"]);
 const DEFAULT_MODEL = "TASK_RABBIT_MODEL";
+
+/** Per-spawn-entry wiring fields (object-form spawns: entry). */
+export interface SpawnWiringEntry {
+  /** Recipe name being spawned. */
+  recipe: string;
+  /** Wiring field values (may contain raw ref strings). */
+  escalatesTo?: string;
+  submitsWorkTo?: string;
+  acceptsWorkFrom?: string[];
+  messagesWith?: string[];
+}
+
+/** Parsed initial_mesh: entry. */
+export interface InitialMeshEntry {
+  recipe: string;
+  name?: string;
+  /** Group memberships for this spawn. Empty ⇒ joins @_default implicitly. */
+  groups?: string[];
+  task?: string;
+  /** Any extra fields from the YAML (passed through). */
+  [key: string]: unknown;
+}
 
 export interface ResolvedRecipe {
   /** Concrete model field (tier var name or literal ID). Defaults to TASK_RABBIT_MODEL. */
@@ -25,12 +48,16 @@ export interface ResolvedRecipe {
   prompt: string;
   /** Skill names declared in the recipe. */
   skills: string[];
-  /** Allowed child agent recipe names. */
-  agents: string[];
+  /** Allowed child agent recipe names (new field name: spawns). */
+  spawns: string[];
   /** Optional description for display. */
   description?: string;
   /** The template name this recipe extends (if any). */
   extends?: string;
+  /** Per-recipe wiring refs from object-form spawns entries (Slice 3). */
+  spawnWiring?: SpawnWiringEntry[];
+  /** Parsed initial_mesh: block (Slice 3). */
+  initialMesh?: InitialMeshEntry[];
 }
 
 /**
@@ -277,6 +304,21 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
 
   const obj = parsed as Record<string, unknown>;
 
+  // Reject retired field names with a hard parse error naming the replacement.
+  const RETIRED_RECIPE_FIELDS: Record<string, string> = {
+    agents: "spawns",
+    acceptedFrom: "acceptsWorkFrom",
+    peers: "messagesWith",
+    submitTo: "submitsWorkTo",
+  };
+  for (const [oldName, newName] of Object.entries(RETIRED_RECIPE_FIELDS)) {
+    if (oldName in obj) {
+      throw new Error(
+        `resolveRecipe: recipe '${name}' uses retired field '${oldName}' — renamed to '${newName}'`,
+      );
+    }
+  }
+
   // Validate prompt
   if (typeof obj.prompt !== "string" || !obj.prompt.trim()) {
     throw new Error(`resolveRecipe: recipe '${name}' missing or empty 'prompt'`);
@@ -302,9 +344,175 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
     ? (obj.skills as unknown[]).filter((s): s is string => typeof s === "string").slice()
     : [];
 
-  const agents = Array.isArray(obj.agents)
-    ? (obj.agents as unknown[]).filter((a): a is string => typeof a === "string").slice()
-    : [];
+  // ── spawns: parse both string entries and object-form entries.
+  //    Object form accepts wiring fields: escalatesTo, submitsWorkTo,
+  //    acceptsWorkFrom, messagesWith. Each ref value is validated via parseRef.
+  const rawSpawns: unknown[] = Array.isArray(obj.spawns) ? (obj.spawns as unknown[]) : [];
+  const spawns: string[] = [];
+  const spawnWiring: SpawnWiringEntry[] = [];
+
+  /** Singular fields that must NOT be given a list value. */
+  const SINGULAR_WIRING_FIELDS = new Set(["escalatesTo", "submitsWorkTo"]);
+  /** List fields. */
+  const LIST_WIRING_FIELDS = new Set(["acceptsWorkFrom", "messagesWith"]);
+
+  for (const entry of rawSpawns) {
+    if (typeof entry === "string") {
+      spawns.push(entry);
+    } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const e = entry as Record<string, unknown>;
+      const rec = e.recipe;
+      if (typeof rec !== "string" || !rec.trim()) {
+        throw new Error(
+          `resolveRecipe: recipe '${name}' has a spawns entry that is an object ` +
+          `but is missing a 'recipe' string key: ${JSON.stringify(entry)}`,
+        );
+      }
+      const recipeName = rec.trim();
+      spawns.push(recipeName);
+
+      const wiring: SpawnWiringEntry = { recipe: recipeName };
+
+      // Parse and validate wiring fields
+      for (const field of [...SINGULAR_WIRING_FIELDS, ...LIST_WIRING_FIELDS]) {
+        if (!(field in e)) continue;
+        const val = e[field];
+        // Reject list value for singular fields
+        if (SINGULAR_WIRING_FIELDS.has(field) && Array.isArray(val)) {
+          throw new Error(
+            `resolveRecipe: recipe '${name}' spawns entry for '${recipeName}': ` +
+            `'${field}' is a singular field and must not be given a list value.`,
+          );
+        }
+        if (LIST_WIRING_FIELDS.has(field) && !Array.isArray(val)) {
+          if (val !== undefined) {
+            throw new Error(
+              `resolveRecipe: recipe '${name}' spawns entry for '${recipeName}': ` +
+              `'${field}' must be a list.`,
+            );
+          }
+          continue;
+        }
+
+        if (LIST_WIRING_FIELDS.has(field)) {
+          const refs = (val as unknown[]).filter((r): r is string => typeof r === "string");
+          // Validate each ref
+          for (const ref of refs) {
+            try {
+              parseRef(ref);
+            } catch (refErr) {
+              throw new Error(
+                `resolveRecipe: recipe '${name}' spawns entry for '${recipeName}': ` +
+                `malformed ref in '${field}': ${(refErr as Error).message}`,
+              );
+            }
+          }
+          (wiring as unknown as Record<string, unknown>)[field] = refs;
+        } else {
+          // Singular field
+          if (typeof val !== "string") continue;
+          try {
+            parseRef(val as string);
+          } catch (refErr) {
+            throw new Error(
+              `resolveRecipe: recipe '${name}' spawns entry for '${recipeName}': ` +
+              `malformed ref in '${field}': ${(refErr as Error).message}`,
+            );
+          }
+          // Validate: recipe refs must be reachable from spawns (using the recipes collected so far + this entry)
+          (wiring as unknown as Record<string, unknown>)[field] = val;
+        }
+      }
+
+      spawnWiring.push(wiring);
+    } else {
+      throw new Error(
+        `resolveRecipe: recipe '${name}' has a spawns entry that is neither a ` +
+        `string nor an object with a 'recipe' key: ${JSON.stringify(entry)}`,
+      );
+    }
+  }
+
+  // ── Validate wiring refs: recipe names in explicit @<group>:<recipe> forms
+  //    must be reachable from the recipe's spawns list.
+  //    @$myGroups:<recipe> and @<recipe> are runtime filters — validated at runtime.
+  for (const wiring of spawnWiring) {
+    const refFields: Array<string | string[] | undefined> = [
+      wiring.escalatesTo,
+      wiring.submitsWorkTo,
+      ...(wiring.acceptsWorkFrom ?? []),
+      ...(wiring.messagesWith ?? []),
+    ];
+    for (const ref of refFields) {
+      if (typeof ref !== "string") continue;
+      if (!ref.startsWith("@")) continue;
+      const body = ref.slice(1);
+      // Only validate explicit @<group>:<recipe> form (not @$myGroups:<recipe>)
+      if (body.startsWith("$")) continue; // symbolic refs skip validation
+      const colonIdx = body.indexOf(":");
+      if (colonIdx !== -1) {
+        const left = body.slice(0, colonIdx);
+        const right = body.slice(colonIdx + 1);
+        // left is a group name (not symbolic); right is the recipe filter
+        if (!left.startsWith("$") && !right.startsWith("$") && !spawns.includes(right)) {
+          throw new Error(
+            `resolveRecipe: recipe '${name}' spawns wiring ref '${ref}' uses ` +
+            `recipe '${right}' which is not reachable from the 'spawns:' list.`,
+          );
+        }
+      }
+    }
+  }
+
+  // ── Parse initial_mesh: block ──────────────────────────────────────────────
+  let initialMesh: InitialMeshEntry[] | undefined;
+  if (Array.isArray(obj.initial_mesh)) {
+    initialMesh = [];
+    for (const item of obj.initial_mesh as unknown[]) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new Error(
+          `resolveRecipe: recipe '${name}' initial_mesh entry must be an object: ${JSON.stringify(item)}`,
+        );
+      }
+      const e = item as Record<string, unknown>;
+      if (typeof e.recipe !== "string" || !e.recipe.trim()) {
+        throw new Error(
+          `resolveRecipe: recipe '${name}' initial_mesh entry missing 'recipe' field: ${JSON.stringify(item)}`,
+        );
+      }
+      // Validate groups field
+      if ("groups" in e && e.groups !== undefined) {
+        if (!Array.isArray(e.groups)) {
+          throw new Error(
+            `resolveRecipe: recipe '${name}' initial_mesh entry 'groups' must be a string array: ${JSON.stringify(item)}`,
+          );
+        }
+        for (const g of e.groups as unknown[]) {
+          if (typeof g !== "string") {
+            throw new Error(
+              `resolveRecipe: recipe '${name}' initial_mesh entry 'groups' contains non-string: ${JSON.stringify(g)}`,
+            );
+          }
+          if (g.startsWith("_")) {
+            throw new Error(
+              `resolveRecipe: recipe '${name}' initial_mesh entry 'groups' contains reserved name '${g}' — group names starting with '_' are reserved.`,
+            );
+          }
+        }
+      }
+      const meshEntry: InitialMeshEntry = { recipe: e.recipe.trim() };
+      if (typeof e.name === "string" && e.name.trim()) meshEntry.name = e.name.trim();
+      if (typeof e.task === "string") meshEntry.task = e.task;
+      if (Array.isArray(e.groups)) meshEntry.groups = (e.groups as unknown[]).filter((g): g is string => typeof g === "string");
+      // Pass through other fields
+      for (const [k, v] of Object.entries(e)) {
+        if (!["recipe", "name", "task", "groups"].includes(k)) {
+          meshEntry[k] = v;
+        }
+      }
+      initialMesh.push(meshEntry);
+    }
+  }
 
   const description =
     typeof obj.description === "string" && obj.description.trim()
@@ -327,14 +535,44 @@ export function resolveRecipe(name: string, opts: ResolveRecipeOptions): Resolve
 
   void TIER_VARS; // referenced for future tier-resolution helpers
 
-  return {
+  // ── Step 4: Implicit-wire mesh-spawn ────────────────────────────────────
+  // If spawns is non-empty, ensure the recipe has mesh_spawn + mesh_kill in
+  // tools and mesh-spawn in extensions (add if missing).
+  const finalTools = [...tools];
+  const finalExtensions = [...extensions];
+
+  if (spawns.length > 0) {
+    if (!finalTools.includes("mesh_spawn")) finalTools.push("mesh_spawn");
+    if (!finalTools.includes("mesh_kill")) finalTools.push("mesh_kill");
+    if (!finalExtensions.includes("mesh-spawn")) finalExtensions.push("mesh-spawn");
+  }
+
+  // ── Step 5: Inverse rejection ───────────────────────────────────────────
+  // mesh_spawn/mesh_kill tools or mesh-spawn extension without spawns: → error.
+  const hasMeshSpawnTools =
+    finalTools.includes("mesh_spawn") || finalTools.includes("mesh_kill");
+  const hasMeshSpawnExt = finalExtensions.includes("mesh-spawn");
+  if ((hasMeshSpawnTools || hasMeshSpawnExt) && spawns.length === 0) {
+    throw new Error(
+      `resolveRecipe: recipe '${name}' declares mesh_spawn/mesh_kill tools or ` +
+      `mesh-spawn extension but has no 'spawns:' list. Add a 'spawns:' field with ` +
+      `the allowed child recipe names.`,
+    );
+  }
+
+  const result: ResolvedRecipe = {
     model,
-    tools,
-    extensions,
+    tools: finalTools,
+    extensions: finalExtensions,
     prompt: obj.prompt.trim(),
     skills,
-    agents,
+    spawns,
     description,
     ...(extendsField ? { extends: extendsField } : {}),
   };
+
+  if (spawnWiring.length > 0) result.spawnWiring = spawnWiring;
+  if (initialMesh !== undefined) result.initialMesh = initialMesh;
+
+  return result;
 }

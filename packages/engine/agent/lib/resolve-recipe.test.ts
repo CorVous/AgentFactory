@@ -111,22 +111,62 @@ describe("resolveRecipe", () => {
     expect(result.skills).toEqual([]);
   });
 
-  it("returns agents list from recipe", () => {
+  it("returns spawns list from recipe", () => {
     const recipesDir = writeTmpRecipe(
-      "with-agents",
-      `tools:\n  - read\nprompt: "p"\nagents:\n  - child-agent\n`,
+      "with-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - child-agent\n`,
     );
-    const result = resolveRecipe("with-agents", { recipesDir });
-    expect(result.agents).toEqual(["child-agent"]);
+    const result = resolveRecipe("with-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["child-agent"]);
   });
 
-  it("returns empty agents array when not set", () => {
+  it("returns empty spawns array when not set", () => {
     const recipesDir = writeTmpRecipe(
-      "no-agents",
+      "no-spawns",
       `tools:\n  - read\nprompt: "p"\n`,
     );
-    const result = resolveRecipe("no-agents", { recipesDir });
-    expect(result.agents).toEqual([]);
+    const result = resolveRecipe("no-spawns", { recipesDir });
+    expect(result.spawns).toEqual([]);
+  });
+
+  it("throws hard error when recipe uses retired field 'agents'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-agents",
+      `tools:\n  - read\nprompt: "p"\nagents:\n  - child-agent\n`,
+    );
+    expect(() => resolveRecipe("retired-agents", { recipesDir })).toThrow(
+      /retired field 'agents'.*renamed to 'spawns'/,
+    );
+  });
+
+  it("throws hard error when recipe uses retired field 'acceptedFrom'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-acceptedFrom",
+      `tools:\n  - read\nprompt: "p"\nacceptedFrom:\n  - boss\n`,
+    );
+    expect(() => resolveRecipe("retired-acceptedFrom", { recipesDir })).toThrow(
+      /retired field 'acceptedFrom'.*renamed to 'acceptsWorkFrom'/,
+    );
+  });
+
+  it("throws hard error when recipe uses retired field 'peers'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-peers",
+      `tools:\n  - read\nprompt: "p"\npeers:\n  - boss\n`,
+    );
+    expect(() => resolveRecipe("retired-peers", { recipesDir })).toThrow(
+      /retired field 'peers'.*renamed to 'messagesWith'/,
+    );
+  });
+
+  it("throws hard error when recipe uses retired field 'submitTo'", () => {
+    const recipesDir = writeTmpRecipe(
+      "retired-submitTo",
+      `tools:\n  - read\nprompt: "p"\nsubmitTo: boss\n`,
+    );
+    expect(() => resolveRecipe("retired-submitTo", { recipesDir })).toThrow(
+      /retired field 'submitTo'.*renamed to 'submitsWorkTo'/,
+    );
   });
 
   it("throws when recipe file does not exist", () => {
@@ -412,6 +452,119 @@ describe("resolveRecipe — extends chain integration", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Slice 2: implicit-wire, inverse rejection, object-form spawns
+// ---------------------------------------------------------------------------
+
+describe("resolveRecipe — implicit-wire mesh-spawn", () => {
+  it("adds mesh_spawn + mesh_kill to tools and mesh-spawn to extensions when spawns is non-empty", () => {
+    const recipesDir = writeTmpRecipe(
+      "with-spawns-implicit",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("with-spawns-implicit", { recipesDir });
+    expect(result.tools).toContain("mesh_spawn");
+    expect(result.tools).toContain("mesh_kill");
+    expect(result.extensions).toContain("mesh-spawn");
+  });
+
+  it("does NOT add mesh_spawn tools when spawns is empty", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-spawns-implicit",
+      `tools:\n  - read\nprompt: "p"\n`,
+    );
+    const result = resolveRecipe("no-spawns-implicit", { recipesDir });
+    expect(result.tools).not.toContain("mesh_spawn");
+    expect(result.tools).not.toContain("mesh_kill");
+    expect(result.extensions).not.toContain("mesh-spawn");
+  });
+
+  it("does not duplicate mesh_spawn/mesh_kill when already declared in tools", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-dup-tools",
+      `tools:\n  - read\n  - mesh_spawn\n  - mesh_kill\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("no-dup-tools", { recipesDir });
+    expect(result.tools.filter((t) => t === "mesh_spawn")).toHaveLength(1);
+    expect(result.tools.filter((t) => t === "mesh_kill")).toHaveLength(1);
+  });
+
+  it("does not duplicate mesh-spawn extension when already declared", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-dup-ext",
+      `tools:\n  - read\nprompt: "p"\nextensions:\n  - mesh-spawn\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("no-dup-ext", { recipesDir });
+    expect(result.extensions.filter((e) => e === "mesh-spawn")).toHaveLength(1);
+  });
+});
+
+describe("resolveRecipe — inverse rejection (mesh tools without spawns)", () => {
+  it("throws when tools includes mesh_spawn but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-spawn-no-spawns",
+      `tools:\n  - read\n  - mesh_spawn\nprompt: "p"\n`,
+    );
+    expect(() => resolveRecipe("mesh-spawn-no-spawns", { recipesDir })).toThrow(
+      /mesh_spawn.*mesh_kill.*spawns|spawns/,
+    );
+  });
+
+  it("throws when tools includes mesh_kill but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-kill-no-spawns",
+      `tools:\n  - read\n  - mesh_kill\nprompt: "p"\n`,
+    );
+    expect(() => resolveRecipe("mesh-kill-no-spawns", { recipesDir })).toThrow(/spawns/);
+  });
+
+  it("throws when extensions includes mesh-spawn but spawns is absent", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-ext-no-spawns",
+      `tools:\n  - read\nprompt: "p"\nextensions:\n  - mesh-spawn\n`,
+    );
+    expect(() => resolveRecipe("mesh-ext-no-spawns", { recipesDir })).toThrow(/spawns/);
+  });
+
+  it("allows recipe with mesh_spawn tools when spawns is non-empty", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-tools",
+      `tools:\n  - read\n  - mesh_spawn\n  - mesh_kill\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("mesh-tools", { recipesDir });
+    expect(result.tools).toContain("mesh_spawn");
+    expect(result.tools).toContain("mesh_kill");
+  });
+});
+
+describe("resolveRecipe — object-form spawns entries", () => {
+  it("parses object-form {recipe: x} entries as string recipe names", () => {
+    const recipesDir = writeTmpRecipe(
+      "obj-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n`,
+    );
+    const result = resolveRecipe("obj-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["mesh-node"]);
+  });
+
+  it("parses mixed string and object-form spawns entries", () => {
+    const recipesDir = writeTmpRecipe(
+      "mixed-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - plain-node\n  - recipe: fancy-node\n`,
+    );
+    const result = resolveRecipe("mixed-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["plain-node", "fancy-node"]);
+  });
+
+  it("throws when object-form spawns entry is missing recipe key", () => {
+    const recipesDir = writeTmpRecipe(
+      "bad-obj-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - name: mesh-node\n`,
+    );
+    expect(() => resolveRecipe("bad-obj-spawns", { recipesDir })).toThrow(/recipe.*string key|recipe key/i);
+  });
+});
+
 describe("dedupeFirstOccurrence", () => {
   it("returns empty array for empty input", () => {
     expect(dedupeFirstOccurrence([])).toEqual([]);
@@ -423,5 +576,159 @@ describe("dedupeFirstOccurrence", () => {
 
   it("returns the same array content for all-unique input", () => {
     expect(dedupeFirstOccurrence(["x", "y", "z"])).toEqual(["x", "y", "z"]);
+  });
+});
+
+// ── Slice 3: initial_mesh:, spawns: wiring fields, groups: validation ────────
+
+describe("resolveRecipe — Slice 3: spawns wiring fields", () => {
+  it("parses spawns object-form with escalatesTo and submitsWorkTo", () => {
+    const recipesDir = writeTmpRecipe(
+      "wired-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo: "@$myGroups"\n    submitsWorkTo: "@$myGroups:reviewer"\n`,
+    );
+    const result = resolveRecipe("wired-spawns", { recipesDir });
+    expect(result.spawns).toEqual(["mesh-node"]);
+    expect(result.spawnWiring).toBeDefined();
+    expect(result.spawnWiring![0].recipe).toBe("mesh-node");
+    expect(result.spawnWiring![0].escalatesTo).toBe("@$myGroups");
+    expect(result.spawnWiring![0].submitsWorkTo).toBe("@$myGroups:reviewer");
+  });
+
+  it("parses spawns object-form with messagesWith and acceptsWorkFrom list refs", () => {
+    const recipesDir = writeTmpRecipe(
+      "list-wiring",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    messagesWith:\n      - "@haiku"\n      - "@story"\n`,
+    );
+    const result = resolveRecipe("list-wiring", { recipesDir });
+    expect(result.spawnWiring![0].messagesWith).toEqual(["@haiku", "@story"]);
+  });
+
+  it("rejects list value for singular field submitsWorkTo", () => {
+    const recipesDir = writeTmpRecipe(
+      "list-singular",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    submitsWorkTo:\n      - "@haiku"\n`,
+    );
+    expect(() => resolveRecipe("list-singular", { recipesDir })).toThrow(/singular|list/i);
+  });
+
+  it("rejects list value for singular field escalatesTo", () => {
+    const recipesDir = writeTmpRecipe(
+      "list-escalates",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo:\n      - "@haiku"\n`,
+    );
+    expect(() => resolveRecipe("list-escalates", { recipesDir })).toThrow(/singular|list/i);
+  });
+
+  it("rejects malformed ref in wiring field", () => {
+    const recipesDir = writeTmpRecipe(
+      "bad-ref",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo: "@bad:bad:extra"\n`,
+    );
+    expect(() => resolveRecipe("bad-ref", { recipesDir })).toThrow(/malformed|colon|ref/i);
+  });
+
+  it("rejects recipe-typed ref for a recipe not in spawns list", () => {
+    const recipesDir = writeTmpRecipe(
+      "unreachable-recipe",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - recipe: mesh-node\n    escalatesTo: "@haiku:unknown-recipe"\n`,
+    );
+    expect(() => resolveRecipe("unreachable-recipe", { recipesDir })).toThrow(/not reachable|reachable/i);
+  });
+
+  it("recipes with NO wiring fields in spawns produce no spawnWiring", () => {
+    const recipesDir = writeTmpRecipe(
+      "plain-spawns",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\n`,
+    );
+    const result = resolveRecipe("plain-spawns", { recipesDir });
+    expect(result.spawnWiring).toBeUndefined();
+  });
+
+  it("recipe with no spawns: produces no spawnWiring", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-spawns",
+      `tools:\n  - read\nprompt: "p"\n`,
+    );
+    const result = resolveRecipe("no-spawns", { recipesDir });
+    expect(result.spawnWiring).toBeUndefined();
+    expect(result.spawns).toEqual([]);
+  });
+});
+
+describe("resolveRecipe — Slice 3: initial_mesh: block", () => {
+  it("parses valid initial_mesh: entries", () => {
+    const recipesDir = writeTmpRecipe(
+      "with-mesh",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n    name: w1\n    groups: [haiku, story]\n    task: "Write poems"\n`,
+    );
+    const result = resolveRecipe("with-mesh", { recipesDir });
+    expect(result.initialMesh).toBeDefined();
+    expect(result.initialMesh![0]).toMatchObject({
+      recipe: "mesh-node",
+      name: "w1",
+      groups: ["haiku", "story"],
+      task: "Write poems",
+    });
+  });
+
+  it("parses initial_mesh: entry with no groups field", () => {
+    const recipesDir = writeTmpRecipe(
+      "mesh-no-groups",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n`,
+    );
+    const result = resolveRecipe("mesh-no-groups", { recipesDir });
+    expect(result.initialMesh![0].groups).toBeUndefined();
+  });
+
+  it("rejects initial_mesh: entry with reserved _-prefixed group name", () => {
+    const recipesDir = writeTmpRecipe(
+      "reserved-group",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n    groups: [_internal]\n`,
+    );
+    expect(() => resolveRecipe("reserved-group", { recipesDir })).toThrow(/reserved|_/);
+  });
+
+  it("rejects initial_mesh: entry with _default as explicit group name", () => {
+    const recipesDir = writeTmpRecipe(
+      "default-group",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - recipe: mesh-node\n    groups: [_default]\n`,
+    );
+    expect(() => resolveRecipe("default-group", { recipesDir })).toThrow(/reserved|_/);
+  });
+
+  it("rejects initial_mesh: entry missing recipe field", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-recipe-mesh",
+      `tools:\n  - read\nprompt: "p"\nspawns:\n  - mesh-node\ninitial_mesh:\n  - name: w1\n`,
+    );
+    expect(() => resolveRecipe("no-recipe-mesh", { recipesDir })).toThrow(/recipe/i);
+  });
+
+  it("recipes without initial_mesh: have undefined initialMesh", () => {
+    const recipesDir = writeTmpRecipe(
+      "no-initial-mesh",
+      `tools:\n  - read\nprompt: "p"\n`,
+    );
+    const result = resolveRecipe("no-initial-mesh", { recipesDir });
+    expect(result.initialMesh).toBeUndefined();
+  });
+
+  it("all pi-sandbox/agents/*.yaml recipes resolve without error (no groups/initial_mesh regression)", () => {
+    const agentsDir = "/home/user/AgentFactory/pi-sandbox/agents";
+    const { readdirSync } = require("node:fs");
+    let files: string[];
+    try {
+      files = readdirSync(agentsDir).filter((f: string) => f.endsWith(".yaml"));
+    } catch {
+      // Skip if agents dir doesn't exist
+      return;
+    }
+    for (const file of files) {
+      const recipeName = file.slice(0, -5);
+      expect(() =>
+        resolveRecipe(recipeName, { recipeDirs: [agentsDir] }),
+      ).not.toThrow();
+    }
   });
 });

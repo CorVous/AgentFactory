@@ -37,16 +37,16 @@ export const RAIL_TO_CLUSTER: Record<string, ClusterName> = {
   "hide-extensions-list": "ui-rails",
 
   // engine-owned rails (always available, never separately installed)
-  "agent-bus": "engine",
+  "peer-bus": "engine",
   "supervisor": "engine",
   "intercept": "engine",
-  "atomic-delegate": "engine",
   "habitat": "engine",
   "launcher-bridge": "engine",
   "slash-commands": "engine",
   "bus-tail-emitter": "engine",
   "mesh-rail": "engine",
-  "mesh-authority": "engine",
+  "mesh-spawn": "engine",
+  "mesh-mux": "engine",
   "deferred-confirm-baseline": "engine",
 };
 

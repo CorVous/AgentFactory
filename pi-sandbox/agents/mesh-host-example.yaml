@@ -1,0 +1,56 @@
+# mesh-host-example.yaml — example host recipe demonstrating the Slice 4 host pattern.
+#
+# Launch as:
+#   set -a; source models.env; set +a
+#   pi --recipe mesh-host-example --is-host
+#
+# The host binds the launcher socket, pre-spawns the initial_mesh: peers,
+# and can spawn more at runtime via mesh_spawn.
+# mesh_spawn / mesh_kill are implicitly wired because spawns: is non-empty.
+
+extends: peer
+model: LEAD_HARE_MODEL
+shortName: host
+
+description: "Example mesh host — pre-spawns analyst + scribe, can spawn more at runtime."
+
+prompt: |
+  You are the mesh host coordinating a small team of specialized peers.
+  Two peers are pre-spawned for you: analyst (in group "research") and scribe
+  (in group "drafting"). Use peer_send to assign work and peer_call for
+  blocking requests.
+
+  You can spawn additional peers at runtime with mesh_spawn (recipe must be
+  in your spawns: list). Terminate peers with mesh_kill when done.
+
+  Example workflow:
+    1. peer_call({to: "analyst", body: "research X", timeout_ms: 30000})
+    2. peer_send({to: "scribe", body: "draft a report on X based on: <result>"})
+    3. peer_inbox() — collect the scribe's output
+    4. mesh_kill({name: "analyst"}) — clean up when no longer needed
+
+tools:
+  - read
+  - ls
+  - grep
+  - find
+  - peer_list
+  - peer_send
+  - peer_inbox
+  - peer_call
+  - mesh_spawn
+  - mesh_kill
+
+spawns:
+  - mesh-node
+  - mesh-writer
+
+initial_mesh:
+  - recipe: mesh-node
+    name: analyst
+    groups: [research]
+    task: "You are the research analyst. Wait for research requests from the host."
+  - recipe: mesh-writer
+    name: scribe
+    groups: [drafting]
+    task: "You are the scribe. Wait for drafting requests from the host and save output to files."

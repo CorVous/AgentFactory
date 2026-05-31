@@ -1,31 +1,29 @@
-# Multi-agent — delegate, peer messaging, supervisor
+# Multi-agent — mesh_spawn, peer messaging, supervisor
 
 Parent: [`docs/agents.md`](../agents.md). For declaring meshes, see
 [`topology.md`](./topology.md); for running and observing one, see
 [`testing.md`](./testing.md).
 
-## delegate vs. talk
+## spawn vs. talk
 
 Two orthogonal extensions cover the two distinct relationships a recipe
-might want with another agent. `atomic-delegate` is implicitly wired by
-the `agents:` recipe field; `agent-bus` is opt-in via `extensions:` +
-`tools:`. A recipe can use either, both, or neither.
+might want with another agent. `mesh-spawn` is opt-in via `extensions:` +
+`tools:` (or via `spawns:` in the recipe, which auto-adds it);
+`peer-bus` is also opt-in via `extensions:` + `tools:`. A recipe can use
+either, both, or neither.
 
-### `atomic-delegate` — single-call delegation over the bus
+### `mesh-spawn` — long-lived worker spawn over the bus
 
-Wired implicitly when the recipe declares `agents: [a, b, …]`. Registers
-one tool:
+Wired when the recipe includes `mesh-spawn` in `extensions:` (or declares
+`spawns: [a, b, …]`). Registers two tools:
 
-- `delegate({recipe, task, workspace?, timeout_ms?})` — spawns
+- `mesh_spawn({recipe, task, groups?, sandbox?})` — spawns
   `pi --recipe <recipe>` in a fresh tmpdir scratch root via
   `buildRecipeChildArgv` (in `packages/engine/agent/lib/child-spawn.mjs`),
-  hands it the task, waits for the worker to ship its drafted
-  artifacts back as a `submission` envelope, and registers those
-  artifacts as a `deferred-confirm` handler so they queue for unified
-  end-of-turn approval alongside any of the caller's own deferred-*
-  operations. Single atomic call — no separate approve step. Default
-  timeout is 5 minutes (measured from the `delegate` call to the
-  arrival of the submission).
+  starts the worker with the given task, and returns immediately with the
+  worker's name. The worker is long-lived — it persists until killed.
+- `mesh_kill({name})` — sends a `shutdown` envelope to the named worker
+  and removes it from the registry.
 
 **Worker habitat overlay.** Each spawned worker is locked to the
 caller via a `--topology-overlay` JSON blob set by the extension:
@@ -35,42 +33,32 @@ caller via a `--topology-overlay` JSON blob set by the extension:
   "supervisor": "<callerName>",
   "submitTo": "<callerName>",
   "acceptedFrom": ["<callerName>"],
-  "peers": ["<callerName>"],
-  "agents": []
+  "peers": ["<callerName>"]
 }
 ```
 
 So the worker can only message the caller, can only submit to the
-caller, has no further-delegation capability, and won't accept typed
-inbound envelopes from anyone else. The overlay overrides whatever
-peer fields the worker recipe declares.
+caller, and won't accept typed inbound envelopes from anyone else.
+The overlay overrides whatever peer fields the worker recipe declares.
 
-**Pre-flight checks** in `delegate.execute`:
+**Admission.** When the worker ships a submission to the caller's bus
+socket, `peer-bus.handleIncoming` checks the `__pi_mesh_spawn_is_my_worker__`
+predicate (set by `mesh-spawn` at init). If the worker name is in the
+registry, the envelope is admitted even if it isn't in the static
+`acceptedFrom` list — so dynamically-spawned names don't need to be
+pre-listed in the topology.
+
+**Pre-flight checks** in `mesh_spawn.execute`:
 
 1. **Recipe allowlist** — `params.recipe` must be in
-   `getHabitat().agents`. Error:
-   `delegate: recipe 'X' not in this agent's allowed list […]`.
+   `getHabitat().spawns`. Error: `recipe_not_allowed`.
 2. **Recipe exists** — `pi-sandbox/agents/<recipe>.yaml` must exist.
+   Error: `recipe_not_found`.
+3. **Groups validation** — group names must not start with `_`.
+   Error: `reserved_group_name`.
 
-**Workspace bundling.** When `workspace.include: ["a.txt", "sub/"]`
-is passed, those relative paths are resolved against the caller's
-sandbox and copied into the worker's tmpdir before launch (recursing
-into directories). Use this to give the worker read-only context
-files (existing code it needs to reference). Paths that escape the
-caller sandbox are silently skipped.
-
-**Inbound dispatch.** When the worker ships its submission to the
-caller's bus socket, `agent-bus.handleIncoming` invokes
-`__pi_atomic_delegate_dispatch__` BEFORE the `acceptedFrom` check, so
-dynamically-spawned worker names don't need to live in the caller's
-static `acceptedFrom` list. The hook self-gates on its own pending-
-workers map (keyed by `<breed>-<recipe>` slug); envelopes from an
-unknown sender fall through to the rest of the routing chain.
-
-**Cleanup.** After the worker exits (graceful exit after submission,
-or kill on timeout), the scratch tmpdir is removed. The artifacts
-themselves are in-memory in the deferred-confirm handler until the
-end-of-turn applies (or rejects) them.
+**Cleanup.** `session_shutdown` cascade-kills all registered nodes.
+`mesh_kill` kills a specific worker on demand.
 
 Worked examples: `pi-sandbox/agents/writer-foreman.yaml` (single-
 recipe foreman driving `deferred-writer`, walked through in
@@ -78,19 +66,21 @@ recipe foreman driving `deferred-writer`, walked through in
 `pi-sandbox/agents/delegator.yaml` (general-purpose planner with a
 broad allowlist).
 
-### `agent-bus` — async peer messaging (long-lived, named)
+### `peer-bus` — async peer messaging (long-lived, named)
 
-Registers three tools and one CLI flag:
+Registers four tools and one CLI flag:
 
-- `agent_send({to, body, in_reply_to?})` — fire-and-forget. Connects to
+- `peer_send({to, body, in_reply_to?})` — fire-and-forget. Connects to
   `${BUS_ROOT}/${to}.sock`, writes one JSON envelope, returns
   `{msg_id, delivered}`. `peer offline` / `timeout` are normal failure
   modes (no retry, no offline queue).
-- `agent_inbox({since_ts?, peek?})` — pull buffered envelopes. By
+- `peer_inbox({since_ts?, peek?})` — pull buffered envelopes. By
   default returned messages are cleared from the inbox; `peek=true`
   keeps them.
-- `agent_list()` — probe `${BUS_ROOT}/*.sock` for live peers; clean up
+- `peer_list()` — probe `${BUS_ROOT}/*.sock` for live peers; clean up
   stale socks left by crashed peers.
+- `peer_call({to, body, timeout_ms?})` — request/response call to a
+  peer. Blocks until a reply arrives or the timeout expires.
 - `--agent-bus-root <dir>` — the rendezvous directory. Resolution
   order: this flag → `~/.pi-agent-bus/<basename of sandbox-root>`.
   The runner sets the flag automatically and accepts
@@ -127,18 +117,18 @@ Worked example: `pi-sandbox/agents/peer-chatter.yaml`.
 
 ### Why two systems and not one
 
-`delegate` is an atomic blocking call (ephemeral worker, structured
-return: artifacts queued); peer-talk is async long-lived messaging
-(stable named peers, `pi.sendUserMessage` delivery). Both happen to
-ride the same Unix-socket bus protocol — atomic-delegate's wire format
-is the same `submission` envelope kind that the supervisor inbound
-rail handles — but the recipe-level affordances differ enough that
-keeping them as two independent extensions is what lets recipes mix
-exactly the relationship they need.
+`mesh_spawn` is a fire-and-supervise pattern: the caller spawns a long-lived
+worker, the worker submits work over the bus, and the caller reviews it via
+`respond_to_request`; peer-talk is async long-lived messaging
+(stable named peers, `pi.sendUserMessage` delivery). Both ride the same
+Unix-socket bus protocol — `mesh_spawn` workers use the same `submission`
+envelope kind that the supervisor inbound rail handles — but the
+recipe-level affordances differ enough that keeping them as two independent
+extensions lets recipes mix exactly the relationship they need.
 
 ## Mandatory safety rails for sub-agents
 
-When an extension delegates to a child `pi` process:
+When an extension spawns a child `pi` process:
 
 - Pass `--no-extensions` to the child — prevents recursive sub-agents.
 - Whitelist the child's tools (`--tools read,grep,...`) to match its role.

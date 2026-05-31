@@ -84,7 +84,7 @@ The launcher wire format is documented in
 extensions that emit control envelopes (focus-request, pin-request,
 decisions-jump, tail-event, etc.).
 
-To exercise the **atomic delegate** end-to-end, drive
+To exercise the **mesh_spawn** flow end-to-end, drive
 `writer-foreman` (single file):
 
 ```sh
@@ -95,28 +95,21 @@ tmux new-session -d -s foreman -x 200 -y 50 \
 sleep 5
 tmux send-keys -t foreman \
   'draft hello.txt with text "Hi"' Enter
-sleep 60                              # foreman calls delegate; worker drafts and
-                                      # ships submission; foreman queues artifacts;
-                                      # end-of-turn approval renders.
-tmux capture-pane -t foreman -p       # expect a Delegate (...) section in the
-                                      # approval preview.
-tmux send-keys -t foreman 'y' Enter   # approve at end-of-turn dialog
-sleep 5
-ls /tmp/foreman-test/hello.txt        # file present with "Hi"
+sleep 60                              # foreman spawns worker; worker drafts and
+                                      # ships submission; foreman reviews via
+                                      # respond_to_request and approves.
+tmux capture-pane -t foreman -p       # expect submission review prompt.
 tmux send-keys -t foreman '/quit' Enter
 ```
 
-For **multiple delegates in one turn** (each surfaces as a separate
-section in the unified preview):
+For **multiple workers submitting in one turn** (batched into one composite
+supervisor prompt):
 
 ```sh
 tmux send-keys -t foreman \
   'draft two files: hello.txt saying "Hi" and world.txt saying "World"' Enter
-sleep 120   # foreman calls delegate twice; both submissions queue;
-            # one unified end-of-turn dialog shows both Delegate sections.
-tmux send-keys -t foreman 'y' Enter
-sleep 5
-ls /tmp/foreman-test/   # hello.txt and world.txt both present
+sleep 120   # foreman spawns two workers; both submissions arrive;
+            # one composite supervisor prompt shows both items.
 ```
 
 Negative cases worth probing manually:
@@ -124,10 +117,9 @@ Negative cases worth probing manually:
 - **Loud fail under print mode**: run `pi --recipe deferred-writer
   -p "draft x.txt"` directly. With no UI, the worker exits but stderr
   contains `[deferred] dropped: no UI available`. (Cross-agent
-  approval forwarding now flows over the bus, not through `--rpc-sock`.)
-- **Recipe not allowed**: prompt foreman with `recipe:
-  "deferred-editor"` → `delegate: recipe 'deferred-editor' not in
-  this agent's allowed list [deferred-writer]`.
+  approval forwarding flows over the bus via the supervisor rail.)
+- **Recipe not allowed**: prompt foreman with `mesh_spawn` for an
+  unlisted recipe → `recipe_not_allowed` error.
 - **Missing cluster**: a recipe listing `extensions: [deferred-write]`
   when `@agentfactory/deferred-rails` is not installed → engine errors
   with a `pi install npm:@agentfactory/deferred-rails` hint.

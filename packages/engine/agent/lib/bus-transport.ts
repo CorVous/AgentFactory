@@ -1,6 +1,6 @@
-// Shared low-level Unix-socket sender for agent-bus communications.
+// Shared low-level Unix-socket sender for peer-bus communications.
 //
-// Both agent-bus.ts's sendEnvelope and submission-emit.ts's makeBusSender
+// Both peer-bus.ts's sendEnvelope and submission-emit.ts's makeBusSender
 // open a socket to ${busRoot}/${toName}.sock, write one JSON line, and close.
 // This module provides a single tested implementation so a future change
 // (wire-format checksum, retry policy, etc.) has one home.
