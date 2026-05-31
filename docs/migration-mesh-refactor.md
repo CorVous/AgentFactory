@@ -73,7 +73,7 @@ Remove `pi-sandbox/.pi/extensions/atomic-delegate.ts`, `atomic-delegate.prompt.m
 
 - Test migration: `_lib/atomic-delegate.test.ts` either deletes (if its coverage is subsumed by `_lib/peer-spawn.test.ts`) or refactors to test `peer-spawn`.
 - Recipe migration: `writer-foreman.yaml` rewrites with the new pattern; its prompt fragment may need updating to describe the multi-tool-call flow.
-- Documentation: remove `delegate` references from `docs/agents.md` and skill prompt fragments; CONTEXT.md is already updated (per the synthesis batch).
+- Documentation: remove `delegate` references from `docs/agents/multi-agent.md` and `docs/agents/worked-examples.md` (and any residual mention in `docs/agents.md`) plus skill prompt fragments; CONTEXT.md is already updated (per the synthesis batch).
 
 ## Slice 7 — Delete `pi-sandbox/meshes/` and topology validator entry-points
 
@@ -91,7 +91,7 @@ After the code is settled:
 - Add `docs/agents/host-recipes.md` explaining the host-vs-worker distinction and when to author each.
 - Update `docs/agents/issue-tracker.md`, `docs/conventions.md`, `docs/repo-layout.md` for the renamed paths and tool names.
 - Skill prompt fragments (`pi-sandbox/skills/pi-agent-builder/references/`) refresh to match the new vocabulary.
-- Smoke-test scenarios from `docs/agents.md`'s "Verifying the multi-agent rails" section update to demonstrate host recipes rather than topology launches.
+- Smoke-test scenarios from `docs/agents/testing.md`'s "Verifying the multi-agent rails" section update to demonstrate host recipes rather than topology launches.
 
 ## Open questions deferred to follow-up ADRs
 

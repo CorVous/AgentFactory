@@ -31,7 +31,9 @@ npm run pi                                  # raw pi session for exploration
 ## More docs
 
 - [`docs/agents.md`](./docs/agents.md) — `pi --recipe` recipe shape,
-  packaging model, deferred-writer worked example, sub-agent rails.
+  prompt fragments, per-instance names, and a map into the focused
+  `docs/agents/` references (rails, worked examples, multi-agent,
+  topology, testing).
 - [`docs/model-tiers.md`](./docs/model-tiers.md) — tier → model-ID table.
 - [`docs/pi-direct.md`](./docs/pi-direct.md) — running raw pi, the
   `pi-agent-builder` skill, scripted (`-p`) gotchas.
