@@ -3,9 +3,11 @@
 Day-to-day, the way to launch a focused agent is `pi --recipe <name>`.
 The `--recipe` flag is registered by the `@agentfactory/pi-engine`
 extension package, which resolves the named recipe from
-`<cwd>/.pi/recipes/` → `~/.pi/agent/recipes/` → bundled (project >
-global > bundled), then configures the pi session with the recipe's
-model, tools, extensions, and system prompt. Extensions come from the
+`<cwd>/.pi/recipes/` → `~/.pi/agent/recipes/` → `<cwd>/pi-sandbox/agents/` → `<cwd>/agents/` → bundled (project >
+global > repo-local > bundled), then configures the pi session with the recipe's
+model, tools, extensions, and system prompt. The two repo-local tiers mean
+`pi --recipe <name>` works from the repo root (matching `pi-sandbox/agents/`)
+and from `pi-sandbox/` (matching `agents/`) without any symlinks. Extensions come from the
 installed engine and cluster packages, and every recipe gets the
 engine-baseline rails automatically — see
 [`agents/rails-reference.md`](./agents/rails-reference.md).
@@ -32,7 +34,7 @@ Design rationale lives in [`adr/`](./adr/).
 ## Recipe shape
 
 ```yaml
-# pi-sandbox/agents/<name>.yaml  (also loadable from <cwd>/.pi/recipes/ or ~/.pi/agent/recipes/)
+# pi-sandbox/agents/<name>.yaml  (also loadable from <cwd>/.pi/recipes/, ~/.pi/agent/recipes/, or auto-discovered from repo root / pi-sandbox/)
 model: TASK_RABBIT_MODEL          # tier name resolved via env → ~/.pi/agent/models.json → bundled tier-defaults.json, or a literal model ID
 description: Drafts files...      # optional; shown by agent-header in the TUI
 prompt: |                         # the agent's role, prepended with extension fragments

@@ -43,10 +43,13 @@ Pi's working directory is `pi-sandbox/`; the `npm run pi` script handles the
 
 - `pi-sandbox/agents/` — YAML recipes for `pi --recipe <name>`. Recipe
   search order: project-local `.pi/recipes/` → `~/.pi/agent/recipes/` →
-  bundled in the engine package (currently empty). Recipes in this dir
-  are found when `pi --recipe` is invoked from the repo root. Also hosts
-  host recipes (e.g. `anon-grouped-mesh.yaml`, `authority-mesh.yaml`,
-  `grouped-mesh.yaml`) launched via `npm run mesh -- <recipe-name>`
+  `<cwd>/pi-sandbox/agents/` → `<cwd>/agents/` → bundled in the engine
+  package (currently empty). The two repo-local tiers mean recipes here
+  are auto-discovered when `pi --recipe` is invoked from the repo root
+  (matching `pi-sandbox/agents/`) or from inside `pi-sandbox/` (matching
+  `agents/`), with no symlinks required. Also hosts host recipes (e.g.
+  `anon-grouped-mesh.yaml`, `authority-mesh.yaml`, `grouped-mesh.yaml`)
+  launched via `npm run mesh -- <recipe-name>`
   (see `docs/agents/host-recipes.md`).
 - `pi-sandbox/templates/` — Template YAML files used by `extends:` chains
   in recipes (e.g. `peer.yaml`).
