@@ -1,5 +1,7 @@
 # Migration plan: mesh-extensions refactor (ADRs 0007–0009)
 
+> **STATUS: Complete (as of 2026-05-31).** The mesh-extensions refactor (Slices 1–7) is merged. For the live system, see [`agents.md`](./agents.md) and [`agents/host-recipes.md`](./agents/host-recipes.md). This document is retained for historical context.
+
 > **SUPERSEDED (launcher slices):** The launcher portions of this migration
 > plan — specifically the description of `npm run agent`, `scripts/run-agent.mjs`,
 > and the `--is-host` flag in Slices 4–5 — are superseded by
@@ -84,7 +86,7 @@ Once every mesh file has migrated to a host recipe (slice 5) and `delegate` is g
 - `package.json` `mesh` script either deletes or aliases to `agent`.
 - Old field aliases from slice 1 (`agents:`, `acceptedFrom:`, `peers:`, etc.) deprecate-error in this slice — recipes that still use them fail to parse with a clear pointer to the rename.
 
-## Slice 8 — Documentation refresh
+## Slice 8 — Documentation refresh (DONE — see issue #166)
 
 After the code is settled:
 - Rewrite `docs/agents.md`'s "Composing agents" and "Recipe shape" sections to describe `spawns:`, `initial_mesh:`, group namespacing, and the implicit-wire rules.

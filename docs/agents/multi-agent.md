@@ -1,7 +1,7 @@
 # Multi-agent — mesh_spawn, peer messaging, supervisor
 
 Parent: [`docs/agents.md`](../agents.md). For declaring meshes, see
-[`topology.md`](./topology.md); for running and observing one, see
+[`host-recipes.md`](./host-recipes.md); for running and observing one, see
 [`testing.md`](./testing.md).
 
 ## spawn vs. talk
@@ -26,16 +26,22 @@ Wired when the recipe includes `mesh-spawn` in `extensions:` (or declares
   and removes it from the registry.
 
 **Worker habitat overlay.** Each spawned worker is locked to the
-caller via a `--topology-overlay` JSON blob set by the extension:
+caller via a `--topology-overlay` JSON blob set by the extension.
+The overlay uses the new vocabulary keys introduced in Slice 1
+(`escalatesTo`, `submitsWorkTo`, `acceptsWorkFrom`, `messagesWith`),
+which the engine maps to Habitat field names at parse time:
 
 ```json
 {
-  "supervisor": "<callerName>",
-  "submitTo": "<callerName>",
-  "acceptedFrom": ["<callerName>"],
-  "peers": ["<callerName>"]
+  "escalatesTo": "<callerName>",
+  "submitsWorkTo": "<callerName>",
+  "acceptsWorkFrom": ["<callerName>"],
+  "messagesWith": ["<callerName>"]
 }
 ```
+
+(`escalatesTo` in the overlay input maps to `getHabitat().supervisor`
+in code; see `build-habitat.ts:mergeTopologyOverlay`.)
 
 So the worker can only message the caller, can only submit to the
 caller, and won't accept typed inbound envelopes from anyone else.
@@ -45,8 +51,8 @@ The overlay overrides whatever peer fields the worker recipe declares.
 socket, `peer-bus.handleIncoming` checks the `__pi_mesh_spawn_is_my_worker__`
 predicate (set by `mesh-spawn` at init). If the worker name is in the
 registry, the envelope is admitted even if it isn't in the static
-`acceptedFrom` list — so dynamically-spawned names don't need to be
-pre-listed in the topology.
+`acceptsWorkFrom` list — so dynamically-spawned names don't need to be
+pre-listed in the host recipe overlay.
 
 **Pre-flight checks** in `mesh_spawn.execute`:
 
@@ -81,10 +87,9 @@ Registers four tools and one CLI flag:
   stale socks left by crashed peers.
 - `peer_call({to, body, timeout_ms?})` — request/response call to a
   peer. Blocks until a reply arrives or the timeout expires.
-- `--agent-bus-root <dir>` — the rendezvous directory. Resolution
+- `--peer-bus <dir>` — override the rendezvous directory. Resolution
   order: this flag → `~/.pi-agent-bus/<basename of sandbox-root>`.
-  The runner sets the flag automatically and accepts
-  `--agent-bus <dir>` (parallel to `--sandbox <dir>`) to override.
+  The launcher sets the flag automatically when spawning workers.
 
 Each agent listens on `${BUS_ROOT}/${name}.sock` (name comes from
 `--peer-name`, which the engine sets to a generated
@@ -143,13 +148,14 @@ See `pi-sandbox/skills/pi-agent-builder/references/` for recipe-level detail.
 The **supervisor** extension (`packages/engine/agent/extensions/supervisor.ts`) implements
 the inbound review loop described in [ADR-0003](../adr/0003-supervisor-llm-in-review-loop.md).
 The extension registers the `respond_to_request` tool and a globalThis dispatch hook
-that `agent-bus` calls when a typed non-message envelope arrives.
+that `peer-bus` calls when a typed non-message envelope arrives.
 
 ### Automatic wiring
 
 `supervisor`, `intercept`, and `respond_to_request` are **baseline** — loaded for
-every agent by default. Both extensions self-gate via `getHabitat().acceptedFrom`:
-when the topology overlay sets no inbound peers, the supervisor and intercept rails
+every agent by default. Both extensions self-gate via `getHabitat().acceptsWorkFrom`
+(overlay-input key `acceptsWorkFrom`; stored in `Habitat.acceptsWorkFrom`):
+when the host recipe overlay sets no inbound peers, the supervisor and intercept rails
 are silent no-ops and the `respond_to_request` tool returns a "no pending request"
 message rather than crashing.
 
@@ -157,9 +163,9 @@ message rather than crashing.
 
 | Kind | Source | Rail action |
 |------|--------|-------------|
-| `approval-request` | peer in `acceptedFrom` | Queued; model prompted |
-| `submission` | peer in `acceptedFrom` | Queued; model prompted |
-| Either kind from unknown peer | anyone not in `acceptedFrom` | Dropped silently (stderr when `--debug`) |
+| `approval-request` | peer in `acceptsWorkFrom` | Queued; model prompted |
+| `submission` | peer in `acceptsWorkFrom` | Queued; model prompted |
+| Either kind from unknown peer | anyone not in `acceptsWorkFrom` | Dropped silently (stderr when `--debug`) |
 | `message` | any peer | Free-flow (unrestricted, existing behaviour) |
 
 ### Four-action flow via `respond_to_request`
@@ -197,7 +203,7 @@ examples.
 
 ### Testable core
 
-The action routing, acceptedFrom enforcement, and revision cap all live in
+The action routing, `acceptsWorkFrom` enforcement (stored as `Habitat.acceptsWorkFrom`), and revision cap all live in
 `packages/engine/agent/lib/supervisor-inbox.ts` with a matching
 `supervisor-inbox.test.ts`. The `supervisor.ts` extension is a thin pi
 wrapper; tests can exercise the full action graph without a live model.
