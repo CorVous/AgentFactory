@@ -22,3 +22,13 @@ export function getHabitat(): Habitat {
   }
   return h;
 }
+
+/**
+ * Defensive sibling of getHabitat — returns null when no Habitat is set
+ * instead of throwing. Use this in extension session_start handlers that
+ * should silently no-op when recipe-loader failed before materialising the
+ * Habitat (e.g. launcher-bridge, mesh-rail).
+ */
+export function tryGetHabitat(): Habitat | null {
+  return (globalThis as { __pi_habitat__?: Habitat }).__pi_habitat__ ?? null;
+}

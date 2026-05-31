@@ -9,4 +9,4 @@
 // files to use the split paths.
 
 export type { Habitat } from "./habitat-types.js";
-export { setHabitat, getHabitat } from "./habitat-glue.js";
+export { setHabitat, getHabitat, tryGetHabitat } from "./habitat-glue.js";

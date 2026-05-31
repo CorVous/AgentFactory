@@ -22,7 +22,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getHabitat } from "../lib/habitat.js";
+import { getHabitat, tryGetHabitat } from "../lib/habitat.js";
 import { createFocusState } from "../lib/focus-state.mjs";
 import { habitatHasPeers } from "../lib/mesh-peering.js";
 
@@ -147,7 +147,8 @@ export function requestSpawn(
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
-    const habitat = getHabitat();
+    const habitat = tryGetHabitat();
+    if (!habitat) return;
     const busRoot = habitat.busRoot;
     const agentName = habitat.instanceName;
 

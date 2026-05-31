@@ -22,7 +22,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getHabitat } from "../lib/habitat.js";
+import { getHabitat, tryGetHabitat } from "../lib/habitat.js";
 import {
   makeShutdownEnvelope,
   makeMeshUpdateEnvelope,
@@ -478,12 +478,8 @@ async function processInitialMesh(
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // SELF-GATE: only activate for host sessions.
-    let habitat;
-    try {
-      habitat = getHabitat();
-    } catch {
-      return; // no Habitat (raw pi) — stay inert
-    }
+    const habitat = tryGetHabitat();
+    if (!habitat) return; // no Habitat (raw pi) — stay inert
 
     if (!habitat.isHost) return;
 

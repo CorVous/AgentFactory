@@ -10,7 +10,7 @@
 // `launcher-bridge` onMeshRailUpdate subscription and drive live re-renders.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getHabitat } from "../lib/habitat.js";
+import { tryGetHabitat } from "../lib/habitat.js";
 import {
   createMeshRailComponent,
   setMeshRailHandle,
@@ -22,14 +22,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     if (!ctx.hasUI) return;
 
-    let peerName: string;
-    try {
-      peerName = getHabitat().instanceName;
-    } catch {
-      // Habitat not materialised — degrade silently (defensive; the runner
-      // always loads habitat first, so this branch should not normally hit).
-      return;
-    }
+    const _habitat = tryGetHabitat();
+    if (!_habitat) return; // Habitat not materialised — degrade silently.
+    const peerName: string = _habitat.instanceName;
 
     const handle = createMeshRailComponent({ peerName });
     setMeshRailHandle(handle);

@@ -16,7 +16,7 @@
 // peer field (acceptedFrom, supervisor, submitTo) is set.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getHabitat } from "../lib/habitat.js";
+import { getHabitat, tryGetHabitat } from "../lib/habitat.js";
 import {
   makeApprovalResultEnvelope,
   makeRevisionRequestedEnvelope,
@@ -401,27 +401,19 @@ export default function (pi: ExtensionAPI) {
 
     // Determine whether the supervisor inbound rail is active.
     let acceptedFrom: string[] = [];
-    let busRoot = "";
-    let agentName = "unknown";
-    try {
-      const h = getHabitat();
-      acceptedFrom = h.acceptsWorkFrom;
-      busRoot = h.busRoot;
-      agentName = h.instanceName;
-    } catch {
-      /* Habitat not yet available */
+    const _h = tryGetHabitat();
+    if (_h) {
+      acceptedFrom = _h.acceptsWorkFrom;
+      state.busRoot = _h.busRoot;
+      state.agentName = _h.instanceName;
     }
-    state.busRoot = busRoot;
-    state.agentName = agentName;
 
     // Only wire if the supervisor inbound rail is active.
     if (!hasSupervisorInboundRail(acceptedFrom)) {
       state.active = false;
-      try {
-        if (getHabitat().debug === true) {
-          ctx.ui.notify("intercept: no supervisor inbound rail — no-op", "info");
-        }
-      } catch { /* Habitat not available */ }
+      if (_h?.debug === true) {
+        ctx.ui.notify("intercept: no supervisor inbound rail — no-op", "info");
+      }
       return;
     }
 
