@@ -261,7 +261,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
 
     // --peer-name overrides instance identity; falls back to sessionId then recipeName.
     const peerNameFlag = (pi.getFlag("peer-name") as string | undefined)?.trim();
-    const instanceName = peerNameFlag || ctx.sessionId || recipeName;
+    const instanceName = peerNameFlag || ctx.sessionManager.getSessionId() || recipeName;
 
     // --sandbox overrides the working directory / scratchRoot.
     const sandboxFlag = (pi.getFlag("sandbox") as string | undefined)?.trim();

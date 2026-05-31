@@ -239,7 +239,7 @@ export default function (pi: ExtensionAPI) {
         Type.Array(Type.String(), { description: "Override inbound peers (Slice 3+, accepted but not yet plumbed to wiring resolver)." }),
       ),
     }),
-    async execute(_id, params, _signal, _onUpdate, ctx): Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }> {
+    async execute(_id, params, _signal, _onUpdate, ctx): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
       // ── 1. Read habitat ──────────────────────────────────────────────────
       let spawns: string[] = [];
       let callerName = "anonymous";
@@ -479,7 +479,7 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       name: Type.String({ description: "Instance name of the worker to terminate." }),
     }),
-    async execute(_id, params): Promise<{ content: Array<{ type: string; text: string }>; details: Record<string, unknown> }> {
+    async execute(_id, params): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
       const node = registry.get(params.name);
       if (!node) {
         return {
