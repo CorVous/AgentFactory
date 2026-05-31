@@ -124,6 +124,31 @@ describe("mesh-spawn.ts — source-level", () => {
   });
 });
 
+// ── cwd inheritance (issue #172) ────────────────────────────────────────────
+
+describe("mesh-spawn.ts — cwd inheritance (issue #172)", () => {
+  it("does NOT pass cwd: REPO_ROOT to child_process.spawn", () => {
+    expect(SRC).not.toMatch(/cwd:\s*REPO_ROOT/);
+  });
+
+  it("threads caller cwd through productionSpawnWorker", () => {
+    expect(SRC).toMatch(/cwd:\s*args\.callerCwd/);
+  });
+
+  it("captures ctx in mesh_spawn.execute signature", () => {
+    // The execute signature must accept ctx as a parameter
+    expect(SRC).toMatch(/execute\([^)]*ctx[^)]*\)/);
+  });
+
+  it("passes callerCwd to runMeshSpawn at the call site", () => {
+    // The runMeshSpawn call must include a callerCwd: field
+    const runMeshIdx = SRC.indexOf("runMeshSpawn({");
+    expect(runMeshIdx).toBeGreaterThan(-1);
+    const afterRunMesh = SRC.slice(runMeshIdx, runMeshIdx + 500);
+    expect(afterRunMesh).toMatch(/callerCwd:/);
+  });
+});
+
 // ── Dynamic-worker admission predicate — registry-membership logic ──────────
 
 describe("__pi_mesh_spawn_is_my_worker__ predicate — registry membership", () => {

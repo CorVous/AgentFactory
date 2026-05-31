@@ -143,6 +143,7 @@ describe("runMeshSpawn", () => {
       task: "monitor logs",
       callerSandbox,
       callerName: "authority",
+      callerCwd: "/tmp/caller-cwd",
       spawnWorker,
     };
 
@@ -168,6 +169,7 @@ describe("runMeshSpawn", () => {
       busRoot: "/tmp/bus",
       callerSandbox,
       callerName: "authority",
+      callerCwd: "/tmp/caller-cwd",
       spawnWorker,
     };
 
@@ -193,6 +195,7 @@ describe("runMeshSpawn", () => {
       busRoot: "/tmp/mybus",
       callerSandbox,
       callerName: "orchestrator",
+      callerCwd: "/tmp/caller-cwd",
       spawnWorker,
     };
 
@@ -506,6 +509,61 @@ describe("resolveInitialMeshScalarRef", () => {
   it("returns raw ref when @group matches nothing", () => {
     const index = makeIndex([]);
     expect(resolveInitialMeshScalarRef("@nobody", index)).toBe("@nobody");
+  });
+});
+
+// ── runMeshSpawn — callerCwd forwarding (issue #172) ─────────────────────────
+
+describe("runMeshSpawn — callerCwd forwarding (issue #172)", () => {
+  it("forwards callerCwd to spawnWorker", async () => {
+    const callerSandbox = makeTmpDir();
+    let capturedArgs: SpawnArgs | null = null;
+    const handle = makePendingHandle();
+    const spawnWorker = vi.fn((args: SpawnArgs) => {
+      capturedArgs = args;
+      return handle as WorkerHandle;
+    });
+
+    const ctx: MeshSpawnContext = {
+      recipe: "mesh-node",
+      workerName: "cwd-test-node",
+      busRoot: "/tmp/bus",
+      callerSandbox,
+      callerName: "orchestrator",
+      callerCwd: "/tmp/test-cwd",
+      spawnWorker,
+    };
+
+    const result = await runMeshSpawn(ctx);
+    expect(result.ok).toBe(true);
+    expect(capturedArgs).not.toBeNull();
+    expect(capturedArgs!.callerCwd).toBe("/tmp/test-cwd");
+    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
+  });
+
+  it("passes distinct callerCwd values through unchanged", async () => {
+    const callerSandbox = makeTmpDir();
+    const cwds: string[] = [];
+    const handle = makePendingHandle();
+    const spawnWorker = vi.fn((args: SpawnArgs) => {
+      cwds.push(args.callerCwd);
+      return handle as WorkerHandle;
+    });
+
+    const ctx: MeshSpawnContext = {
+      recipe: "mesh-node",
+      workerName: "cwd-test-node-2",
+      busRoot: "/tmp/bus",
+      callerSandbox,
+      callerName: "orchestrator",
+      callerCwd: "/home/user/pi-sandbox",
+      spawnWorker,
+    };
+
+    const result = await runMeshSpawn(ctx);
+    expect(result.ok).toBe(true);
+    expect(cwds).toEqual(["/home/user/pi-sandbox"]);
+    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
   });
 });
 
