@@ -26,8 +26,6 @@
 // pi --recipe run (no peers) binds no OS socket; mesh tools are still
 // registered unconditionally so recipe allowlists resolve.
 
-import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -41,7 +39,7 @@ import {
   type Envelope,
 } from "../lib/bus-envelope.js";
 import { dispatchSubmissionReply } from "../lib/submission-emit.js";
-import { sendOverBus } from "../lib/bus-transport.js";
+import { createUnixSocketTransport, type BusTransport } from "../lib/bus-transport.js";
 import { habitatHasPeers } from "../lib/mesh-peering.js";
 import {
   ingestMeshUpdate,
@@ -59,8 +57,8 @@ interface PendingCall {
 }
 
 interface BusState {
-  server?: net.Server;
-  sockPath?: string;
+  transport?: BusTransport;
+  bound: boolean;
   name: string;
   busRoot: string;
   inbox: Envelope[];
@@ -82,6 +80,7 @@ interface BusState {
 function getState(): BusState {
   const g = globalThis as { __pi_peer_bus__?: BusState };
   return (g.__pi_peer_bus__ ??= {
+    bound: false,
     name: "",
     busRoot: "",
     inbox: [],
@@ -96,78 +95,6 @@ function getState(): BusState {
 
 // busRoot and instanceName are resolved from the Habitat materialised by
 // the habitat baseline extension before this session_start runs.
-
-function probeSocketLive(sockPath: string, timeoutMs = 200): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect(sockPath);
-    const done = (live: boolean) => {
-      sock.removeAllListeners();
-      sock.destroy();
-      resolve(live);
-    };
-    const timer = setTimeout(() => done(false), timeoutMs);
-    sock.once("connect", () => {
-      clearTimeout(timer);
-      done(true);
-    });
-    sock.once("error", () => {
-      clearTimeout(timer);
-      done(false);
-    });
-  });
-}
-
-async function bindServer(state: BusState, ctx: { ui: { notify: (m: string, l?: string) => void } }) {
-  const sockPath = path.join(state.busRoot, `${state.name}.sock`);
-  state.sockPath = sockPath;
-  fs.mkdirSync(state.busRoot, { recursive: true });
-
-  const server = net.createServer((conn) => {
-    let buf = "";
-    conn.setEncoding("utf8");
-    conn.on("data", (chunk: string) => {
-      buf += chunk;
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) !== -1) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (!line.trim()) continue;
-        const env = tryDecodeEnvelope(line);
-        if (!env) continue; // drop malformed / wrong-version envelopes silently
-        handleIncoming(state, env);
-      }
-    });
-    conn.on("error", () => conn.destroy());
-  });
-
-  const tryListen = (): Promise<void> =>
-    new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(sockPath, () => {
-        server.removeAllListeners("error");
-        resolve();
-      });
-    });
-
-  try {
-    await tryListen();
-  } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err.code !== "EADDRINUSE") throw e;
-    const live = await probeSocketLive(sockPath);
-    if (live) {
-      ctx.ui.notify(
-        `peer-bus: name "${state.name}" already held by a live peer at ${sockPath} — refusing to bind`,
-        "error",
-      );
-      throw new Error(`peer-bus name collision: ${state.name}`);
-    }
-    fs.unlinkSync(sockPath);
-    await tryListen();
-  }
-
-  state.server = server;
-}
 
 function notifyBusTailObserver(env: Envelope, direction: "in" | "out") {
   const observer = (
@@ -319,44 +246,12 @@ function pushToModel(state: BusState, envs: Envelope[]) {
 }
 
 async function sendEnvelope(state: BusState, env: Envelope): Promise<{ delivered: boolean; reason?: string }> {
-  const result = await sendOverBus(state.busRoot, env.to, encodeEnvelope(env));
-  // Opportunistic cleanup: if the peer's socket was left by a crashed process,
-  // unlink it so probeSocketLive and peer_list return an accurate picture.
-  if (!result.delivered && result.reason === "peer offline") {
-    const dest = path.join(state.busRoot, `${env.to}.sock`);
-    try { fs.unlinkSync(dest); } catch { /* noop */ }
-  }
+  // Delegate send (including opportunistic offline-socket cleanup) to the transport.
+  const result = await state.transport!.send(env.to, encodeEnvelope(env));
   // Notify the bus-tail observer on successful outbound delivery.
+  // notifyBusTailObserver needs the Envelope object, so it stays in the extension.
   if (result.delivered) notifyBusTailObserver(env, "out");
   return result;
-}
-
-async function listLivePeers(state: BusState): Promise<{ name: string; addr: string }[]> {
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(state.busRoot);
-  } catch {
-    return [];
-  }
-  const candidates = entries.filter((f) => f.endsWith(".sock")).map((f) => f.slice(0, -".sock".length));
-  const results: { name: string; addr: string }[] = [];
-  for (const peerName of candidates) {
-    const addr = path.join(state.busRoot, `${peerName}.sock`);
-    if (peerName === state.name) {
-      results.push({ name: peerName, addr });
-      continue;
-    }
-    if (await probeSocketLive(addr)) {
-      results.push({ name: peerName, addr });
-    } else {
-      try {
-        fs.unlinkSync(addr);
-      } catch {
-        /* noop */
-      }
-    }
-  }
-  return results;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -386,19 +281,36 @@ export default function (pi: ExtensionAPI) {
 
     // LAZY ACQUISITION: skip socket binding for solo runs (no peers configured).
     // Tools are already registered unconditionally; they return "bus not initialized"
-    // when state.server is unset, which is the correct behavior for solo mode.
+    // when state.transport/state.bound is unset, which is the correct behavior for solo mode.
     if (!hasPeers) return;
 
+    state.transport = createUnixSocketTransport(busRoot!);
+
+    const onLine = (line: string) => {
+      const env = tryDecodeEnvelope(line);
+      if (!env) return; // drop malformed / wrong-version envelopes silently
+      handleIncoming(state, env);
+    };
+
     try {
-      await bindServer(state, ctx);
+      await state.transport.listen(state.name, onLine);
+      state.bound = true;
     } catch (e) {
-      ctx.ui.notify(`peer-bus: failed to bind ${state.sockPath}: ${(e as Error).message}`, "error");
+      const msg = (e as Error).message;
+      // Re-surface the collision message exactly as before, or fall back to generic.
+      ctx.ui.notify(
+        msg.startsWith("peer-bus name collision:")
+          ? `peer-bus: name "${state.name}" already held by a live peer — refusing to bind`
+          : `peer-bus: failed to bind for ${state.name}: ${msg}`,
+        "error",
+      );
       return;
     }
 
     try {
       if (getHabitat().debug === true) {
-        const dump = `peer-bus: name=${state.name} sock=${state.sockPath}`;
+        const sockPath = path.join(busRoot!, `${state.name}.sock`);
+        const dump = `peer-bus: name=${state.name} sock=${sockPath}`;
         ctx.ui.notify(dump, "info");
         process.stderr.write(`[peer-bus] ${dump}\n`);
       }
@@ -423,21 +335,9 @@ export default function (pi: ExtensionAPI) {
       pending.reject(new Error("peer-bus shutdown"));
     }
     state.pendingCalls.clear();
-    if (state.server) {
-      try {
-        state.server.close();
-      } catch {
-        /* noop */
-      }
-      state.server = undefined;
-    }
-    if (state.sockPath) {
-      try {
-        fs.unlinkSync(state.sockPath);
-      } catch {
-        /* noop */
-      }
-    }
+    state.transport?.closeSync();
+    state.transport = undefined;
+    state.bound = false;
   };
   pi.on("session_shutdown", async () => cleanup());
   process.once("exit", cleanup);
@@ -466,7 +366,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, params) {
-      if (!state.server) {
+      if (!state.transport || !state.bound) {
         return {
           content: [{ type: "text", text: "peer-bus not initialized; cannot send." }],
           details: { delivered: false, reason: "bus not initialized" },
@@ -568,7 +468,9 @@ export default function (pi: ExtensionAPI) {
     description: "List currently-live peers on the bus (probes each socket; cleans stale entries).",
     parameters: Type.Object({}),
     async execute() {
-      const peers = await listLivePeers(state);
+      const peers = await (state.transport
+        ? state.transport.discover(state.name)
+        : Promise.resolve([]));
       const lines = peers.map((p) => `${p.name}${p.name === state.name ? " (self)" : ""} — ${p.addr}`);
       return {
         content: [{ type: "text", text: lines.length === 0 ? "(no peers)" : lines.join("\n") }],
@@ -595,7 +497,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, params) {
-      if (!state.server) {
+      if (!state.transport || !state.bound) {
         return {
           content: [{ type: "text", text: "peer-bus not initialized; cannot call." }],
           details: { delivered: false, reason: "bus not initialized" },
