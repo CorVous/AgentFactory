@@ -53,36 +53,45 @@ const BUNDLED_EXTENSIONS_DIR = path.join(PACKAGE_DIR, "agent", "extensions");
 
 /**
  * Returns the precedence-ordered list of recipe directories:
- * project (<cwd>/.pi/recipes/) → global (~/.pi/agent/recipes/) → bundled.
+ * project (<cwd>/.pi/recipes/) → global (~/.pi/agent/recipes/) →
+ * repo-local (<cwd>/pi-sandbox/agents/ or <cwd>/agents/) → bundled.
  */
-function getRecipeDirs(cwd: string): string[] {
+export function getRecipeDirs(cwd: string): string[] {
   return [
     path.join(cwd, ".pi", "recipes"),
     path.join(os.homedir(), ".pi", "agent", "recipes"),
+    path.join(cwd, "pi-sandbox", "agents"),
+    path.join(cwd, "agents"),
     BUNDLED_RECIPES_DIR,
   ];
 }
 
 /**
  * Returns the precedence-ordered list of template directories:
- * project (<cwd>/.pi/templates/) → global (~/.pi/agent/templates/) → bundled.
+ * project (<cwd>/.pi/templates/) → global (~/.pi/agent/templates/) →
+ * repo-local (<cwd>/pi-sandbox/templates/ or <cwd>/templates/) → bundled.
  */
-function getTemplateDirs(cwd: string): string[] {
+export function getTemplateDirs(cwd: string): string[] {
   return [
     path.join(cwd, ".pi", "templates"),
     path.join(os.homedir(), ".pi", "agent", "templates"),
+    path.join(cwd, "pi-sandbox", "templates"),
+    path.join(cwd, "templates"),
     BUNDLED_TEMPLATES_DIR,
   ];
 }
 
 /**
  * Returns the precedence-ordered list of skill directories:
- * project (<cwd>/.pi/skills/) → global (~/.pi/agent/skills/) → bundled.
+ * project (<cwd>/.pi/skills/) → global (~/.pi/agent/skills/) →
+ * repo-local (<cwd>/pi-sandbox/skills/ or <cwd>/skills/) → bundled.
  */
-function getSkillDirs(cwd: string): string[] {
+export function getSkillDirs(cwd: string): string[] {
   return [
     path.join(cwd, ".pi", "skills"),
     path.join(os.homedir(), ".pi", "agent", "skills"),
+    path.join(cwd, "pi-sandbox", "skills"),
+    path.join(cwd, "skills"),
     BUNDLED_SKILLS_DIR,
   ];
 }
@@ -141,7 +150,7 @@ function readExtensionFragment(extName: string): string | null {
 
 export default function recipeLoader(pi: ExtensionAPI) {
   pi.registerFlag("recipe", {
-    description: "Name of the recipe to load from <cwd>/.pi/recipes/, ~/.pi/agent/recipes/, or bundled recipes",
+    description: "Name of the recipe to load from <cwd>/.pi/recipes/, ~/.pi/agent/recipes/, <cwd>/pi-sandbox/agents/, <cwd>/agents/, or bundled recipes",
     type: "string",
   });
 

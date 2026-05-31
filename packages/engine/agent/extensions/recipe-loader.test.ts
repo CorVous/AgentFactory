@@ -98,6 +98,90 @@ describe("recipe-loader.ts — fatal error paths use failHard (issue #173)", () 
   });
 });
 
+describe("recipe-loader.ts — repo-local search paths (issue #170)", () => {
+  it("getRecipeDirs includes <cwd>/pi-sandbox/agents", () => {
+    const idx = SRC.indexOf("function getRecipeDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    expect(body).toMatch(/path\.join\(cwd,\s*["']pi-sandbox["'],\s*["']agents["']\)/);
+  });
+
+  it("getRecipeDirs includes <cwd>/agents", () => {
+    const idx = SRC.indexOf("function getRecipeDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    // Must contain "agents" as a standalone segment (not only via pi-sandbox/agents)
+    expect(body).toMatch(/path\.join\(cwd,\s*["']agents["']\)/);
+  });
+
+  it("getTemplateDirs includes <cwd>/pi-sandbox/templates", () => {
+    const idx = SRC.indexOf("function getTemplateDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    expect(body).toMatch(/path\.join\(cwd,\s*["']pi-sandbox["'],\s*["']templates["']\)/);
+  });
+
+  it("getTemplateDirs includes <cwd>/templates", () => {
+    const idx = SRC.indexOf("function getTemplateDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    expect(body).toMatch(/path\.join\(cwd,\s*["']templates["']\)/);
+  });
+
+  it("getTemplateDirs does NOT include <cwd>/agents", () => {
+    const idx = SRC.indexOf("function getTemplateDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    // Capture just the getTemplateDirs body (stop before the next export function)
+    const afterFn = SRC.slice(idx, idx + 400);
+    const bodyEnd = afterFn.indexOf("export function", 1);
+    const body = bodyEnd > 0 ? afterFn.slice(0, bodyEnd) : afterFn;
+    // The body should not reference "agents" (that's for getRecipeDirs)
+    expect(body).not.toMatch(/["']agents["']/);
+  });
+
+  it("getSkillDirs includes <cwd>/pi-sandbox/skills", () => {
+    const idx = SRC.indexOf("function getSkillDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    expect(body).toMatch(/path\.join\(cwd,\s*["']pi-sandbox["'],\s*["']skills["']\)/);
+  });
+
+  it("getSkillDirs includes <cwd>/skills", () => {
+    const idx = SRC.indexOf("function getSkillDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    expect(body).toMatch(/path\.join\(cwd,\s*["']skills["']\)/);
+  });
+
+  it("project-local precedence preserved: .pi/recipes appears before pi-sandbox/agents", () => {
+    const idx = SRC.indexOf("function getRecipeDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    const projectLocalIdx = body.indexOf('".pi"');
+    const altIdx = body.indexOf("'.pi'");
+    const piIdx = projectLocalIdx !== -1 ? projectLocalIdx : altIdx;
+    expect(piIdx).toBeGreaterThan(-1);
+    // Find pi-sandbox/agents as separate path.join args in the source
+    const sandboxMatch = /path\.join\(cwd,\s*["']pi-sandbox["'],\s*["']agents["']\)/.exec(body);
+    expect(sandboxMatch).not.toBeNull();
+    const sandboxIdx = sandboxMatch!.index;
+    expect(piIdx).toBeLessThan(sandboxIdx);
+  });
+
+  it("repo-local before bundled: pi-sandbox/agents appears before BUNDLED_RECIPES_DIR", () => {
+    const idx = SRC.indexOf("function getRecipeDirs(");
+    expect(idx).toBeGreaterThan(-1);
+    const body = SRC.slice(idx, idx + 400);
+    // Find pi-sandbox/agents as separate path.join args in the source
+    const sandboxMatch = /path\.join\(cwd,\s*["']pi-sandbox["'],\s*["']agents["']\)/.exec(body);
+    expect(sandboxMatch).not.toBeNull();
+    const sandboxIdx = sandboxMatch!.index;
+    const bundledIdx = body.indexOf("BUNDLED_RECIPES_DIR");
+    expect(bundledIdx).toBeGreaterThan(-1);
+    expect(sandboxIdx).toBeLessThan(bundledIdx);
+  });
+});
+
 describe("recipe-loader.ts — non-fatal paths kept as warnings (issue #173)", () => {
   it("keeps skill resolution failure as warning (non-fatal)", () => {
     // The skills catch block must use "warning" severity, not failHard.
