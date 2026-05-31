@@ -210,8 +210,8 @@ function spawnPeerViaPtyPool(
   // Spawn via PtyPool
   state.pool.spawn({
     name: workerName,
-    cmd: process.execPath,
-    args: argv.slice(1), // first element is the pi bin (the "cmd")
+    cmd: argv[0], // pi bin — invoked directly via its shebang
+    args: argv.slice(1),
     cols,
     rows,
     cwd: state.hostCwd,

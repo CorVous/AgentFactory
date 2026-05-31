@@ -47,3 +47,18 @@ describe("mesh-mux.ts — cwd inheritance (issue #172)", () => {
     expect(SRC).toMatch(/PI_BIN/);
   });
 });
+
+// ── Source-level assertions — spawn cmd (issue #172 follow-up) ──────────────
+
+describe("mesh-mux.ts — pool.spawn cmd (issue #172 follow-up)", () => {
+  it("does NOT pass cmd: process.execPath to pool.spawn", () => {
+    // process.execPath is the node binary. Spawning `node --recipe ...` would
+    // make node reject --recipe with `bad option` and exit 9 — every worker
+    // crashing immediately. cmd must be the pi bin itself (argv[0]).
+    expect(SRC).not.toMatch(/cmd:\s*process\.execPath/);
+  });
+
+  it("passes the pi bin (argv[0]) as cmd to pool.spawn", () => {
+    expect(SRC).toMatch(/cmd:\s*argv\[0\]/);
+  });
+});
