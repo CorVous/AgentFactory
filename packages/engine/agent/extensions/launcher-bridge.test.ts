@@ -62,6 +62,34 @@ describe("launcher-bridge.ts — lazy acquisition gate (Slice 5)", () => {
   });
 });
 
+describe("launcher-bridge.ts — Habitat guard (issue #173)", () => {
+  it("imports tryGetHabitat from the engine lib", () => {
+    expect(SRC).toMatch(/tryGetHabitat/);
+    expect(SRC).toMatch(/import.*tryGetHabitat.*from/);
+  });
+
+  it("session_start uses tryGetHabitat (not bare getHabitat) as first call", () => {
+    // Slice from pi.on("session_start" to find the first habitat acquisition.
+    const idx = SRC.indexOf(`pi.on("session_start"`);
+    expect(idx).toBeGreaterThan(-1);
+    const slice = SRC.slice(idx, idx + 300);
+    // tryGetHabitat must appear in the first part of the handler.
+    expect(slice).toMatch(/tryGetHabitat\s*\(\s*\)/);
+    // The old pattern "const habitat = getHabitat();" must NOT appear
+    // (getHabitat is still imported for the debug-log callsites, but the
+    // first acquisition in session_start must be tryGetHabitat).
+    expect(slice).not.toMatch(/const\s+habitat\s*=\s*getHabitat\s*\(\s*\)/);
+  });
+
+  it("early-returns when Habitat is null", () => {
+    const idx = SRC.indexOf(`pi.on("session_start"`);
+    expect(idx).toBeGreaterThan(-1);
+    const slice = SRC.slice(idx, idx + 400);
+    // Must have a guard that returns when habitat is falsy/null.
+    expect(slice).toMatch(/!\s*habitat\s*\)\s*return|habitat\s*===?\s*null/);
+  });
+});
+
 describe("launcher-bridge.ts — Slice 4: requestSpawn correlation", () => {
   it("exports requestSpawn function", () => {
     expect(SRC).toMatch(/export\s+function\s+requestSpawn/);

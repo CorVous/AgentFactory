@@ -29,6 +29,21 @@ import { setHabitat } from "../lib/habitat-glue.js";
 import { resolveRailPackages, RAIL_TO_CLUSTER } from "../lib/rail-packages.js";
 import { discoverInstalledPackages } from "../lib/installed-packages.js";
 
+/**
+ * Notify the user, write to stderr (visible in headless/worker mode where
+ * ui.notify is a silent no-op), and throw so the SDK runner surfaces the
+ * real error via console.error (print-mode) or showExtensionError (TUI).
+ *
+ * Use for FATAL recipe-loader failures that must not silently leave
+ * __pi_habitat__ unset and allow downstream extensions to crash with a
+ * misleading "Habitat not materialised" message.
+ */
+function failHard(ctx: ExtensionContext, msg: string): never {
+  ctx.ui.notify(msg, "error");
+  process.stderr.write(`${msg}\n`);
+  throw new Error(msg);
+}
+
 // Bundled recipes/templates/skills directories — ship with the package.
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUNDLED_RECIPES_DIR = path.join(PACKAGE_DIR, "agent", "recipes");
@@ -182,11 +197,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
     try {
       recipe = resolveRecipe(recipeName, { recipeDirs, templateDirs });
     } catch (e) {
-      ctx.ui.notify(
-        `recipe-loader: ${(e as Error).message}`,
-        "error",
-      );
-      return;
+      failHard(ctx, `recipe-loader: ${(e as Error).message}`);
     }
 
     // ── Check that all referenced rail clusters are installed ──────────────────
@@ -196,18 +207,13 @@ export default function recipeLoader(pi: ExtensionAPI) {
       try {
         railCheckResult = resolveRailPackages(recipe.extensions, discoverInstalledPackages());
       } catch (e) {
-        ctx.ui.notify(`recipe-loader: ${(e as Error).message}`, "error");
-        return;
+        failHard(ctx, `recipe-loader: ${(e as Error).message}`);
       }
       if (railCheckResult.missing.length > 0) {
         const lines = railCheckResult.missing.map(
           (m) => `  rail '${m.rail}' requires cluster '${m.cluster}' — install with: ${m.hint}`,
         );
-        ctx.ui.notify(
-          `recipe-loader: missing rail cluster(s):\n${lines.join("\n")}`,
-          "error",
-        );
-        return;
+        failHard(ctx, `recipe-loader: missing rail cluster(s):\n${lines.join("\n")}`);
       }
     }
 
@@ -239,8 +245,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
         bundledDefaults,
       );
     } catch (e) {
-      ctx.ui.notify(`recipe-loader: ${(e as Error).message}`, "error");
-      return;
+      failHard(ctx, `recipe-loader: ${(e as Error).message}`);
     }
 
     // ── Read launch flags ─────────────────────────────────────────────────────
@@ -289,11 +294,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
         }
         // Re-assign recipe with peerFields — buildHabitat reads them from peerFields separately.
       } catch (e) {
-        ctx.ui.notify(
-          `recipe-loader: --topology-overlay invalid JSON: ${(e as Error).message}`,
-          "error",
-        );
-        return;
+        failHard(ctx, `recipe-loader: --topology-overlay invalid JSON: ${(e as Error).message}`);
       }
     }
 
@@ -311,8 +312,7 @@ export default function recipeLoader(pi: ExtensionAPI) {
     try {
       setHabitat(habitat);
     } catch (e) {
-      ctx.ui.notify(`recipe-loader: setHabitat failed: ${(e as Error).message}`, "error");
-      return;
+      failHard(ctx, `recipe-loader: setHabitat failed: ${(e as Error).message}`);
     }
 
     // ── Apply model ───────────────────────────────────────────────────────────

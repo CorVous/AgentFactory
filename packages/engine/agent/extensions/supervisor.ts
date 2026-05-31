@@ -19,7 +19,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { getHabitat } from "../lib/habitat.js";
+import { getHabitat, tryGetHabitat } from "../lib/habitat.js";
 import { createSupervisorInbox, type InboundEnvelope } from "../lib/supervisor-inbox.js";
 import {
   makeApprovalRequestEnvelope,
@@ -246,15 +246,13 @@ export default function (pi: ExtensionAPI) {
     // Capture ctx so respondToRequest can provide localEscalate.
     state.ctx = ctx;
 
-    try {
-      const h = getHabitat();
-      state.agentName = h.instanceName;
-      state.busRoot = h.busRoot;
+    const _h = tryGetHabitat();
+    if (_h) {
+      state.agentName = _h.instanceName;
+      state.busRoot = _h.busRoot;
       // Replace inbox with a fresh one for this session
       state.inbox = createSupervisorInbox();
-    } catch {
-      /* Habitat not available — leave defaults */
-    }
+    } /* else: Habitat not available — leave defaults */
 
     // Capture pi.sendUserMessage so dispatchToSupervisor can deliver inbound
     // envelopes immediately — no turn_end queue. An envelope arriving mid-turn
