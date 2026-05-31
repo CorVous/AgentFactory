@@ -1,5 +1,11 @@
 # Sub-agents
 
+> **For AgentFactory** (not generic pi): multi-agent here is built on the
+> engine's `mesh_spawn` tool + host recipes (`--is-host` + `initial_mesh:`),
+> not bespoke `child_process.spawn(pi, ...)`. See
+> `docs/agents/host-recipes.md` and `docs/agents/multi-agent.md`. The
+> patterns below still apply when authoring standalone pi packages.
+
 A sub-agent in Pi is **a second `AgentSession` instance spun up from within a tool**, given an isolated context window, a task prompt, and a (usually narrower) tool set. The parent agent calls the sub-agent tool, the sub-agent runs its own loop, and the parent only sees the sub-agent's final summary.
 
 This is how Pi implements features other agents call "subagents", "delegation", or "plan mode". There's no magic: it's a tool whose `execute` creates a new session.

@@ -83,10 +83,10 @@ independently-installable cluster packages.
 ## Packaging — engine and cluster packages
 
 `@agentfactory/pi-engine` is the always-on package: it ships the
-`recipe-loader` extension (which registers `--recipe` and the six launch
-flags) plus the full mesh subsystem (`agent-bus`, `supervisor`,
-`intercept`, `launcher-bridge`, `slash-commands`, `bus-tail-emitter`,
-`mesh-rail`, `mesh-authority`). It loads on every `pi` invocation but is
+`recipe-loader` extension (which registers `--recipe` and the eight launch
+flags) plus the full mesh subsystem (`peer-bus`, `mesh-mux`, `mesh-spawn`,
+`supervisor`, `intercept`, `launcher-bridge`, `slash-commands`,
+`bus-tail-emitter`, `mesh-rail`). It loads on every `pi` invocation but is
 **loaded-but-inert** — with no `--recipe` flag, raw `pi` behaves like
 vanilla pi.
 

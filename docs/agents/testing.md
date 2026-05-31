@@ -46,6 +46,9 @@ Unit tests run automatically in CI on every push and PR; tmux integration tests 
 
 ## Verifying the multi-agent rails
 
+See [`host-recipes.md`](./host-recipes.md) for the full explanation of
+the `--is-host` / `initial_mesh:` pattern used in the examples below.
+
 The preferred way to run and observe a live multi-agent mesh is via the
 launcher TUI (`npm run mesh`). The launcher multiplexes every peer's pi
 session into one terminal: the focused peer's PTY is rendered live in
@@ -58,29 +61,18 @@ launcher itself emits no chrome. The human is not a peer — there is no
 
 ```sh
 set -a; source models.env; set +a
-# Write a minimal two-peer topology (planner + worker-a) and launch it:
-cat > /tmp/chat-mesh.yaml <<'EOF'
-entry: planner
-nodes:
-  - name: planner
-    recipe: peer-chatter
-    sandbox: /tmp/p1
-    peers: [worker-a]
-  - name: worker-a
-    recipe: peer-chatter
-    sandbox: /tmp/p2
-    supervisor: planner
-    peers: [planner]
-EOF
-npm run mesh -- /tmp/chat-mesh.yaml
-# The launcher opens with "planner" focused.
-# Use /focus worker-a  to switch to the worker's pane.
-# Use /tail             to stream the inter-peer bus traffic.
+# Launch a host recipe — pre-spawns analyst (mesh-node) + scribe (mesh-writer):
+npm run mesh -- mesh-host-example
+# Inside the host pane, the host can:
+#   peer_call({to: "analyst", body: "research X", timeout_ms: 30000})
+#   peer_send({to: "scribe", body: "draft a report on …"})
+# /focus <name> switches the launcher TUI focus to that peer's pane.
+# /tail          streams inter-peer bus traffic.
 # Type a message in any peer pane; it lands in that peer's pi session.
 ```
 
 The launcher wire format is documented in
-`scripts/_lib/launcher-envelope.mjs` — consult that file when writing
+`packages/engine/agent/lib/launcher-envelope.mjs` — consult that file when writing
 extensions that emit control envelopes (focus-request, pin-request,
 decisions-jump, tail-event, etc.).
 

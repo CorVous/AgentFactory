@@ -14,15 +14,16 @@ The AgentFactory extension packages live here. Each is a pi package
 (declared with `"keywords": ["pi-package"]`) loadable via `pi install`.
 
 - `packages/engine/` — `@agentfactory/pi-engine`. Always-on package:
-  the `recipe-loader` extension (registers `--recipe` and six launch flags:
-  `--sandbox`, `--task`, `--peer-name`, `--topology-overlay`, `--inherit-pty`,
-  `--debug`), the recipe resolver (`agent/lib/resolve-recipe.ts`), model-tier
-  resolver (`agent/lib/resolve-model.ts`, `agent/lib/load-tier-config.ts`),
-  and the full mesh subsystem (`agent-bus`, `supervisor`, `intercept`,
-  `launcher-bridge`, `slash-commands`, `bus-tail-emitter`, `mesh-rail`,
-  `mesh-authority`). Extensions live in `agent/extensions/`; library
-  modules in `agent/lib/`. Bundled recipes dir (`agent/recipes/`) is
-  currently empty — this repo's recipes live in `pi-sandbox/agents/`.
+  the `recipe-loader` extension (registers `--recipe` and eight launch flags:
+  `--sandbox`, `--task`, `--peer-name`, `--topology-overlay`, `--peer-bus`,
+  `--inherit-pty`, `--debug`, `--is-host`), the recipe resolver
+  (`agent/lib/resolve-recipe.ts`), model-tier resolver
+  (`agent/lib/resolve-model.ts`, `agent/lib/load-tier-config.ts`),
+  and the full mesh subsystem (`peer-bus`, `mesh-mux`, `mesh-spawn`,
+  `supervisor`, `intercept`, `launcher-bridge`, `slash-commands`,
+  `bus-tail-emitter`, `mesh-rail`). Extensions live in `agent/extensions/`;
+  library modules in `agent/lib/`. Bundled recipes dir (`agent/recipes/`)
+  is currently empty — this repo's recipes live in `pi-sandbox/agents/`.
 - `packages/deferred-rails/` — `@agentfactory/deferred-rails`. Rails for
   buffered, approval-gated file operations: `deferred-confirm`,
   `deferred-write`, `deferred-edit`, `deferred-move`, `deferred-delete`.
@@ -45,7 +46,8 @@ Pi's working directory is `pi-sandbox/`; the `npm run pi` script handles the
   bundled in the engine package (currently empty). Recipes in this dir
   are found when `pi --recipe` is invoked from the repo root. Also hosts
   host recipes (e.g. `anon-grouped-mesh.yaml`, `authority-mesh.yaml`,
-  `grouped-mesh.yaml`) launched via `npm run mesh -- <recipe-name>`.
+  `grouped-mesh.yaml`) launched via `npm run mesh -- <recipe-name>`
+  (see `docs/agents/host-recipes.md`).
 - `pi-sandbox/templates/` — Template YAML files used by `extends:` chains
   in recipes (e.g. `peer.yaml`).
 - `pi-sandbox/.pi/extensions/` — Project-local pi extensions. Used during

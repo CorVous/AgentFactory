@@ -14,7 +14,7 @@ The cardinal rule: **when in doubt, read Pi's own docs and source.** Pi is self-
 Use it for any of these:
 
 - Writing a new extension (tools, commands, keyboard shortcuts, event handlers)
-- Building sub-agents that delegate work to isolated child sessions
+- Building sub-agents that hand off work to isolated child sessions
 - Intercepting tool calls (approval gates, sandboxing, logging, redirection)
 - Customizing context (injection, pruning, RAG, memory across sessions)
 - Customizing compaction (topic-aware summaries, different summarizer model)

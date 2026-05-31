@@ -84,17 +84,18 @@ Flow per task:
    The call spawns a long-lived worker with the given task and returns
    immediately with the worker's name.
 2. `mesh-spawn` allocates a fresh tmpdir scratch root, constructs a
-   habitat overlay (`supervisor = submitTo = acceptedFrom = [foreman]`),
+   habitat overlay (`escalatesTo = submitsWorkTo = acceptsWorkFrom = [foreman]`,
+   which map to `Habitat.supervisor`, `Habitat.submitsWorkTo`, `Habitat.acceptsWorkFrom`),
    and spawns the worker via `pi --recipe deferred-writer` (using
    `buildRecipeChildArgv` from `packages/engine/agent/lib/child-spawn.mjs`).
    The worker's name is registered in the `__pi_mesh_spawn_nodes__` registry.
 3. The worker runs, drafts files into its in-memory `deferred-write`
-   queue, hits `agent_end`. Because `submitTo` is set, `deferred-confirm`
+   queue, hits `agent_end`. Because `submitsWorkTo` is set, `deferred-confirm`
    ships a `submission` envelope to the foreman over the bus and waits
    for a reply.
 4. The foreman's supervisor rail receives the submission. The
    `__pi_mesh_spawn_is_my_worker__` predicate (set by `mesh-spawn`) admits
-   the worker's envelope before the static `acceptedFrom` check, so
+   the worker's envelope before the static `acceptsWorkFrom` check, so
    dynamically-spawned names don't need to be pre-listed.
 5. The supervisor rail queues the submission and prompts the foreman's
    model. Multiple submissions arriving in the same turn are batched
