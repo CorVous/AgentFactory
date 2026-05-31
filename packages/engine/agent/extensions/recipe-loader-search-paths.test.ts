@@ -8,10 +8,16 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { getRecipeDirs, getTemplateDirs } from "./recipe-loader.js";
 import { resolveRecipe } from "../lib/resolve-recipe.js";
 
-const REPO_ROOT = "/home/user/AgentFactory";
+// Resolve repo root from this file's location so the tests run on any host
+// (local /home/user/AgentFactory, CI runner, contributor laptop). Walk up four
+// levels: extensions/ → agent/ → engine/ → packages/ → <repo>.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
 
 describe("recipe-loader search paths — repo-root invocation (issue #170)", () => {
   it("getRecipeDirs(repoRoot) discovers writer-foreman via pi-sandbox/agents/", () => {
