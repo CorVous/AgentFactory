@@ -28,10 +28,14 @@
     "agent/"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.75.4"
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@earendil-works/pi-tui": "^0.75.4",
+    "@earendil-works/pi-ai": "^0.75.4"
   },
   "dependencies": {
     "yaml": "^2.8.3",
-    "typebox": "*"
+    "typebox": "^1.1.38",
+    "node-pty": "^1.1.0",
+    "@xterm/headless": "^6.0.0"
   }
 }
