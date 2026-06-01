@@ -31,16 +31,29 @@ import { discoverInstalledPackages } from "../lib/installed-packages.js";
 
 /**
  * Notify the user, write to stderr (visible in headless/worker mode where
- * ui.notify is a silent no-op), and throw so the SDK runner surfaces the
- * real error via console.error (print-mode) or showExtensionError (TUI).
+ * ui.notify is a silent no-op), exit the process so the abort survives the
+ * SDK's ExtensionRunner.emit() try/catch, and throw (unreachable but
+ * preserves the `never` contract if process.exit is stubbed in tests).
  *
  * Use for FATAL recipe-loader failures that must not silently leave
  * __pi_habitat__ unset and allow downstream extensions to crash with a
  * misleading "Habitat not materialised" message.
+ *
+ * Background: the pi SDK's ExtensionRunner.emit() wraps every session_start
+ * handler in a try/catch and continues on the fallback model after a throw,
+ * which would let the session degrade silently. process.exit(1) ensures a
+ * fatal recipe-loader misconfiguration truly aborts — same approach as
+ * peer-bus.ts's shutdown path.
  */
 function failHard(ctx: ExtensionContext, msg: string): never {
   ctx.ui.notify(msg, "error");
   process.stderr.write(`${msg}\n`);
+  // The pi SDK's ExtensionRunner.emit() wraps session_start handlers in a
+  // try/catch and continues after a throw, which would let the session proceed
+  // on a fallback model. Exit so a fatal recipe-loader misconfiguration truly
+  // aborts (same approach as peer-bus.ts's shutdown path).
+  process.exit(1);
+  // Unreachable — retained so the `never` contract holds if process.exit is stubbed.
   throw new Error(msg);
 }
 

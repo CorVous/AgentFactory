@@ -3,10 +3,12 @@
  * recipe-loader extension (packages/engine/agent/extensions/recipe-loader.ts).
  *
  * Verifies:
- *   1. The failHard helper exists, writes to stderr, and throws.
+ *   1. The failHard helper exists, writes to stderr, exits the process (so the
+ *      abort survives the SDK's ExtensionRunner.emit() try/catch), and throws
+ *      (unreachable, retained for the `never` contract if process.exit is stubbed).
  *   2. Fatal error paths (resolveRecipe, resolveRailPackages, missing clusters,
  *      resolveModel, topology-overlay JSON parse, setHabitat, missing API key,
- *      unknown model) use failHard.
+ *      unknown model) use failHard — so ALL 8 call sites actually abort.
  *   3. Non-fatal paths (skill resolution, invalid tool names) still use
  *      "warning" and do NOT use failHard.
  *
@@ -36,8 +38,15 @@ describe("recipe-loader.ts — failHard helper (issue #173)", () => {
     // verify 'throw new Error' appears before the next top-level function.
     const failHardIdx = SRC.indexOf("function failHard(");
     expect(failHardIdx).toBeGreaterThan(-1);
-    const failHardBody = SRC.slice(failHardIdx, failHardIdx + 300);
+    const failHardBody = SRC.slice(failHardIdx, failHardIdx + 700);
     expect(failHardBody).toMatch(/throw new Error/);
+  });
+
+  it("failHard exits the process so the abort survives the SDK catch", () => {
+    const idx = SRC.indexOf("function failHard");
+    expect(idx).toBeGreaterThan(-1);
+    const slice = SRC.slice(idx, idx + 500);
+    expect(slice).toMatch(/process\.exit\(\s*1\s*\)/);
   });
 
   it("failHard calls ctx.ui.notify so interactive TUI gets an error toast", () => {
