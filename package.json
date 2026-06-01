@@ -19,9 +19,9 @@
     "typecheck": "tsc --noEmit -p packages/engine/tsconfig.json && tsc --noEmit -p packages/deferred-rails/tsconfig.json && tsc --noEmit -p packages/containment-rails/tsconfig.json && tsc --noEmit -p packages/ui-rails/tsconfig.json"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.75.4",
-    "@earendil-works/pi-coding-agent": "^0.75.4",
-    "@earendil-works/pi-tui": "^0.75.4",
+    "@earendil-works/pi-ai": "^0.78.0",
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-tui": "^0.78.0",
     "@xterm/headless": "^6.0.0",
     "node-pty": "^1.1.0",
     "yaml": "^2.8.3"
