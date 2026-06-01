@@ -192,6 +192,16 @@ describe("recipe-loader.ts — repo-local search paths (issue #170)", () => {
   });
 });
 
+describe("recipe-loader.ts — OpenRouter slug resolution wiring (issue #187)", () => {
+  it("delegates to resolveModelFromRegistry (import present)", () => {
+    expect(SRC).toMatch(/resolveModelFromRegistry\(/);
+  });
+
+  it("reads ctx.model?.provider as the active provider", () => {
+    expect(SRC).toMatch(/ctx\.model\?\.provider/);
+  });
+});
+
 describe("recipe-loader.ts — non-fatal paths kept as warnings (issue #173)", () => {
   it("keeps skill resolution failure as warning (non-fatal)", () => {
     // The skills catch block must use "warning" severity, not failHard.
