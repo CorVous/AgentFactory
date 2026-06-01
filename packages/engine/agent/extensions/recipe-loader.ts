@@ -28,6 +28,7 @@ import { assemblePrompt } from "../lib/assemble-prompt.js";
 import { setHabitat } from "../lib/habitat-glue.js";
 import { resolveRailPackages, RAIL_TO_CLUSTER } from "../lib/rail-packages.js";
 import { discoverInstalledPackages } from "../lib/installed-packages.js";
+import { resolveModelFromRegistry } from "../lib/resolve-model-from-registry.js";
 
 /**
  * Notify the user, write to stderr (visible in headless/worker mode where
@@ -110,22 +111,17 @@ export function getSkillDirs(cwd: string): string[] {
 }
 
 /**
- * Find a model in the registry by a `provider/model-id` string.
- * Returns undefined if not found.
+ * Find a model in the registry by a model string, using the session's active
+ * provider (ctx.model?.provider) to correctly resolve OpenRouter-style slugs
+ * (whose ids contain '/') before falling back to first-slash splitting and
+ * full-id scan.
  */
 function findModelByString(
   ctx: ExtensionContext,
   modelString: string,
 ): Model<Api> | undefined {
-  // Split on first '/' to get provider and model id.
-  const slashIdx = modelString.indexOf("/");
-  if (slashIdx === -1) {
-    // No slash — try to find any model whose id matches.
-    return ctx.modelRegistry.getAll().find((m) => m.id === modelString);
-  }
-  const provider = modelString.slice(0, slashIdx);
-  const modelId = modelString.slice(slashIdx + 1);
-  return ctx.modelRegistry.find(provider, modelId);
+  const activeProvider = ctx.model?.provider;
+  return resolveModelFromRegistry(ctx.modelRegistry, modelString, activeProvider);
 }
 
 /**
