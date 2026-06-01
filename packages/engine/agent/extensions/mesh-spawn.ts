@@ -140,6 +140,7 @@ function productionSpawnWorker(args: SpawnArgs): WorkerHandle {
     sandbox: args.scratchRoot,
     busRoot: args.busRoot,
     instanceName: args.workerName,
+    provider: args.provider,
     topologyOverlay,
     // For long-lived workers, task is passed via --task (NOT -p) so the worker
     // starts interactively and uses the task as per-instance role context.
@@ -426,6 +427,7 @@ export default function (pi: ExtensionAPI) {
         callerSandbox,
         callerName,
         callerCwd: ctx.cwd,
+        provider: ctx.model?.provider,
         spawnWorker: productionSpawnWorker,
       });
 

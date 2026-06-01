@@ -191,6 +191,8 @@ export interface SpawnArgs {
   task: string;
   /** The cwd of the caller — workers are spawned with this as their working directory. */
   callerCwd: string;
+  /** Provider name forwarded from the spawning session (e.g. "openrouter"). */
+  provider?: string;
   /** Group memberships for the spawned worker (seeded into its Habitat). */
   groups?: string[];
   habitatOverlay: {
@@ -228,6 +230,8 @@ export interface MeshSpawnContext {
   callerName: string;
   /** The cwd of the calling session — workers inherit this as their working directory. */
   callerCwd: string;
+  /** Provider name forwarded from the spawning session (e.g. "openrouter"). */
+  provider?: string;
   spawnWorker: (args: SpawnArgs) => WorkerHandle;
 }
 
@@ -430,6 +434,7 @@ export async function runMeshSpawn(ctx: MeshSpawnContext): Promise<MeshSpawnResu
     busRoot: ctx.busRoot,
     task: ctx.task ?? "",
     callerCwd: ctx.callerCwd,
+    provider: ctx.provider,
     groups: ctx.groups,
     habitatOverlay,
   };

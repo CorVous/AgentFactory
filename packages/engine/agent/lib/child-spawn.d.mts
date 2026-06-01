@@ -26,6 +26,7 @@ export function buildRecipeChildArgv(opts: {
   busRoot: string;
   instanceName?: string;
   agentName?: string;
+  provider?: string;
   topologyOverlay?: string;
   task?: string;
   inheritPty?: boolean;

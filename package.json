@@ -13,7 +13,7 @@
   "scripts": {
     "sandcastle": "npx tsx .sandcastle/main.ts",
     "pi": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --no-context-files --provider openrouter \"$@\"' --",
-    "mesh": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --recipe \"$1\" --is-host' --",
+    "mesh": "bash -c 'set -a && source models.env && set +a && cd pi-sandbox && exec pi --recipe \"$1\" --provider openrouter --is-host' --",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p packages/engine/tsconfig.json && tsc --noEmit -p packages/deferred-rails/tsconfig.json && tsc --noEmit -p packages/containment-rails/tsconfig.json && tsc --noEmit -p packages/ui-rails/tsconfig.json"
