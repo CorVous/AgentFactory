@@ -30,8 +30,8 @@ export interface PeerNode {
 // ---------------------------------------------------------------------------
 
 /** Effective groups — [] becomes ["_default"]. */
-function effectiveGroups(peer: PeerNode): string[] {
-  return peer.groups.length > 0 ? peer.groups : ["_default"];
+export function effectiveGroups(groups: string[]): string[] {
+  return groups.length > 0 ? groups : ["_default"];
 }
 
 /** True if sets share at least one element. */
@@ -60,7 +60,7 @@ export function canSee(x: PeerNode, y: PeerNode): boolean {
     x.spawner !== undefined &&
     y.spawner !== undefined &&
     x.spawner === y.spawner &&
-    setsOverlap(effectiveGroups(x), effectiveGroups(y))
+    setsOverlap(effectiveGroups(x.groups), effectiveGroups(y.groups))
   ) {
     return true;
   }

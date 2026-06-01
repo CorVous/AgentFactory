@@ -14,6 +14,7 @@
 
 import type { GroupMap } from "./cohort-registry.js";
 import type { MeshUpdateChange } from "./bus-envelope.js";
+import { effectiveGroups } from "./visibility.js";
 
 // ---------------------------------------------------------------------------
 // __pi_cohort_lookup__ hook interface
@@ -69,8 +70,8 @@ export function ingestMeshUpdate(
 ): void {
   for (const change of update.changes) {
     if (change.op === "add") {
-      const effectiveGroups = change.groups.length > 0 ? change.groups : ["_default"];
-      for (const g of effectiveGroups) {
+      const groups = effectiveGroups(change.groups);
+      for (const g of groups) {
         if (!cache.has(g)) cache.set(g, []);
         const members = cache.get(g)!;
         // Keep the CohortMember shape for compatibility with GroupMap type
@@ -120,10 +121,10 @@ export function expandGroupRef(
   let recipeFilter: string | undefined;
 
   if (body === "$myGroups") {
-    groupKeys = selfGroups.length > 0 ? selfGroups : ["_default"];
+    groupKeys = effectiveGroups(selfGroups);
     recipeFilter = undefined;
   } else if (body.startsWith("$myGroups:")) {
-    groupKeys = selfGroups.length > 0 ? selfGroups : ["_default"];
+    groupKeys = effectiveGroups(selfGroups);
     recipeFilter = body.slice("$myGroups:".length);
   } else if (colonIdx !== -1) {
     groupKeys = [body.slice(0, colonIdx)];

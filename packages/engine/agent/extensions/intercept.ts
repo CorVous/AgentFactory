@@ -18,6 +18,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getHabitat, tryGetHabitat } from "../lib/habitat.js";
 import {
+  encodeEnvelope,
   makeApprovalResultEnvelope,
   makeRevisionRequestedEnvelope,
   renderInboundForUser,
@@ -122,7 +123,7 @@ async function sendApprovalResult(opts: {
     approved: opts.approved,
     ...(opts.note !== undefined ? { note: opts.note } : {}),
   });
-  await sendOverBus(opts.busRoot, opts.to, `${JSON.stringify(env)}\n`);
+  await sendOverBus(opts.busRoot, opts.to, encodeEnvelope(env));
 }
 
 async function sendRevisionRequested(opts: {
@@ -138,7 +139,7 @@ async function sendRevisionRequested(opts: {
     in_reply_to: opts.inReplyTo,
     note: opts.note,
   });
-  await sendOverBus(opts.busRoot, opts.to, `${JSON.stringify(env)}\n`);
+  await sendOverBus(opts.busRoot, opts.to, encodeEnvelope(env));
 }
 
 // ---------------------------------------------------------------------------

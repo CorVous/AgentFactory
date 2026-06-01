@@ -5,11 +5,9 @@
 // dispatch supervisor replies into it from a different module graph —
 // the same pattern as deferred-confirm's handler registry.
 
-import { createHash } from "node:crypto";
 import { encodeEnvelope, makeSubmissionEnvelope, type Artifact, type Envelope } from "./bus-envelope";
 import { sendOverBus, type BusSendResult } from "./bus-transport";
-
-const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+import { sha256 } from "./sha256";
 
 // ---------------------------------------------------------------------------
 // Artifact builders
