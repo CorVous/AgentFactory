@@ -330,15 +330,15 @@ export default function recipeLoader(pi: ExtensionAPI) {
     if (model) {
       const success = await pi.setModel(model);
       if (!success) {
-        ctx.ui.notify(
+        failHard(
+          ctx,
           `recipe-loader: no API key available for model '${concreteModelId}' — model not applied`,
-          "warning",
         );
       }
     } else {
-      ctx.ui.notify(
+      failHard(
+        ctx,
         `recipe-loader: model '${concreteModelId}' not found in registry — model not applied`,
-        "warning",
       );
     }
 

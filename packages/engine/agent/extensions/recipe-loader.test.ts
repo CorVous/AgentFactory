@@ -5,9 +5,10 @@
  * Verifies:
  *   1. The failHard helper exists, writes to stderr, and throws.
  *   2. Fatal error paths (resolveRecipe, resolveRailPackages, missing clusters,
- *      resolveModel, topology-overlay JSON parse, setHabitat) use failHard.
- *   3. Non-fatal paths (skill resolution, missing API key, unknown model,
- *      invalid tool names) still use "warning" and do NOT use failHard.
+ *      resolveModel, topology-overlay JSON parse, setHabitat, missing API key,
+ *      unknown model) use failHard.
+ *   3. Non-fatal paths (skill resolution, invalid tool names) still use
+ *      "warning" and do NOT use failHard.
  *
  * Contract: pure file-content assertions; no jiti, no pi runtime, no I/O
  * beyond reading the sibling source file.
@@ -197,12 +198,20 @@ describe("recipe-loader.ts — non-fatal paths kept as warnings (issue #173)", (
     expect(catchSlice).not.toMatch(/failHard\s*\(/);
   });
 
-  it("missing API key path uses warning (non-fatal)", () => {
-    expect(SRC).toMatch(/no API key available.*warning|warning.*no API key available/s);
+  it("uses failHard for missing API key (setModel returned false)", () => {
+    const idx = SRC.indexOf("no API key available");
+    expect(idx).toBeGreaterThan(-1);
+    const slice = SRC.slice(Math.max(0, idx - 100), idx + 150);
+    expect(slice).toMatch(/failHard\s*\(/);
+    expect(slice).not.toMatch(/"warning"/);
   });
 
-  it("unknown model path uses warning (non-fatal)", () => {
-    expect(SRC).toMatch(/not found in registry.*warning|warning.*not found in registry/s);
+  it("uses failHard for unknown model (not found in registry)", () => {
+    const idx = SRC.indexOf("not found in registry");
+    expect(idx).toBeGreaterThan(-1);
+    const slice = SRC.slice(Math.max(0, idx - 100), idx + 150);
+    expect(slice).toMatch(/failHard\s*\(/);
+    expect(slice).not.toMatch(/"warning"/);
   });
 
   it("invalid tool names path uses warning (non-fatal)", () => {
