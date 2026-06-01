@@ -1,8 +1,12 @@
 # Universal-rail bundle for mesh peers.
 #
-# This template is the canonical and authoritative source for the rails every
-# peer agent inherits. All recipes declare `extends: peer` to pick up these
-# rails; the engine resolves the extension list via the recipe-loader (ADR-0010).
+# This is the bundled canonical home for the peer template (ships via the
+# engine package's `files: ["agent/"]` — see packages/engine/package.json).
+# The repo-local copy at pi-sandbox/templates/ has been removed; resolution
+# falls through getTemplateDirs() to this file. pi-sandbox/templates/ is
+# retained as an optional override directory — place a peer.yaml there to
+# shadow this bundled copy for repo-local experimentation.
+#
 # Editing this file changes runtime behaviour for every recipe that extends it.
 #
 # Note: `habitat` is no longer listed — the engine's recipe-loader builds and

@@ -105,3 +105,16 @@ The set of **Rails** every **Recipe** loads is no longer hardcoded in `scripts/r
 - `docs/agents.md`: rewrite the "Recipe shape" and "Composing agents" sections to describe `extends:` and the template chain. Drop the `noEditAdd`/`noEditSkip` paragraph.
 - `CONTEXT.md`: already updated to introduce **Template** as a first-class term and refine **Recipe** to mention `extends:`.
 - The migration is grabbable as a sequence of vertical slices (one per concern: template file, runner, habitat, extensions, launcher, recipes, tests, docs); each slice is independently testable.
+
+## Addendum (2026-06, #194)
+
+The canonical home of `peer.yaml` is now `packages/engine/agent/templates/`
+(shipped via the engine package's `files: ["agent/"]` — see
+`packages/engine/package.json`). The repo-local copy at
+`pi-sandbox/templates/peer.yaml` has been removed; `getTemplateDirs` falls
+through to the bundled engine copy as the final tier in the search order.
+`pi-sandbox/templates/` is retained as an optional repo-local override
+directory — place a `peer.yaml` there to shadow the bundled copy for
+repo-local experimentation. This makes the engine package the single source
+of truth for the baseline peer template and ensures `peer.yaml` is always
+present in any downstream install of `@agentfactory/pi-engine`.
