@@ -441,7 +441,7 @@ export default function (pi: ExtensionAPI) {
     } catch { /* Habitat not available */ }
   });
 
-  pi.on("session_end", async () => {
+  pi.on("session_shutdown", async () => {
     const state = getState();
     // Restore original dispatch hook on cleanup.
     if (state.originalDispatch !== null) {

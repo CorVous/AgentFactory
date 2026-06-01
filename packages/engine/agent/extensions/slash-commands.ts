@@ -18,7 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHabitat } from "../lib/habitat.js";
 import { getMeshRailHandle } from "../lib/mesh-rail.js";
-import { createDecisionsOverlayComponent } from "../lib/decisions-overlay.js";
+import { createDecisionsOverlayComponent, type DecisionsOverlayResult } from "../lib/decisions-overlay.js";
 // IMPORTANT: this is a static jiti-resolved import, not createRequire().
 // Node's createRequire cannot resolve .ts files, so any attempt to load the
 // bridge dynamically (e.g. _require("./launcher-bridge")) silently throws and
@@ -243,7 +243,7 @@ export default function (pi: ExtensionAPI) {
       const railHandle = getMeshRailHandle();
       const state = railHandle?.getState() ?? { peers: [], decisions: [], decisionCount: 0, peerName: "" };
 
-      const result = await ctx.ui.custom(
+      const result = await ctx.ui.custom<DecisionsOverlayResult>(
         (_tui, _theme, _keybindings, done) => {
           const overlay = createDecisionsOverlayComponent({
             peers: state.peers,

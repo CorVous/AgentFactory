@@ -199,7 +199,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("session_end", async () => {
+  pi.on("session_shutdown", async () => {
     const state = getEmitterState();
     state.focused = false;
     state.tailOn = false;

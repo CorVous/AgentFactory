@@ -220,6 +220,7 @@ describe("runMeshSpawn", () => {
       workerName: name,
       busRoot: "/tmp/bus",
       callerSandbox,
+      callerCwd: "/tmp/caller-cwd",
       callerName: "authority",
       spawnWorker,
     });
@@ -249,6 +250,7 @@ describe("runMeshSpawn", () => {
       busRoot: "/tmp/bus",
       workspace: { include: ["ref.md"] },
       callerSandbox,
+      callerCwd: "/tmp/caller-cwd",
       callerName: "authority",
       spawnWorker,
     };

@@ -250,7 +250,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("session_end", async () => {
+  pi.on("session_shutdown", async () => {
     const state = getBridgeState();
     if (state.client) {
       try { state.client.disconnect(); } catch { /* ignore */ }

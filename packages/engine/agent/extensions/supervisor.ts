@@ -331,12 +331,12 @@ export default function (pi: ExtensionAPI) {
       }
       return {
         content: [{ type: "text", text: `respond_to_request(${params.action}) sent for ${params.msg_id.slice(0, 8)}.` }],
-        details: { ok: true },
+        details: { ok: true, error: undefined },
       };
     },
   });
 
-  pi.on("session_end", async () => {
+  pi.on("session_shutdown", async () => {
     // Clear ctx so no stale reference is held after the session ends.
     state.ctx = null;
     state.sendUserMessage = undefined;

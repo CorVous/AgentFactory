@@ -28,7 +28,7 @@
 
 import os from "node:os";
 import path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { getHabitat } from "../lib/habitat.js";
 import {
@@ -365,7 +365,7 @@ export default function (pi: ExtensionAPI) {
         Type.String({ description: "Optional msg_id of the message you are replying to." }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params): Promise<AgentToolResult<Record<string, unknown>>> {
       if (!state.transport || !state.bound) {
         return {
           content: [{ type: "text", text: "peer-bus not initialized; cannot send." }],
@@ -496,7 +496,7 @@ export default function (pi: ExtensionAPI) {
         Type.Number({ description: "Max wait in ms for a reply. Default 30000." }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params): Promise<AgentToolResult<Record<string, unknown>>> {
       if (!state.transport || !state.bound) {
         return {
           content: [{ type: "text", text: "peer-bus not initialized; cannot call." }],
