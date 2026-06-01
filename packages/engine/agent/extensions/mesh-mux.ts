@@ -86,6 +86,8 @@ interface MeshMuxState {
   pendingSpawns: Map<string, (result: { ok: boolean; name?: string; error?: string }) => void>;
   /** The cwd of the host session — inherited by all spawned workers. */
   hostCwd: string;
+  /** The provider of the host session — forwarded to all spawned workers. */
+  hostProvider?: string;
 }
 
 function getMuxState(): MeshMuxState | undefined {
@@ -198,6 +200,7 @@ function spawnPeerViaPtyPool(
     sandbox: scratchRoot,
     busRoot,
     instanceName: workerName,
+    provider: state.hostProvider,
     topologyOverlay,
     task,
     inheritPty: true, // children run inside host's PTY pool
@@ -578,6 +581,7 @@ export default function (pi: ExtensionAPI) {
       peers: new Map(),
       pendingSpawns: new Map(),
       hostCwd: ctx.cwd,
+      hostProvider: ctx.model?.provider,
     };
 
     setMuxState(state);

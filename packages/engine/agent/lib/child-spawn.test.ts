@@ -75,6 +75,17 @@ describe("buildRecipeChildArgv — required flags", () => {
 });
 
 describe("buildRecipeChildArgv — optional flags omitted when unset", () => {
+  it("omits --provider when not provided", () => {
+    const argv = buildRecipeChildArgv({
+      piBin: FAKE_PI_BIN,
+      recipe: "r",
+      sandbox: "/tmp/s",
+      busRoot: "/tmp/b",
+      instanceName: "a",
+    });
+    expect(argv).not.toContain("--provider");
+  });
+
   it("omits --topology-overlay when not provided", () => {
     const argv = buildRecipeChildArgv({
       piBin: FAKE_PI_BIN,
@@ -196,6 +207,20 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
     expect(next === undefined || next.startsWith("-")).toBe(true);
   });
 
+  it("includes --provider with its value", () => {
+    const argv = buildRecipeChildArgv({
+      piBin: FAKE_PI_BIN,
+      recipe: "r",
+      sandbox: "/tmp/s",
+      busRoot: "/tmp/b",
+      instanceName: "a",
+      provider: "openrouter",
+    });
+    const idx = argv.indexOf("--provider");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(argv[idx + 1]).toBe("openrouter");
+  });
+
   it("includes -p with its prompt value", () => {
     const argv = buildRecipeChildArgv({
       piBin: FAKE_PI_BIN,
@@ -212,13 +237,14 @@ describe("buildRecipeChildArgv — optional flags present when set", () => {
 });
 
 describe("buildRecipeChildArgv — stable ordering", () => {
-  it("maintains stable ordering: piBin, --recipe, --sandbox, --peer-bus, --peer-name, optionals", () => {
+  it("maintains stable ordering: piBin, --recipe, --sandbox, --peer-bus, --peer-name, [--provider], [--topology-overlay], optionals", () => {
     const argv = buildRecipeChildArgv({
       piBin: FAKE_PI_BIN,
       recipe: "deferred-writer",
       sandbox: "/tmp/s",
       busRoot: "/tmp/b",
       instanceName: "cottontail-writer",
+      provider: "openrouter",
       topologyOverlay: '{"supervisor":"boss"}',
       task: "do something",
       inheritPty: true,
@@ -231,6 +257,7 @@ describe("buildRecipeChildArgv — stable ordering", () => {
     const sandboxIdx = argv.indexOf("--sandbox");
     const busIdx = argv.indexOf("--peer-bus");
     const peerNameIdx = argv.indexOf("--peer-name");
+    const providerIdx = argv.indexOf("--provider");
     const overlayIdx = argv.indexOf("--topology-overlay");
     const taskIdx = argv.indexOf("--task");
     const inheritPtyIdx = argv.indexOf("--inherit-pty");
@@ -241,7 +268,8 @@ describe("buildRecipeChildArgv — stable ordering", () => {
     expect(recipeIdx).toBeLessThan(sandboxIdx);
     expect(sandboxIdx).toBeLessThan(busIdx);
     expect(busIdx).toBeLessThan(peerNameIdx);
-    expect(peerNameIdx).toBeLessThan(overlayIdx);
+    expect(peerNameIdx).toBeLessThan(providerIdx);
+    expect(providerIdx).toBeLessThan(overlayIdx);
     expect(overlayIdx).toBeLessThan(taskIdx);
     expect(taskIdx).toBeLessThan(inheritPtyIdx);
     expect(inheritPtyIdx).toBeLessThan(debugIdx);

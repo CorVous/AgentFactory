@@ -124,6 +124,21 @@ describe("mesh-spawn.ts — source-level", () => {
   });
 });
 
+// ── provider forwarding (issue #189) ────────────────────────────────────────
+
+describe("mesh-spawn.ts — provider forwarding (issue #189)", () => {
+  it("passes provider: args.provider in productionSpawnWorker's buildRecipeChildArgv call", () => {
+    expect(SRC).toMatch(/provider:\s*args\.provider/);
+  });
+
+  it("passes provider: ctx.model?.provider at the runMeshSpawn call site", () => {
+    const runMeshIdx = SRC.indexOf("runMeshSpawn({");
+    expect(runMeshIdx).toBeGreaterThan(-1);
+    const afterRunMesh = SRC.slice(runMeshIdx, runMeshIdx + 600);
+    expect(afterRunMesh).toMatch(/provider:\s*ctx\.model\?\.provider/);
+  });
+});
+
 // ── cwd inheritance (issue #172) ────────────────────────────────────────────
 
 describe("mesh-spawn.ts — cwd inheritance (issue #172)", () => {

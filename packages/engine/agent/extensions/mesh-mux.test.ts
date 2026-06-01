@@ -48,6 +48,22 @@ describe("mesh-mux.ts — cwd inheritance (issue #172)", () => {
   });
 });
 
+// ── Source-level assertions — provider forwarding (issue #189) ──────────────
+
+describe("mesh-mux.ts — provider forwarding (issue #189)", () => {
+  it("declares hostProvider?: string on MeshMuxState interface", () => {
+    expect(SRC).toMatch(/hostProvider\?:\s*string/);
+  });
+
+  it("captures ctx.model?.provider as hostProvider at session_start", () => {
+    expect(SRC).toMatch(/hostProvider:\s*ctx\.model\?\.provider/);
+  });
+
+  it("passes provider: state.hostProvider in spawnPeerViaPtyPool's buildRecipeChildArgv call", () => {
+    expect(SRC).toMatch(/provider:\s*state\.hostProvider/);
+  });
+});
+
 // ── Source-level assertions — spawn cmd (issue #172 follow-up) ──────────────
 
 describe("mesh-mux.ts — pool.spawn cmd (issue #172 follow-up)", () => {

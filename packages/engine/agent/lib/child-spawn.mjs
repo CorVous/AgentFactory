@@ -12,6 +12,7 @@
  *   --sandbox <sandbox>
  *   --peer-bus <busRoot>
  *   --peer-name <instanceName>      (always)
+ *   [--provider <value>]            (when provider is set and non-empty)
  *   [--topology-overlay <json>]     (when topologyOverlay is set)
  *   [--task <text>]                 (when task is set and non-empty)
  *   [--inherit-pty]                 (when inheritPty is true)
@@ -53,6 +54,7 @@ export function resolveRepoRoot() {
  * @param {string} opts.sandbox       - Absolute path to the sandbox/cwd for the child.
  * @param {string} opts.busRoot       - Absolute path to the peer bus root directory.
  * @param {string} opts.instanceName  - The child's instance name (passed as --peer-name).
+ * @param {string|undefined} [opts.provider]         - Provider name for --provider (e.g. "openrouter").
  * @param {string|undefined} [opts.topologyOverlay] - JSON string for --topology-overlay.
  * @param {string|undefined} [opts.task]            - Task text for --task (appended to system prompt).
  * @param {boolean|undefined} [opts.inheritPty]     - Pass --inherit-pty bare flag.
@@ -69,6 +71,7 @@ export function buildRecipeChildArgv(opts) {
     instanceName,
     // back-compat: accept agentName as alias for instanceName
     agentName,
+    provider,
     topologyOverlay,
     task,
     inheritPty,
@@ -85,6 +88,10 @@ export function buildRecipeChildArgv(opts) {
     "--peer-bus", busRoot,
     "--peer-name", resolvedInstanceName,
   ];
+
+  if (provider && provider.trim()) {
+    argv.push("--provider", provider);
+  }
 
   if (topologyOverlay) {
     argv.push("--topology-overlay", topologyOverlay);

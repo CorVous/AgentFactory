@@ -514,6 +514,63 @@ describe("resolveInitialMeshScalarRef", () => {
   });
 });
 
+// ── runMeshSpawn — provider forwarding (issue #189) ──────────────────────────
+
+describe("runMeshSpawn — provider forwarding (issue #189)", () => {
+  it("forwards provider to spawnWorker when set", async () => {
+    const callerSandbox = makeTmpDir();
+    let capturedArgs: SpawnArgs | null = null;
+    const handle = makePendingHandle();
+    const spawnWorker = vi.fn((args: SpawnArgs) => {
+      capturedArgs = args;
+      return handle as WorkerHandle;
+    });
+
+    const ctx: MeshSpawnContext = {
+      recipe: "mesh-node",
+      workerName: "provider-test-node",
+      busRoot: "/tmp/bus",
+      callerSandbox,
+      callerName: "orchestrator",
+      callerCwd: "/tmp/caller-cwd",
+      provider: "openrouter",
+      spawnWorker,
+    };
+
+    const result = await runMeshSpawn(ctx);
+    expect(result.ok).toBe(true);
+    expect(capturedArgs).not.toBeNull();
+    expect(capturedArgs!.provider).toBe("openrouter");
+    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
+  });
+
+  it("forwards undefined provider when not set", async () => {
+    const callerSandbox = makeTmpDir();
+    let capturedArgs: SpawnArgs | null = null;
+    const handle = makePendingHandle();
+    const spawnWorker = vi.fn((args: SpawnArgs) => {
+      capturedArgs = args;
+      return handle as WorkerHandle;
+    });
+
+    const ctx: MeshSpawnContext = {
+      recipe: "mesh-node",
+      workerName: "no-provider-node",
+      busRoot: "/tmp/bus",
+      callerSandbox,
+      callerName: "orchestrator",
+      callerCwd: "/tmp/caller-cwd",
+      spawnWorker,
+    };
+
+    const result = await runMeshSpawn(ctx);
+    expect(result.ok).toBe(true);
+    expect(capturedArgs).not.toBeNull();
+    expect(capturedArgs!.provider).toBeUndefined();
+    fs.rmSync(result.scratchRoot, { recursive: true, force: true });
+  });
+});
+
 // ── runMeshSpawn — callerCwd forwarding (issue #172) ─────────────────────────
 
 describe("runMeshSpawn — callerCwd forwarding (issue #172)", () => {
