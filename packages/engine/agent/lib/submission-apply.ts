@@ -7,11 +7,11 @@
 //      deletes) so compositions like "edit X then move it to Y" work
 //      deterministically regardless of the order artifacts arrive in.
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Artifact } from "./bus-envelope";
 import { applyUnique } from "./string-edit";
+import { sha256 } from "./sha256";
 
 export interface ApplyResult {
   ok: boolean;
@@ -25,10 +25,6 @@ const KIND_ORDER: Record<Artifact["kind"], number> = {
   move: 2,
   delete: 3,
 };
-
-function sha256(s: string): string {
-  return createHash("sha256").update(s, "utf8").digest("hex");
-}
 
 export async function applyArtifacts(
   canonicalRoot: string,

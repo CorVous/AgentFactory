@@ -7,6 +7,8 @@
 //   aggregateGroupMembership(topo)  — legacy topology-shaped builder (unchanged)
 //   buildGroupMap(entries)          — spawner-scoped builder for CohortRegistry use
 
+import { effectiveGroups } from "./visibility.js";
+
 export interface NodeWithGroups {
   name?: string;
   groups?: string[];
@@ -97,7 +99,7 @@ export function buildGroupMap(entries: GroupMapEntry[]): Map<string, string[]> {
   const result = new Map<string, string[]>();
 
   for (const entry of entries) {
-    const groups = entry.groups.length > 0 ? entry.groups : ["_default"];
+    const groups = effectiveGroups(entry.groups);
     for (const g of groups) {
       if (!result.has(g)) result.set(g, []);
       const members = result.get(g)!;

@@ -8,6 +8,7 @@
 // See ADR-0008 for the reference grammar and resolution semantics.
 
 import { resolveRef, type CounterState } from "./ref-resolver.js";
+import { effectiveGroups } from "./visibility.js";
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -64,7 +65,7 @@ export function addMember(
 ): void {
   if (!reg.has(spawner)) reg.set(spawner, new Map());
   const gm = reg.get(spawner)!;
-  const effective = groups.length > 0 ? groups : ["_default"];
+  const effective = effectiveGroups(groups);
   for (const g of effective) {
     if (!gm.has(g)) gm.set(g, []);
     const members = gm.get(g)!;
@@ -175,13 +176,11 @@ export function resolveCohortRef(opts: ResolveCohortRefOptions): string | string
 
   if (body === "$myGroups") {
     // @$myGroups — all peers in any of resolver's own groups
-    const effectiveGroups = resolverGroups.length > 0 ? resolverGroups : ["_default"];
-    groupFilter = effectiveGroups;
+    groupFilter = effectiveGroups(resolverGroups);
     recipeFilter = undefined;
   } else if (body.startsWith("$myGroups:")) {
     // @$myGroups:<recipe>
-    const effectiveGroups = resolverGroups.length > 0 ? resolverGroups : ["_default"];
-    groupFilter = effectiveGroups;
+    groupFilter = effectiveGroups(resolverGroups);
     recipeFilter = body.slice("$myGroups:".length);
   } else if (body.includes(":")) {
     // @<group>:<recipe>
