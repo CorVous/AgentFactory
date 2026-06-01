@@ -51,8 +51,12 @@ Pi's working directory is `pi-sandbox/`; the `npm run pi` script handles the
   `anon-grouped-mesh.yaml`, `authority-mesh.yaml`, `grouped-mesh.yaml`)
   launched via `npm run mesh -- <recipe-name>`
   (see `docs/agents/host-recipes.md`).
-- `pi-sandbox/templates/` — Template YAML files used by `extends:` chains
-  in recipes (e.g. `peer.yaml`).
+- `pi-sandbox/templates/` — Optional repo-local override directory for
+  `extends:` templates. The canonical `peer.yaml` now ships in the engine
+  package at `packages/engine/agent/templates/peer.yaml` (included via
+  `files: ["agent/"]`); place a `peer.yaml` here to shadow the bundled
+  copy for repo-local experimentation. `getTemplateDirs` searches
+  project-local dirs first, falling back to the bundled engine copy.
 - `pi-sandbox/.pi/extensions/` — Project-local pi extensions. Used during
   development; production extensions live in `packages/*/agent/extensions/`.
 - `pi-sandbox/.pi/scratch/` — Throwaway prompt files, raw pi output,
